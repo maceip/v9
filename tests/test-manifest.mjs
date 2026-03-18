@@ -54,12 +54,13 @@ if (existsSync(snapshotPath)) {
   const snapshotStr = readFileSync(snapshotPath, 'utf8');
   if (currentManifestStr !== snapshotStr) {
     console.error('FAIL: Manifest does not match snapshot!');
-    console.error('If this is expected, delete tests/manifest.snapshot.json and re-run to update.');
+    console.error('If this is expected, overwrite tests/manifest.snapshot.json with the new output.');
     process.exit(1);
   } else {
     console.log('PASS: Manifest matches snapshot.');
   }
 } else {
-  console.log('INFO: Snapshot not found. Creating new snapshot at tests/manifest.snapshot.json');
-  writeFileSync(snapshotPath, currentManifestStr, 'utf8');
+  console.error('FAIL: Snapshot not found at tests/manifest.snapshot.json');
+  console.error('Cannot run regression check without a baseline.');
+  process.exit(1);
 }

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_CPPHEAP_POINTER_TABLE_STUB_H_
 #define WASI_CPPHEAP_POINTER_TABLE_STUB_H_
@@ -42,17 +43,17 @@ using CppHeapPointerTag = uint64_t;
 using CppHeapPointerTagRange = uint64_t;
 
 struct CppHeapPointerTableEntry {
-  inline void MakePointerEntry(Address, CppHeapPointerTag, bool) {}
-  inline Address GetPointer(CppHeapPointerTagRange) const { return 0; }
-  inline void SetPointer(Address, CppHeapPointerTag) {}
-  inline bool HasPointer(CppHeapPointerTagRange) const { return false; }
-  inline void MakeZappedEntry() {}
-  inline void MakeFreelistEntry(uint32_t) {}
-  inline uint32_t GetNextFreelistEntryIndex() const { return 0; }
-  inline void MakeEvacuationEntry(Address) {}
-  inline bool HasEvacuationEntry() const { return false; }
-  inline void Evacuate(CppHeapPointerTableEntry&) {}
-  inline void Mark() {}
+  inline void MakePointerEntry(Address, CppHeapPointerTag, bool) { abort(); }
+  inline Address GetPointer(CppHeapPointerTagRange) const { abort(); return 0; }
+  inline void SetPointer(Address, CppHeapPointerTag) { abort(); }
+  inline bool HasPointer(CppHeapPointerTagRange) const { abort(); return false; }
+  inline void MakeZappedEntry() { abort(); }
+  inline void MakeFreelistEntry(uint32_t) { abort(); }
+  inline uint32_t GetNextFreelistEntryIndex() const { abort(); return 0; }
+  inline void MakeEvacuationEntry(Address) { abort(); }
+  inline bool HasEvacuationEntry() const { abort(); return false; }
+  inline void Evacuate(CppHeapPointerTableEntry&) { abort(); }
+  inline void Mark() { abort(); }
   static constexpr bool IsWriteProtected = false;
 
  private:

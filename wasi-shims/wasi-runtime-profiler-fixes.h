@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_RUNTIME_PROFILER_FIXES_H_
 #define WASI_RUNTIME_PROFILER_FIXES_H_
@@ -95,35 +96,35 @@ inline void SetMicrotasksSuppressed(bool suppressed) {
   (void)suppressed;
 }
 
-inline bool IsMicrotasksSuppressed() { return false; }
+inline bool IsMicrotasksSuppressed() { abort(); return false; }
 
 }  // namespace wasi_shim
 
 // CpuProfileNode class
 class CpuProfileNode {
  public:
-  const char* GetFunctionNameStr() const { return ""; }
-  const char* GetScriptResourceNameStr() const { return ""; }
-  int GetLineNumber() const { return 0; }
-  int GetColumnNumber() const { return 0; }
-  unsigned GetHitCount() const { return 0; }
-  int GetChildrenCount() const { return 0; }
+  const char* GetFunctionNameStr() const { abort(); return ""; }
+  const char* GetScriptResourceNameStr() const { abort(); return ""; }
+  int GetLineNumber() const { abort(); return 0; }
+  int GetColumnNumber() const { abort(); return 0; }
+  unsigned GetHitCount() const { abort(); return 0; }
+  int GetChildrenCount() const { abort(); return 0; }
   const CpuProfileNode* GetChild(int index) const {
     (void)index;
     return nullptr;
   }
-  unsigned GetNodeId() const { return 0; }
-  int GetScriptId() const { return 0; }
-  const char* GetBailoutReason() const { return ""; }
-  unsigned int GetHitLineCount() const { return 0; }
+  unsigned GetNodeId() const { abort(); return 0; }
+  int GetScriptId() const { abort(); return 0; }
+  const char* GetBailoutReason() const { abort(); return ""; }
+  unsigned int GetHitLineCount() const { abort(); return 0; }
 };
 
 // CpuProfile class
 class CpuProfile {
  public:
-  const char* GetTitle() const { return ""; }
-  const CpuProfileNode* GetTopDownRoot() const { return nullptr; }
-  int GetSamplesCount() const { return 0; }
+  const char* GetTitle() const { abort(); return ""; }
+  const CpuProfileNode* GetTopDownRoot() const { abort(); return nullptr; }
+  int GetSamplesCount() const { abort(); return 0; }
   const CpuProfileNode* GetSample(int index) const {
     (void)index;
     return nullptr;
@@ -132,9 +133,9 @@ class CpuProfile {
     (void)index;
     return 0;
   }
-  int64_t GetStartTime() const { return 0; }
-  int64_t GetEndTime() const { return 0; }
-  void Delete() {}
+  int64_t GetStartTime() const { abort(); return 0; }
+  int64_t GetEndTime() const { abort(); return 0; }
+  void Delete() { abort(); }
 };
 
 // CpuProfiler class
@@ -146,7 +147,7 @@ class CpuProfiler {
     return &instance;
   }
 
-  void Dispose() {}
+  void Dispose() { abort(); }
 
   void StartProfiling(Local<String> title, bool record_samples = false) {
     (void)title; (void)record_samples;
@@ -164,12 +165,12 @@ class CpuProfiler {
 // HeapProfiler class
 class HeapProfiler {
  public:
-  void TakeHeapSnapshot() {}
+  void TakeHeapSnapshot() { abort(); }
   bool StartTrackingHeapObjects(bool track_allocations = false) {
     (void)track_allocations;
     return false;
   }
-  void StopTrackingHeapObjects() {}
+  void StopTrackingHeapObjects() { abort(); }
 };
 
 // Tracing API
@@ -238,7 +239,7 @@ inline int DoubleToCString(double v, char* buf, int buf_size) {
 template <typename T, int kSize>
 class RingBuffer {
  public:
-  RingBuffer() : pos_(0), count_(0) {}
+  RingBuffer() : pos_(0), count_(0) { abort(); }
 
   void Push(const T& value) {
     buffer_[pos_] = value;
