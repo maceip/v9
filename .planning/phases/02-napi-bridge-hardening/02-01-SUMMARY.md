@@ -57,11 +57,20 @@
 - `npm run test:integration` -> pass
 - `make test-soak-quick` -> pass
 - `node tests/test-soak.mjs --profile integration --duration-sec 60` -> pass
+- `node tests/test-soak.mjs --profile nightly --duration-sec 120` -> **fails by threshold** (expected strict gate behavior)
+
+## Additional hardening after nightly run attempt
+
+- Hardened bridge memory marshaling against out-of-bounds writes/reads in `napi-bridge/index.js`:
+  - `isMemoryRangeValid(...)` helper added,
+  - guarded `readString`, `writeString`, `writeI32`, `writeF64`, `readCString`.
+- This fixed a nightly soak crash (`RangeError: Invalid typed array length`) and turned it into threshold-based failure reporting instead of runtime abort.
 
 ## Remaining to close Phase 2
 
 1. **NAPI-02 nightly evidence packet**
    - Run the full 30+ minute nightly soak profile in CI and capture artifact history/graphs for acceptance packet.
+   - Current strict-profile trend indicates heavy growth under long run; requires follow-up bridge cleanup work before NAPI-02 close.
 
 2. **Bridge strictness ratchet**
    - Continue reducing compatibility fallbacks while keeping bootstrap green.

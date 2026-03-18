@@ -5,7 +5,7 @@ milestone_name: milestone
 status: executing
 stopped_at: Phase 2 Plan 02-01 (CurSOR workstreams delivered; nightly soak evidence pending)
 last_updated: "2026-03-18T23:45:00.000Z"
-last_activity: 2026-03-18 -- CurSOR hardening wave shipped (strict gating, browser smoke, guardrails, soak harness, CI tiers)
+last_activity: 2026-03-18 -- Nightly strict soak exercised; OOB bridge write crash fixed; thresholds now fail cleanly for growth
 progress:
   total_phases: 6
   completed_phases: 0
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-03-18)
 
 Phase: 2 of 6 (N-API Bridge Hardening)
 Plan: 1 of 1 in current phase (02-01 in progress)
-Status: Executing — CurSOR-tagged hardening workstreams implemented; full nightly soak evidence pending
-Last activity: 2026-03-18 -- strict gating, browser smoke, instrumentation counters, soak harness, CI tiers, and guardrails added
+Status: Executing — CurSOR-tagged hardening workstreams implemented; nightly strict profile now running as gate and exposing remaining long-run growth
+Last activity: 2026-03-18 -- nightly strict soak run surfaced growth; bridge OOB write crash patched
 
 Progress: [##........] 17%
 
@@ -64,11 +64,12 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 - Full 30+ minute nightly soak/perf evidence run and artifact review.
+- Follow-up remediation for strict-profile long-run growth before NAPI-02 closure.
 - Phase 2 closure documentation package for NAPI-01/NAPI-02.
 
 ### Blockers/Concerns
 
-- [Phase 2]: Nightly (30+ minute) soak run evidence still required for NAPI-02 closure packet.
+- [Phase 2]: Nightly strict profile currently reports high long-run growth (handles/refs/memory), blocking NAPI-02 closure.
 - [Phase 2]: Bootstrap compatibility paths still exist and should be ratcheted down under strict profile coverage.
 - [Research]: JSPI call-chain performance remains a concern and should continue to be monitored in soak trends.
 
