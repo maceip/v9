@@ -1,0 +1,28 @@
+# Build output
+build/
+dist/
+edgejs-src/
+.node-wasix32/
+
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Emscripten cache
+.emscripten_cache/
+*.bc
+*.o
+*.a
+
+# Logs
+*.log

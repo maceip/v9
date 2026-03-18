@@ -12,7 +12,7 @@ EdgeJS v9 delivers Claude Code running in the browser through six phases that fo
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Wasm Compilation** - Node.js C++ modules compile to .wasm and load in browser
+- [ ] **Phase 1: Wasm Compilation** - Node.js C++ modules compile to .wasm and load in browser (01-01 done)
 - [ ] **Phase 2: N-API Bridge Hardening** - Bridge is correct, leak-free, and performance-characterized
 - [ ] **Phase 3: Core Modules + Filesystem** - Runtime has working EventEmitter, streams, Buffer, fs, process, and browser builtins
 - [ ] **Phase 4: Networking** - HTTPS requests with SSE streaming work through browser fetch proxy
@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Consolidate shim headers with pointer width assertions and CMake/patch infrastructure
+- [x] 01-01-PLAN.md — Consolidate shim headers with pointer width assertions and CMake/patch infrastructure
 - [ ] 01-02-PLAN.md — Compile EdgeJS to .wasm via iterative error fixing and browser load verification
 
 ### Phase 2: N-API Bridge Hardening
@@ -44,10 +44,11 @@ Plans:
   1. Errors thrown in JS callback propagate through N-API and are retrievable via napi_get_last_error_info
   2. A 30-minute simulated session shows no monotonic handle count growth (handle scopes clean up correctly)
   3. A basic JS expression evaluated through the Wasm runtime returns the correct result (runtime.eval('1+1') === 2)
-**Plans**: TBD
+**Plans**: 2 plans (02-01 in progress, 02-02 defined)
 
 Plans:
-- [ ] 02-01: TBD
+- [ ] 02-01-PLAN.md — Bridge bootstrap correctness, error propagation, handle lifecycle hardening
+- [ ] 02-02-ENGINEERING-WORKSTREAMS.md — Production gap audit + hole-closing workstreams for Phase 1/2
 
 ### Phase 3: Core Modules + Filesystem
 **Goal**: The runtime provides working EventEmitter, Buffer, streams, process, path/url utilities, and a complete in-memory filesystem
@@ -119,8 +120,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Wasm Compilation | 0/2 | Planning complete | - |
-| 2. N-API Bridge Hardening | 0/? | Not started | - |
+| 1. Wasm Compilation | 1/2 | 01-01 done, 01-02 in progress | 01-01 |
+| 2. N-API Bridge Hardening | 0/2 | 02-01 in progress; 02-02 gap-closure plan defined | - |
 | 3. Core Modules + Filesystem | 0/? | Not started | - |
 | 4. Networking | 0/? | Not started | - |
 | 5. Subprocess Emulation | 0/? | Not started | - |

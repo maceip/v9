@@ -9,6 +9,8 @@
 // V8 constants are defined. A mismatch here means silent corruption.
 #include "wasi-pointer-assertions.h"
 
+#ifdef __cplusplus
+
 // ---- Size Constants ----
 #ifndef KB
 #define KB (1024)
@@ -186,6 +188,8 @@ static inline int execvp(const char*, char* const[]) { return -1; }
 #include "wasi-namespace-fixes.h"
 #include "wasi-v8-base-includes.h"
 #include "wasi-v8-essential-constants.h"
+
+#endif  // __cplusplus
 
 #endif  // defined(__wasi__) || defined(__EMSCRIPTEN__)
 #endif  // WASI_ALL_FIXES_H_
