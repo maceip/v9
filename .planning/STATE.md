@@ -4,12 +4,12 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 Plan 02-01 (bridge hardening in progress)
-last_updated: "2026-03-18T18:30:00.000Z"
-last_activity: 2026-03-18 -- WS7-T3 release checklist and machine-enforced gate added; permissive runtime blockers still intentionally fail the gate
+last_updated: "2026-03-18T22:00:00.000Z"
+last_activity: 2026-03-18 -- Phase 3 planning complete (4 docs, 9 workstreams, 48 tasks); Codex off roster; 4 engineers assigned
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 2
+  total_plans: 4
   completed_plans: 1
   percent: 17
 ---
@@ -21,16 +21,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-18)
 
 **Core value:** Claude Code runs a full agentic conversation in the browser -- reads files, edits files, makes API calls, responds with results -- no local install required.
-**Current focus:** Phase 2: N-API Bridge Hardening
+**Current focus:** Phase 2 close-out + Phase 3 planning complete
+**Next phase:** Phase 3: Core Modules + Filesystem (planned, ready for execution)
 
 ## Current Position
 
-Phase: 2 of 6 (N-API Bridge Hardening)
-Plan: 1 of 1 in current phase (02-01 in progress)
-Status: Executing — bootstrap/probe path stable; WS7-T3 release gating added; soak/perf validation pending
-Last activity: 2026-03-18 -- release gate added and intentionally failing on remaining permissive runtime blockers
+Phase: 2 of 6 (N-API Bridge Hardening) — closing out
+Next: Phase 3 of 6 (Core Modules + Filesystem) — planned, 4 engineers assigned
+Plan: 02-01 in progress; 03-01 and 03-02 planned
+Status: Phase 2 closing; Phase 3 workstreams WS8-WS16 defined with 48 tasks across 4 engineers
+Last activity: 2026-03-18 -- Phase 3 planning delivered (context, 2 plans, engineering workstreams); Codex removed from roster
 
 Progress: [##........] 17%
+
+## Phase 3 Readiness
+
+**Engineers (4):** Gemini (infrastructure), cloud (core modules), Kimmy (API surface), CurSOR (engine + validation)
+**Workstreams:** WS8-WS16 (9 workstreams, 48 tasks)
+**Critical path:** WS8 (module registration) → WS9 (EventEmitter) → WS11 (Streams) → WS12 (process) → WS15 (fs API)
+**Parallel tracks:** WS10 (Buffer), WS13 (util), WS14 (MEMFS engine) can start immediately
+**Planning docs:** `.planning/phases/03-core-modules-filesystem/`
 
 ## Performance Metrics
 
@@ -73,6 +83,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-18T12:36:00.000Z
-Stopped at: Phase 2 progress snapshot documented
-Resume file: .planning/phases/02-napi-bridge-hardening/02-01-PLAN.md
+Last session: 2026-03-18T22:00:00.000Z
+Stopped at: Phase 3 planning complete; Phase 2 close-out in progress
+Resume file: .planning/phases/03-core-modules-filesystem/03-03-ENGINEERING-WORKSTREAMS.md
