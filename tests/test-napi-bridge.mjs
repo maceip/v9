@@ -409,28 +409,31 @@ test('writeF64 writes 64-bit float', () => {
   assert(Math.abs(val - Math.PI) < 1e-10);
 });
 
-// ---- WS3-T1: Unknown import fallback returns NAPI_GENERIC_FAILURE ----
+// ---- WS3-T1: Unknown import returns undefined (fail-fast) ----
 console.log('\nWS3-T1 — Unknown Import Strictness:');
 
-test('getImportModule returns NAPI_GENERIC_FAILURE for unknown imports', () => {
+test('getImportModule returns undefined for unknown imports (not a callable stub)', () => {
   const freshBridge = new NapiBridge(null);
   freshBridge.memory = { buffer: new ArrayBuffer(4096) };
   const importModule = freshBridge.getImportModule();
-  const status = importModule.totally_fake_napi_function(0, 0, 0);
-  assertEq(status, 9, 'unknown import should return NAPI_GENERIC_FAILURE (9)');
+  const value = importModule.totally_fake_napi_function;
+  assertEq(value, undefined, 'unknown import should return undefined, not a function');
   assert(freshBridge.missingImports.has('totally_fake_napi_function'),
     'missing import should be recorded');
-  assert(freshBridge.importErrorCounts.has('totally_fake_napi_function'),
-    'error count should be tracked for unknown imports');
 });
 
-test('getImportModule traces unknown imports with MISSING: prefix', () => {
+test('calling an unknown import throws TypeError (fail-fast)', () => {
   const freshBridge = new NapiBridge(null);
   freshBridge.memory = { buffer: new ArrayBuffer(4096) };
   const importModule = freshBridge.getImportModule();
-  importModule.nonexistent_func(0);
-  const lastTrace = freshBridge.importCallTrace[freshBridge.importCallTrace.length - 1];
-  assert(lastTrace.startsWith('MISSING:'), `trace should start with MISSING: but got ${lastTrace}`);
+  let threw = false;
+  try {
+    importModule.nonexistent_func(0);
+  } catch (e) {
+    threw = true;
+    assert(e instanceof TypeError, `expected TypeError but got ${e.constructor.name}`);
+  }
+  assert(threw, 'calling unknown import should throw TypeError');
 });
 
 test('getImportModule still succeeds for known imports', () => {

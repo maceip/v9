@@ -2026,17 +2026,14 @@ class NapiBridge {
           return wrappedFn;
         }
         if (typeof prop !== 'string') return undefined;
-        return (...args) => {
-          bridge.recordMissingImport(prop);
-          bridge.importCallCounts.set(prop, (bridge.importCallCounts.get(prop) || 0) + 1);
-          bridge.importErrorCounts.set(prop, (bridge.importErrorCounts.get(prop) || 0) + 1);
-          bridge.importCallTrace.push(`MISSING:${prop}`);
-          if (bridge.importCallTrace.length > 5000) {
-            bridge.importCallTrace.shift();
-          }
-          void args;
-          return NAPI_GENERIC_FAILURE;
-        };
+        // Record the missing import for diagnostics, but do NOT return a
+        // callable stub.  Returning a function here lets any typo or truly
+        // unimplemented NAPI call silently succeed at the lookup stage,
+        // deferring the failure to a confusing NAPI_GENERIC_FAILURE deep
+        // inside the call.  Returning undefined instead makes the failure
+        // immediate and obvious (TypeError: ... is not a function).
+        bridge.recordMissingImport(prop);
+        return undefined;
       },
     });
   }
@@ -2308,7 +2305,7 @@ export async function initEdgeJS(options = {}) {
        * Populates the given meta object with url, resolve, etc.
        */
       initializeImportMeta(metaObject, moduleObject) {
-        const envId = bridge.nextEnvId - 1;
+        const envId = bridge.activeEnv;
         return bridge.invokeInitializeImportMeta(envId, metaObject, moduleObject);
       },
 
