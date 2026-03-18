@@ -1,0 +1,56 @@
+name: Nightly Soak
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly-soak:
+    name: Nightly soak/perf tier
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+          CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
+          echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+
+      - name: Configure and build
+        run: |
+          source "$EMSDK/emsdk_env.sh"
+          make configure
+          make build
+
+      - name: Nightly integration + soak
+        env:
+          EDGEJS_STRICT_IMPORTS: '1'
+          SOAK_REPORT_PATH: .planning/evidence/nightly-soak-report.json
+        run: |
+          source "$EMSDK/emsdk_env.sh"
+          make test-integration
+          make test-soak-nightly
+
+      - name: Upload soak report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-soak-report
+          path: .planning/evidence/nightly-soak-report.json

@@ -15,7 +15,10 @@
 
 SHELL := /bin/bash
 .ONESHELL:
-.PHONY: all setup fetch configure build test clean distclean lint size help release-gate test-release-gate
+.PHONY: all setup fetch configure build test clean distclean lint size help \
+	release-gate test-release-gate test-manifest bench \
+	test-browser test-runtime-stability test-soak-quick test-soak-integration \
+	test-soak-nightly test-quick test-integration test-nightly test-guardrails
 
 # ---- Paths ----
 ROOT_DIR   := $(shell pwd)
@@ -149,7 +152,7 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Build complete"
 
 # ---- Test ----
-test: test-unit test-napi test-wasm test-manifest
+test: test-unit test-napi test-guardrails test-wasm test-manifest
 
 test-unit:
 	@echo ">>> Running unit tests..."
@@ -158,6 +161,10 @@ test-unit:
 test-napi:
 	@echo ">>> Running N-API bridge tests..."
 	cd $(ROOT_DIR) && node tests/test-napi-bridge.mjs
+
+test-guardrails:
+	@echo ">>> Running guardrail tests..."
+	cd $(ROOT_DIR) && node tests/test-guardrails.mjs
 
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
@@ -178,6 +185,38 @@ test-manifest:
 bench:
 	@echo ">>> Running JSPI Call-Chain Benchmarks..."
 	cd $(ROOT_DIR) && node --experimental-wasm-jspi tests/benchmark-jspi.mjs
+
+test-browser:
+	@echo ">>> Running browser smoke tests..."
+	cd $(ROOT_DIR) && node tests/test-browser-smoke.mjs
+
+test-runtime-stability:
+	@echo ">>> Running runtime stability tests..."
+	cd $(ROOT_DIR) && node tests/test-runtime-stability.mjs
+
+test-soak-quick:
+	@echo ">>> Running quick soak profile..."
+	cd $(ROOT_DIR) && node tests/test-soak.mjs --profile quick
+
+test-soak-integration:
+	@echo ">>> Running integration soak profile..."
+	cd $(ROOT_DIR) && node tests/test-soak.mjs --profile integration
+
+test-soak-nightly:
+	@echo ">>> Running nightly soak profile..."
+	cd $(ROOT_DIR) && node tests/test-soak.mjs --profile nightly
+
+test-quick: test-unit test-napi test-guardrails
+
+test-integration: test-quick
+	@echo ">>> Running strict integration tier..."
+	cd $(ROOT_DIR) && EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs
+	cd $(ROOT_DIR) && EDGEJS_STRICT_IMPORTS=1 node tests/test-runtime-stability.mjs
+	cd $(ROOT_DIR) && EDGEJS_STRICT_IMPORTS=1 node tests/test-browser-smoke.mjs
+
+test-nightly: test-integration
+	@echo ">>> Running strict nightly soak tier..."
+	cd $(ROOT_DIR) && EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly
 
 # ---- Size Report ----
 size:

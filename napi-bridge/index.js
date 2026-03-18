@@ -74,14 +74,71 @@ function utf8ByteLength(value) {
   return encodeUtf8(value).length;
 }
 
+function sumMapValues(map) {
+  let total = 0;
+  for (const value of map.values()) {
+    total += Number(value) || 0;
+  }
+  return total;
+}
+
+function extractErrorSourceMetadata(value) {
+  const fallbackMessage = value instanceof Error
+    ? (value.message || value.name || 'Unknown error')
+    : String(value ?? 'Unknown error');
+  const stackText = value instanceof Error
+    ? String(value.stack || '')
+    : '';
+
+  const stackLines = stackText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let frameLine = '';
+  let sourceLine = fallbackMessage;
+  let scriptResourceName = 'unknown';
+  let lineNumber = 0;
+  let startColumn = 0;
+  let endColumn = 0;
+
+  const firstFrame = stackLines.find((line) => line.startsWith('at ')) || '';
+  if (firstFrame) {
+    frameLine = firstFrame;
+    sourceLine = firstFrame;
+    const match = firstFrame.match(/\(?(.+?):(\d+):(\d+)\)?$/);
+    if (match) {
+      scriptResourceName = match[1];
+      lineNumber = Number(match[2]) || 0;
+      startColumn = Number(match[3]) || 0;
+      endColumn = startColumn;
+    }
+  } else if (stackLines.length > 0) {
+    sourceLine = stackLines[0];
+  }
+
+  const thrownAt = frameLine || `${scriptResourceName}:${lineNumber}:${startColumn}`;
+
+  return {
+    sourceLine,
+    scriptResourceName,
+    lineNumber,
+    startColumn,
+    endColumn,
+    thrownAt,
+  };
+}
+
 /**
  * NapiBridge manages the mapping between Wasm-side napi_value handles
  * and real JavaScript values in the browser.
  */
 class NapiBridge {
-  constructor(wasmModule) {
+  constructor(wasmModule, options = {}) {
     this.wasm = wasmModule;
     this.memory = null; // Set when module initializes
+    this.logNapiErrors = options.logNapiErrors !== false;
+    this.strictUnknownImports = Boolean(options.strictUnknownImports);
 
     // Handle table: maps integer handles ↔ JS values
     // Handle 0 is reserved as "null pointer / invalid handle"
@@ -94,6 +151,7 @@ class NapiBridge {
     this.refs = new Map(); // handle → refcount
     this.wrappedNativePointers = new Map(); // handle -> native pointer (fallback)
     this.wrappedNativePointersByObject = new WeakMap(); // object -> native pointer
+    this.wrappedNativePointersByObjectCount = 0;
     this.arrayBufferMetadata = new Map(); // handle -> { dataPtr, byteLength }
     this.nextCallbackInfo = 0x3000;
     this.callbackInfos = new Map();
@@ -176,6 +234,9 @@ class NapiBridge {
   }
 
   closeHandleScope() {
+    if (this.handleScopes.length <= 1) {
+      return NAPI_GENERIC_FAILURE;
+    }
     const scope = this.handleScopes.pop();
     if (!scope) return NAPI_GENERIC_FAILURE;
 
@@ -196,10 +257,20 @@ class NapiBridge {
     return null;
   }
 
+  isMemoryRangeValid(ptr, length = 1) {
+    const buffer = this.getMemoryBuffer();
+    if (!buffer) return false;
+    if (!Number.isInteger(ptr) || ptr < 0) return false;
+    if (!Number.isInteger(length) || length < 0) return false;
+    if (ptr > buffer.byteLength) return false;
+    return ptr + length <= buffer.byteLength;
+  }
+
   readCString(ptr, maxLen = 64 * 1024) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return '';
     const bytes = new Uint8Array(buffer);
+    if (ptr < 0 || ptr >= bytes.length) return '';
     let end = ptr;
     const limit = Math.min(bytes.length, ptr + maxLen);
     while (end < limit && bytes[end] !== 0) end++;
@@ -330,6 +401,30 @@ class NapiBridge {
     }
   }
 
+  getInstrumentationCounters() {
+    return {
+      activeHandles: this.getActiveHandleCount(),
+      handleScopeDepth: this.handleScopes.length,
+      freeHandleSlots: this.handleFreeList.length,
+      activeRefs: this.refs.size,
+      totalRefCount: sumMapValues(this.refs),
+      callbackInfoCount: this.callbackInfos.size,
+      wrappedPointerCount: this.wrappedNativePointers.size,
+      wrappedObjectPointerCount: this.wrappedNativePointersByObjectCount,
+      arrayBufferMetadataCount: this.arrayBufferMetadata.size,
+    };
+  }
+
+  getErrorSourceMetadata(errorHandle) {
+    let value;
+    try {
+      value = this.getHandle(errorHandle);
+    } catch {
+      value = undefined;
+    }
+    return extractErrorSourceMetadata(value);
+  }
+
   ensureLastErrorStorage() {
     const buffer = this.getMemoryBuffer();
     if (!buffer) return;
@@ -347,6 +442,7 @@ class NapiBridge {
   readString(ptr, len) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr || len <= 0) return '';
+    if (!this.isMemoryRangeValid(ptr, len)) return '';
     const bytes = new Uint8Array(buffer, ptr, len);
     return decodeUtf8(bytes);
   }
@@ -355,8 +451,12 @@ class NapiBridge {
   writeString(ptr, str, maxLen) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr || maxLen <= 0) return 0;
+    if (!this.isMemoryRangeValid(ptr, 1)) return 0;
     const bytes = encodeUtf8(str);
-    const writeLen = Math.min(bytes.length, maxLen - 1);
+    const availableBytes = buffer.byteLength - ptr;
+    if (availableBytes <= 0) return 0;
+    const writeLen = Math.min(bytes.length, maxLen - 1, availableBytes - 1);
+    if (writeLen < 0) return 0;
     const target = new Uint8Array(buffer, ptr, writeLen + 1);
     target.set(bytes.subarray(0, writeLen));
     target[writeLen] = 0; // null terminator
@@ -367,6 +467,7 @@ class NapiBridge {
   writeI32(ptr, value) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return;
+    if (!this.isMemoryRangeValid(ptr, 4)) return;
     new DataView(buffer).setInt32(ptr, value, true);
   }
 
@@ -374,6 +475,7 @@ class NapiBridge {
   writeF64(ptr, value) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return;
+    if (!this.isMemoryRangeValid(ptr, 8)) return;
     new DataView(buffer).setFloat64(ptr, value, true);
   }
 
@@ -1395,7 +1497,11 @@ class NapiBridge {
         const value = bridge.getHandle(objectHandle);
         bridge.wrappedNativePointers.set(objectHandle, ptr);
         if (value && (typeof value === 'object' || typeof value === 'function')) {
+          const hadObjectWrap = bridge.wrappedNativePointersByObject.has(value);
           bridge.wrappedNativePointersByObject.set(value, ptr);
+          if (!hadObjectWrap) {
+            bridge.wrappedNativePointersByObjectCount++;
+          }
         }
         if (resultPtr) {
           // Mirror create_reference behavior: return a ref token keyed by object handle.
@@ -1425,7 +1531,13 @@ class NapiBridge {
         let nativePtr = 0;
         if (value && (typeof value === 'object' || typeof value === 'function')) {
           nativePtr = bridge.wrappedNativePointersByObject.get(value) || 0;
-          bridge.wrappedNativePointersByObject.delete(value);
+          const had = bridge.wrappedNativePointersByObject.delete(value);
+          if (had) {
+            bridge.wrappedNativePointersByObjectCount = Math.max(
+              0,
+              bridge.wrappedNativePointersByObjectCount - 1,
+            );
+          }
         }
         if (!nativePtr) {
           nativePtr = bridge.wrappedNativePointers.get(objectHandle) || 0;
@@ -1580,7 +1692,9 @@ class NapiBridge {
         const error = new Error(msg || 'N-API error');
         if (code) error.code = code;
         bridge.setPendingException(error);
-        console.error(`[napi] Error: ${msg}`);
+        if (bridge.logNapiErrors) {
+          console.error(`[napi] Error: ${msg}`);
+        }
         return NAPI_OK;
       },
 
@@ -1946,26 +2060,32 @@ class NapiBridge {
       },
 
       unofficial_napi_get_error_source_positions(env, errorHandle, outPtr) {
-        void env; void errorHandle;
+        void env;
+        const metadata = bridge.getErrorSourceMetadata(errorHandle);
         // unofficial_napi_error_source_positions:
         // source_line, script_resource_name, line_number, start_column, end_column
-        bridge.writeI32(outPtr + 0, 1); // undefined handle
-        bridge.writeI32(outPtr + 4, 1); // undefined handle
-        bridge.writeI32(outPtr + 8, 0);
-        bridge.writeI32(outPtr + 12, 0);
-        bridge.writeI32(outPtr + 16, 0);
+        bridge.writeI32(outPtr + 0, bridge.createHandle(metadata.sourceLine));
+        bridge.writeI32(outPtr + 4, bridge.createHandle(metadata.scriptResourceName));
+        bridge.writeI32(outPtr + 8, metadata.lineNumber | 0);
+        bridge.writeI32(outPtr + 12, metadata.startColumn | 0);
+        bridge.writeI32(outPtr + 16, metadata.endColumn | 0);
         return NAPI_OK;
       },
 
       unofficial_napi_get_error_source_line_for_stderr(env, errorHandle, resultOutPtr) {
-        void env; void errorHandle;
-        bridge.writeI32(resultOutPtr, 1); // undefined
+        void env;
+        const metadata = bridge.getErrorSourceMetadata(errorHandle);
+        const rendered = metadata.lineNumber > 0
+          ? `${metadata.scriptResourceName}:${metadata.lineNumber}:${metadata.startColumn}\n${metadata.sourceLine}`
+          : metadata.sourceLine;
+        bridge.writeI32(resultOutPtr, bridge.createHandle(rendered));
         return NAPI_OK;
       },
 
       unofficial_napi_get_error_thrown_at(env, errorHandle, resultOutPtr) {
-        void env; void errorHandle;
-        bridge.writeI32(resultOutPtr, 1); // undefined
+        void env;
+        const metadata = bridge.getErrorSourceMetadata(errorHandle);
+        bridge.writeI32(resultOutPtr, bridge.createHandle(metadata.thrownAt));
         return NAPI_OK;
       },
 
@@ -1975,9 +2095,14 @@ class NapiBridge {
         sourceLineOutPtr,
         thrownAtOutPtr,
       ) {
-        void env; void errorHandle;
-        if (sourceLineOutPtr) bridge.writeI32(sourceLineOutPtr, 1); // undefined
-        if (thrownAtOutPtr) bridge.writeI32(thrownAtOutPtr, 1); // undefined
+        void env;
+        const metadata = bridge.getErrorSourceMetadata(errorHandle);
+        if (sourceLineOutPtr) {
+          bridge.writeI32(sourceLineOutPtr, bridge.createHandle(metadata.sourceLine));
+        }
+        if (thrownAtOutPtr) {
+          bridge.writeI32(thrownAtOutPtr, bridge.createHandle(metadata.thrownAt));
+        }
         return NAPI_OK;
       },
 
@@ -2049,7 +2174,13 @@ class NapiBridge {
  * @returns {Promise<object>} EdgeJS runtime instance
  */
 export async function initEdgeJS(options = {}) {
-  const bridge = new NapiBridge(null);
+  const strictUnknownImportsOption =
+    options.strictUnknownImports ??
+    (typeof process !== 'undefined' && process.env?.EDGEJS_STRICT_IMPORTS === '1');
+  const bridge = new NapiBridge(null, {
+    logNapiErrors: options.logNapiErrors,
+    strictUnknownImports: strictUnknownImportsOption,
+  });
 
   const isNode = typeof process !== 'undefined' && !!process.versions?.node;
 
@@ -2202,6 +2333,9 @@ export async function initEdgeJS(options = {}) {
       throw new Error('Edge main entry point not available');
     }
 
+    const baselineScopeDepth = bridge.handleScopes.length;
+    bridge.openHandleScope();
+
     const cliArgs = ['edge', ...args.map((arg) => String(arg))];
     bridge.lastMainArgPath = cliArgs[1] || '';
     const argvPointers = [];
@@ -2222,11 +2356,16 @@ export async function initEdgeJS(options = {}) {
 
       return instance._main(cliArgs.length, argvPtr);
     } finally {
-      if (argvPtr) {
-        instance._free(argvPtr);
+      if (typeof instance._free === 'function') {
+        if (argvPtr) {
+          instance._free(argvPtr);
+        }
+        for (const ptr of argvPointers) {
+          instance._free(ptr);
+        }
       }
-      for (const ptr of argvPointers) {
-        instance._free(ptr);
+      while (bridge.handleScopes.length > baselineScopeDepth) {
+        bridge.closeHandleScope();
       }
     }
   }
@@ -2320,8 +2459,9 @@ export async function initEdgeJS(options = {}) {
 
     /** Bridge diagnostics for Phase 2 leak/error characterization. */
     diagnostics() {
+      const counters = bridge.getInstrumentationCounters();
       return {
-        activeHandles: bridge.getActiveHandleCount(),
+        ...counters,
         missingImports: Object.fromEntries(bridge.missingImports),
         importCalls: Object.fromEntries(bridge.importCallCounts),
         importErrors: Object.fromEntries(bridge.importErrorCounts),
