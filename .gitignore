@@ -2,6 +2,7 @@
 build/
 dist/
 edgejs-src/
+.node-wasix32/
 
 # Dependencies
 node_modules/
