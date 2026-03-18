@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 Plan 02-01 (bridge hardening in progress)
-last_updated: "2026-03-18T12:36:00.000Z"
-last_activity: 2026-03-18 -- Phase 2 bootstrap stabilized, eval/runFile probes green, soak validation pending
+last_updated: "2026-03-18T18:30:00.000Z"
+last_activity: 2026-03-18 -- WS7-T3 release checklist and machine-enforced gate added; permissive runtime blockers still intentionally fail the gate
 progress:
   total_phases: 6
   completed_phases: 0
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-03-18)
 
 Phase: 2 of 6 (N-API Bridge Hardening)
 Plan: 1 of 1 in current phase (02-01 in progress)
-Status: Executing — bootstrap and probe path stable; soak/perf validation pending
-Last activity: 2026-03-18 -- eval('1+1') and runFile('/probe.js') probes passing with clean diagnostics
+Status: Executing — bootstrap/probe path stable; WS7-T3 release gating added; soak/perf validation pending
+Last activity: 2026-03-18 -- release gate added and intentionally failing on remaining permissive runtime blockers
 
 Progress: [##........] 17%
 

@@ -11,6 +11,11 @@
 - Corrected wrap/unwrap native pointer identity behavior to reduce handle/reference mismatches.
 - Added runtime-safe UTF-8/UTF-16 and buffer/property helper behavior needed by bootstrap modules.
 
+### Integration/release gating
+- Added a phase close checklist that translates WS7-T3 into explicit Phase 1/2 checkpoints.
+- Added a machine-enforced release gate script and target to block phase close while permissive runtime/test behaviors still exist.
+- Added unit coverage for the release gate so checklist and guard logic are exercised without needing a full release-ready runtime.
+
 ### Runtime behavior improvements
 - `initEdgeJS()` now initializes quickly with clean diagnostics in probe flow.
 - `eval()` probe path now returns deterministic results (`'1+1' -> 2`).

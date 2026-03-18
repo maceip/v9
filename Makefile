@@ -15,7 +15,7 @@
 
 SHELL := /bin/bash
 .ONESHELL:
-.PHONY: all setup fetch configure build test clean distclean lint size help
+.PHONY: all setup fetch configure build test clean distclean lint size help release-gate test-release-gate
 
 # ---- Paths ----
 ROOT_DIR   := $(shell pwd)
@@ -70,6 +70,8 @@ help:
 	@echo "  make size        Show output sizes"
 	@echo "  make clean       Remove build artifacts"
 	@echo "  make distclean   Remove everything (including sources)"
+	@echo "  make test-release-gate Run release gate unit tests"
+	@echo "  make release-gate Run the phase close release gate"
 	@echo "  make all         Full build pipeline"
 	@echo ""
 	@echo "Variables:"
@@ -160,6 +162,14 @@ test-napi:
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
 	cd $(ROOT_DIR) && node tests/test-wasm-load.mjs
+
+test-release-gate:
+	@echo ">>> Running release gate unit tests..."
+	cd $(ROOT_DIR) && node tests/test-release-gate.mjs
+
+release-gate:
+	@echo ">>> Running phase close release gate..."
+	cd $(ROOT_DIR) && node scripts/release-gate.mjs
 
 # ---- Size Report ----
 size:
