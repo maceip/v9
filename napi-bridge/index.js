@@ -237,6 +237,92 @@ class NapiBridge {
     return count;
   }
 
+  /**
+   * Invoke the stored import-module-dynamically callback when user code
+   * calls `import(specifier)` inside a contextified script.
+   *
+   * The callback was registered by the C++ module_wrap layer via
+   * unofficial_napi_module_wrap_set_import_module_dynamically_callback.
+   * It receives (env, specifier, assertions, referrer) and returns a
+   * handle to a Promise resolving to the module namespace.
+   *
+   * @param {number} env - N-API environment pointer
+   * @param {string} specifier - The module specifier string
+   * @param {object} importAssertions - Import assertions object (may be empty)
+   * @param {string} referrer - The referrer module URL/path
+   * @returns {{ status: number, resultHandle: number }}
+   */
+  invokeImportModuleDynamically(env, specifier, importAssertions, referrer) {
+    const callbackHandle = this.moduleWrapImportModuleDynamicallyCallback;
+    if (!callbackHandle || !this.wasm || typeof this.wasm.dynCall !== 'function') {
+      return { status: NAPI_GENERIC_FAILURE, resultHandle: 0 };
+    }
+    const specHandle = this.createHandle(specifier);
+    const assertHandle = this.createHandle(importAssertions || {});
+    const refHandle = this.createHandle(referrer || '');
+    const cbinfo = this.nextCallbackInfo++;
+    this.callbackInfos.set(cbinfo, {
+      thisHandle: 3, // globalThis
+      argHandles: [specHandle, assertHandle, refHandle],
+      dataPtr: 0,
+    });
+    try {
+      const resultHandle = this.wasm.dynCall('iii', callbackHandle, [env, cbinfo]);
+      if (typeof resultHandle === 'number' && resultHandle > 0) {
+        return { status: NAPI_OK, resultHandle };
+      }
+      return { status: NAPI_OK, resultHandle: 1 }; // undefined
+    } catch (e) {
+      this.setPendingException(e);
+      return { status: NAPI_PENDING_EXCEPTION, resultHandle: 0 };
+    } finally {
+      this.callbackInfos.delete(cbinfo);
+      this.freeHandle(specHandle);
+      this.freeHandle(assertHandle);
+      this.freeHandle(refHandle);
+    }
+  }
+
+  /**
+   * Invoke the stored initialize-import-meta callback when `import.meta`
+   * is accessed inside a module.
+   *
+   * The callback was registered by the C++ module_wrap layer via
+   * unofficial_napi_module_wrap_set_initialize_import_meta_object_callback.
+   * It receives (env, metaObject, module) and populates the meta object
+   * with properties like `url` and `resolve`.
+   *
+   * @param {number} env - N-API environment pointer
+   * @param {object} metaObject - The import.meta object to populate
+   * @param {object} moduleObject - The module wrapper object
+   * @returns {number} N-API status code
+   */
+  invokeInitializeImportMeta(env, metaObject, moduleObject) {
+    const callbackHandle = this.moduleWrapInitializeImportMetaObjectCallback;
+    if (!callbackHandle || !this.wasm || typeof this.wasm.dynCall !== 'function') {
+      return NAPI_GENERIC_FAILURE;
+    }
+    const metaHandle = this.createHandle(metaObject);
+    const modHandle = this.createHandle(moduleObject || {});
+    const cbinfo = this.nextCallbackInfo++;
+    this.callbackInfos.set(cbinfo, {
+      thisHandle: 3, // globalThis
+      argHandles: [metaHandle, modHandle],
+      dataPtr: 0,
+    });
+    try {
+      this.wasm.dynCall('iii', callbackHandle, [env, cbinfo]);
+      return NAPI_OK;
+    } catch (e) {
+      this.setPendingException(e);
+      return NAPI_PENDING_EXCEPTION;
+    } finally {
+      this.callbackInfos.delete(cbinfo);
+      this.freeHandle(metaHandle);
+      this.freeHandle(modHandle);
+    }
+  }
+
   ensureLastErrorStorage() {
     const buffer = this.getMemoryBuffer();
     if (!buffer) return;
@@ -1344,13 +1430,12 @@ class NapiBridge {
 
       // --- Function Calls ---
       napi_call_function(env, thisHandle, fnHandle, argc, argvPtr, resultPtr) {
-        const thisVal = bridge.getHandle(thisHandle);
         const fn = bridge.getHandle(fnHandle);
         if (typeof fn !== 'function') {
-          if (resultPtr) bridge.writeI32(resultPtr, 1); // undefined
-          bridge.setLastError(NAPI_OK, '');
-          return NAPI_OK;
+          bridge.setLastError(NAPI_FUNCTION_EXPECTED, 'Function expected');
+          return NAPI_FUNCTION_EXPECTED;
         }
+        const thisVal = bridge.getHandle(thisHandle);
         const buffer = bridge.getMemoryBuffer();
         if (!buffer) {
           bridge.setLastError(NAPI_GENERIC_FAILURE, 'Wasm memory not initialized');
@@ -1362,11 +1447,6 @@ class NapiBridge {
           const argHandle = view.getInt32(argvPtr + i * 4, true);
           args.push(bridge.getHandle(argHandle));
         }
-        if (typeof fn === 'function' && fn.name === 'lstat') {
-          if ((args[0] == null) && bridge.lastMainArgPath) {
-            args[0] = bridge.lastMainArgPath;
-          }
-        }
         try {
           const result = fn.apply(thisVal, args);
           if (resultPtr) {
@@ -1375,21 +1455,13 @@ class NapiBridge {
           bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
         } catch (e) {
-          const message = String(e?.message || e);
-          if (
-            message.includes('getter called on non-') ||
-            message.includes('called on incompatible receiver')
-          ) {
-            if (resultPtr) bridge.writeI32(resultPtr, 1); // undefined
-            bridge.setLastError(NAPI_OK, '');
-            return NAPI_OK;
-          }
-          const fnName = typeof fn === 'function' ? (fn.name || 'anonymous') : String(fn);
+          const fnName = fn.name || 'anonymous';
           const thisType = thisVal === null ? 'null' : typeof thisVal;
           const thisCtor =
             thisVal && (typeof thisVal === 'object' || typeof thisVal === 'function')
               ? (thisVal.constructor?.name || 'Object')
               : '';
+          const message = String(e?.message || e);
           const stack = String(e?.stack || '').split('\n').slice(0, 3).join(' | ');
           bridge.importCallTrace.push(
             `napi_call_function:error:${fnName}:${thisHandle}:${fnHandle}:${thisType}:${thisCtor}:${message}:${stack}`,
@@ -1787,6 +1859,17 @@ class NapiBridge {
             sourceMapURL: undefined,
             cachedDataProduced: false,
             cachedDataRejected: false,
+            importModuleDynamically(specifier, assertions) {
+              const { status, resultHandle } =
+                bridge.invokeImportModuleDynamically(env, specifier, assertions, filename);
+              if (status !== NAPI_OK) {
+                return Promise.reject(
+                  new Error(`Dynamic import failed for '${specifier}' (status ${status})`),
+                );
+              }
+              const value = bridge.getHandle(resultHandle);
+              return value instanceof Promise ? value : Promise.resolve(value);
+            },
           };
           bridge.writeI32(resultOutPtr, bridge.createHandle(result));
           bridge.setLastError(NAPI_OK, '');
@@ -1805,7 +1888,7 @@ class NapiBridge {
         shouldDetectModule,
         resultOutPtr,
       ) {
-        void env; void isSeaMain; void shouldDetectModule;
+        void isSeaMain; void shouldDetectModule;
         try {
           const source = String(bridge.getHandle(codeHandle) ?? '');
           const filename = String(bridge.getHandle(filenameHandle) ?? '');
@@ -1823,6 +1906,17 @@ class NapiBridge {
             sourceMapURL: undefined,
             cachedDataRejected: false,
             canParseAsESM: false,
+            importModuleDynamically(specifier, assertions) {
+              const { status, resultHandle } =
+                bridge.invokeImportModuleDynamically(env, specifier, assertions, filename);
+              if (status !== NAPI_OK) {
+                return Promise.reject(
+                  new Error(`Dynamic import failed for '${specifier}' (status ${status})`),
+                );
+              }
+              const value = bridge.getHandle(resultHandle);
+              return value instanceof Promise ? value : Promise.resolve(value);
+            },
           };
           bridge.writeI32(resultOutPtr, bridge.createHandle(result));
           return NAPI_OK;
@@ -1916,12 +2010,13 @@ class NapiBridge {
         return (...args) => {
           bridge.recordMissingImport(prop);
           bridge.importCallCounts.set(prop, (bridge.importCallCounts.get(prop) || 0) + 1);
-          bridge.importCallTrace.push(prop);
+          bridge.importErrorCounts.set(prop, (bridge.importErrorCounts.get(prop) || 0) + 1);
+          bridge.importCallTrace.push(`MISSING:${prop}`);
           if (bridge.importCallTrace.length > 5000) {
             bridge.importCallTrace.shift();
           }
           void args;
-          return NAPI_OK;
+          return NAPI_GENERIC_FAILURE;
         };
       },
     });
@@ -2012,23 +2107,19 @@ export async function initEdgeJS(options = {}) {
     // Force import wiring for the extra "napi" module that Emscripten does not
     // include in getWasmImports() by default.
     instantiateWasm(info, receiveInstance) {
-      const envProxy = new Proxy(info.env || {}, {
+      // Minimal env-level overrides for functions that have no native Emscripten
+      // equivalent. Every other env import must be provided by the Emscripten
+      // glue; undefined imports will trap at instantiation.
+      const envOverrides = {
+        uv_setup_args: (argc, argv) => argv,
+        uv__hrtime: () => 0,
+      };
+      const envBase = info.env || {};
+      const envProxy = new Proxy(envBase, {
         get(target, prop) {
-          if (prop === 'uv_setup_args') {
-            return (argc, argv) => argv;
-          }
-          if (prop === 'uv__hrtime') {
-            return () => 0;
-          }
-
-          const value = target[prop];
-          if (typeof value === 'function' && value.stub) {
-            return () => 0;
-          }
-          if (value === undefined) {
-            return () => 0;
-          }
-          return value;
+          if (prop in envOverrides) return envOverrides[prop];
+          if (prop in target) return target[prop];
+          return undefined;
         },
       });
 
@@ -2166,6 +2257,48 @@ export async function initEdgeJS(options = {}) {
 
     /** Raw Emscripten module (for advanced use) */
     module: instance,
+
+    /**
+     * Module loading hooks — exposed for the module system to invoke
+     * callbacks registered by the C++ module_wrap layer.
+     */
+    moduleHooks: {
+      /**
+       * Invoke the dynamic import callback for `import(specifier)`.
+       * Returns a Promise resolving to the module namespace.
+       */
+      importModuleDynamically(specifier, assertions, referrer) {
+        const envId = bridge.nextEnvId - 1; // most recently created env
+        const { status, resultHandle } =
+          bridge.invokeImportModuleDynamically(envId, specifier, assertions, referrer);
+        if (status !== NAPI_OK) {
+          return Promise.reject(
+            new Error(`Dynamic import failed for '${specifier}' (status ${status})`),
+          );
+        }
+        const value = bridge.getHandle(resultHandle);
+        return value instanceof Promise ? value : Promise.resolve(value);
+      },
+
+      /**
+       * Invoke the import.meta initialization callback.
+       * Populates the given meta object with url, resolve, etc.
+       */
+      initializeImportMeta(metaObject, moduleObject) {
+        const envId = bridge.nextEnvId - 1;
+        return bridge.invokeInitializeImportMeta(envId, metaObject, moduleObject);
+      },
+
+      /** Check whether the dynamic import callback has been registered. */
+      get hasImportModuleDynamically() {
+        return bridge.moduleWrapImportModuleDynamicallyCallback !== 0;
+      },
+
+      /** Check whether the import.meta callback has been registered. */
+      get hasInitializeImportMeta() {
+        return bridge.moduleWrapInitializeImportMetaObjectCallback !== 0;
+      },
+    },
 
     /** Bridge diagnostics for Phase 2 leak/error characterization. */
     diagnostics() {

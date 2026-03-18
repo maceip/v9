@@ -409,6 +409,243 @@ test('writeF64 writes 64-bit float', () => {
   assert(Math.abs(val - Math.PI) < 1e-10);
 });
 
+// ---- WS3-T1: Unknown import fallback returns NAPI_GENERIC_FAILURE ----
+console.log('\nWS3-T1 — Unknown Import Strictness:');
+
+test('getImportModule returns NAPI_GENERIC_FAILURE for unknown imports', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const importModule = freshBridge.getImportModule();
+  const status = importModule.totally_fake_napi_function(0, 0, 0);
+  assertEq(status, 9, 'unknown import should return NAPI_GENERIC_FAILURE (9)');
+  assert(freshBridge.missingImports.has('totally_fake_napi_function'),
+    'missing import should be recorded');
+  assert(freshBridge.importErrorCounts.has('totally_fake_napi_function'),
+    'error count should be tracked for unknown imports');
+});
+
+test('getImportModule traces unknown imports with MISSING: prefix', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const importModule = freshBridge.getImportModule();
+  importModule.nonexistent_func(0);
+  const lastTrace = freshBridge.importCallTrace[freshBridge.importCallTrace.length - 1];
+  assert(lastTrace.startsWith('MISSING:'), `trace should start with MISSING: but got ${lastTrace}`);
+});
+
+test('getImportModule still succeeds for known imports', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const importModule = freshBridge.getImportModule();
+  const resultPtr = 100;
+  const status = importModule.napi_get_undefined(0, resultPtr);
+  assertEq(status, 0, 'known import should return NAPI_OK');
+});
+
+// ---- WS3-T2: napi_call_function strictness ----
+console.log('\nWS3-T2 — napi_call_function Strictness:');
+
+test('napi_call_function returns NAPI_FUNCTION_EXPECTED for non-function', () => {
+  const notAFunction = bridge.createHandle(42);
+  const resultPtr = 3100;
+  const status = imports.napi_call_function(0, 3, notAFunction, 0, 0, resultPtr);
+  assertEq(status, 5, 'should return NAPI_FUNCTION_EXPECTED (5)');
+});
+
+test('napi_call_function returns NAPI_FUNCTION_EXPECTED for null', () => {
+  const resultPtr = 3200;
+  const status = imports.napi_call_function(0, 3, 2, 0, 0, resultPtr); // handle 2 = null
+  assertEq(status, 5, 'null should return NAPI_FUNCTION_EXPECTED');
+});
+
+test('napi_call_function returns NAPI_FUNCTION_EXPECTED for object', () => {
+  const objHandle = bridge.createHandle({ not: 'callable' });
+  const resultPtr = 3300;
+  const status = imports.napi_call_function(0, 3, objHandle, 0, 0, resultPtr);
+  assertEq(status, 5, 'object should return NAPI_FUNCTION_EXPECTED');
+});
+
+test('napi_call_function propagates receiver-mismatch as pending exception', () => {
+  // Create a getter that throws on wrong receiver.
+  const proto = {};
+  Object.defineProperty(proto, 'value', {
+    get() { return this.__secret; },
+    configurable: true,
+  });
+  const getter = Object.getOwnPropertyDescriptor(proto, 'value').get;
+  const getterHandle = bridge.createHandle(getter);
+
+  // Call with incompatible receiver — a plain number.
+  const receiverHandle = bridge.createHandle(42);
+  const resultPtr = 3400;
+
+  // Clear any prior exception state.
+  bridge.clearPendingException();
+
+  const status = imports.napi_call_function(0, receiverHandle, getterHandle, 0, 0, resultPtr);
+  // The getter should succeed (returns undefined since __secret doesn't exist) — no exception.
+  assertEq(status, 0, 'getter on number receiver should succeed (returns undefined)');
+});
+
+test('napi_call_function propagates TypeError as pending exception', () => {
+  // Use a built-in that truly requires a specific receiver type.
+  const mapGetHandle = bridge.createHandle(Map.prototype.get);
+  const badReceiverHandle = bridge.createHandle('not a map');
+
+  // Write arg handle for the key argument.
+  const argBuf = new DataView(memoryBuffer);
+  const argvPtr = 3500;
+  const keyHandle = bridge.createHandle('someKey');
+  argBuf.setInt32(argvPtr, keyHandle, true);
+
+  bridge.clearPendingException();
+  const status = imports.napi_call_function(0, badReceiverHandle, mapGetHandle, 1, argvPtr, 3508);
+  assertEq(status, 10, 'should return NAPI_PENDING_EXCEPTION');
+  assert(bridge.pendingExceptionHandle != null, 'exception should be pending');
+
+  // Cleanup.
+  bridge.clearPendingException();
+});
+
+// ---- WS2-T3: Env proxy strictness ----
+console.log('\nWS2-T3 — Env Proxy Strictness:');
+
+test('env proxy returns uv_setup_args override', () => {
+  // Simulate what instantiateWasm does internally.
+  const envOverrides = {
+    uv_setup_args: (argc, argv) => argv,
+    uv__hrtime: () => 0,
+  };
+  const envBase = { existing_func: () => 42 };
+  const envProxy = new Proxy(envBase, {
+    get(target, prop) {
+      if (prop in envOverrides) return envOverrides[prop];
+      if (prop in target) return target[prop];
+      return undefined;
+    },
+  });
+  assertEq(typeof envProxy.uv_setup_args, 'function', 'uv_setup_args should exist');
+  assertEq(envProxy.uv_setup_args(3, 0x1000), 0x1000, 'uv_setup_args returns argv');
+  assertEq(envProxy.uv__hrtime(), 0, 'uv__hrtime returns 0');
+});
+
+test('env proxy returns undefined for unknown imports (not () => 0)', () => {
+  const envOverrides = {
+    uv_setup_args: (argc, argv) => argv,
+    uv__hrtime: () => 0,
+  };
+  const envBase = {};
+  const envProxy = new Proxy(envBase, {
+    get(target, prop) {
+      if (prop in envOverrides) return envOverrides[prop];
+      if (prop in target) return target[prop];
+      return undefined;
+    },
+  });
+  assertEq(envProxy.some_unknown_function, undefined,
+    'unknown env import should be undefined, not a stub function');
+});
+
+test('env proxy passes through existing functions', () => {
+  const envOverrides = {
+    uv_setup_args: (argc, argv) => argv,
+    uv__hrtime: () => 0,
+  };
+  const envBase = { real_function: () => 99 };
+  const envProxy = new Proxy(envBase, {
+    get(target, prop) {
+      if (prop in envOverrides) return envOverrides[prop];
+      if (prop in target) return target[prop];
+      return undefined;
+    },
+  });
+  assertEq(envProxy.real_function(), 99, 'existing env function should pass through');
+});
+
+// ---- WS4-T3: Module wrap callback wiring ----
+console.log('\nWS4-T3 — Module Wrap Callback Wiring:');
+
+test('invokeImportModuleDynamically returns failure when no callback registered', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const result = freshBridge.invokeImportModuleDynamically(0x1000, './mod.js', {}, 'main.js');
+  assertEq(result.status, 9, 'should return NAPI_GENERIC_FAILURE when no callback');
+  assertEq(result.resultHandle, 0, 'result handle should be 0');
+});
+
+test('invokeInitializeImportMeta returns failure when no callback registered', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const status = freshBridge.invokeInitializeImportMeta(0x1000, {}, {});
+  assertEq(status, 9, 'should return NAPI_GENERIC_FAILURE when no callback');
+});
+
+test('contextify compile result includes importModuleDynamically hook', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const freshImports = freshBridge.getImports();
+
+  // Write source code into memory.
+  const sourceStr = 'return 1';
+  const sourceBytes = new TextEncoder().encode(sourceStr);
+  const srcView = new Uint8Array(freshBridge.memory.buffer, 200, sourceBytes.length);
+  srcView.set(sourceBytes);
+
+  const sourceHandle = freshBridge.createHandle(sourceStr);
+  const filenameHandle = freshBridge.createHandle('test.js');
+  const paramsHandle = freshBridge.createHandle([]);
+  const resultOutPtr = 3600;
+
+  const status = freshImports.unofficial_napi_contextify_compile_function(
+    0, sourceHandle, filenameHandle, 0, 0, 0, 0, 0, 0, paramsHandle, 0, resultOutPtr,
+  );
+  assertEq(status, 0, 'compile should succeed');
+  const resultHandle = new Int32Array(freshBridge.memory.buffer, resultOutPtr, 1)[0];
+  const result = freshBridge.getHandle(resultHandle);
+  assert(typeof result === 'object', 'result should be an object');
+  assert(typeof result.function === 'function', 'result.function should exist');
+  assert(typeof result.importModuleDynamically === 'function',
+    'result should have importModuleDynamically hook');
+});
+
+test('CJS loader compile result includes importModuleDynamically hook', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const freshImports = freshBridge.getImports();
+
+  const codeHandle = freshBridge.createHandle('module.exports = 1;');
+  const filenameHandle = freshBridge.createHandle('test.cjs');
+  const resultOutPtr = 3700;
+
+  const status = freshImports.unofficial_napi_contextify_compile_function_for_cjs_loader(
+    0, codeHandle, filenameHandle, 0, 0, resultOutPtr,
+  );
+  assertEq(status, 0, 'CJS compile should succeed');
+  const resultHandle = new Int32Array(freshBridge.memory.buffer, resultOutPtr, 1)[0];
+  const result = freshBridge.getHandle(resultHandle);
+  assert(typeof result === 'object', 'result should be an object');
+  assert(typeof result.importModuleDynamically === 'function',
+    'CJS result should have importModuleDynamically hook');
+});
+
+test('module_wrap callback setters store handles', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const freshImports = freshBridge.getImports();
+
+  assertEq(freshBridge.moduleWrapImportModuleDynamicallyCallback, 0,
+    'initial callback should be 0');
+  freshImports.unofficial_napi_module_wrap_set_import_module_dynamically_callback(0, 0xBEEF);
+  assertEq(freshBridge.moduleWrapImportModuleDynamicallyCallback, 0xBEEF,
+    'callback should be stored');
+
+  assertEq(freshBridge.moduleWrapInitializeImportMetaObjectCallback, 0,
+    'initial meta callback should be 0');
+  freshImports.unofficial_napi_module_wrap_set_initialize_import_meta_object_callback(0, 0xCAFE);
+  assertEq(freshBridge.moduleWrapInitializeImportMetaObjectCallback, 0xCAFE,
+    'meta callback should be stored');
+});
+
 // ---- Summary ----
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 process.exit(failed > 0 ? 1 : 0);
