@@ -256,10 +256,20 @@ class NapiBridge {
     return null;
   }
 
+  isMemoryRangeValid(ptr, length = 1) {
+    const buffer = this.getMemoryBuffer();
+    if (!buffer) return false;
+    if (!Number.isInteger(ptr) || ptr < 0) return false;
+    if (!Number.isInteger(length) || length < 0) return false;
+    if (ptr > buffer.byteLength) return false;
+    return ptr + length <= buffer.byteLength;
+  }
+
   readCString(ptr, maxLen = 64 * 1024) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return '';
     const bytes = new Uint8Array(buffer);
+    if (ptr < 0 || ptr >= bytes.length) return '';
     let end = ptr;
     const limit = Math.min(bytes.length, ptr + maxLen);
     while (end < limit && bytes[end] !== 0) end++;
@@ -339,6 +349,7 @@ class NapiBridge {
   readString(ptr, len) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr || len <= 0) return '';
+    if (!this.isMemoryRangeValid(ptr, len)) return '';
     const bytes = new Uint8Array(buffer, ptr, len);
     return decodeUtf8(bytes);
   }
@@ -347,8 +358,12 @@ class NapiBridge {
   writeString(ptr, str, maxLen) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr || maxLen <= 0) return 0;
+    if (!this.isMemoryRangeValid(ptr, 1)) return 0;
     const bytes = encodeUtf8(str);
-    const writeLen = Math.min(bytes.length, maxLen - 1);
+    const availableBytes = buffer.byteLength - ptr;
+    if (availableBytes <= 0) return 0;
+    const writeLen = Math.min(bytes.length, maxLen - 1, availableBytes - 1);
+    if (writeLen < 0) return 0;
     const target = new Uint8Array(buffer, ptr, writeLen + 1);
     target.set(bytes.subarray(0, writeLen));
     target[writeLen] = 0; // null terminator
@@ -359,6 +374,7 @@ class NapiBridge {
   writeI32(ptr, value) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return;
+    if (!this.isMemoryRangeValid(ptr, 4)) return;
     new DataView(buffer).setInt32(ptr, value, true);
   }
 
@@ -366,6 +382,7 @@ class NapiBridge {
   writeF64(ptr, value) {
     const buffer = this.getMemoryBuffer();
     if (!buffer || !ptr) return;
+    if (!this.isMemoryRangeValid(ptr, 8)) return;
     new DataView(buffer).setFloat64(ptr, value, true);
   }
 
