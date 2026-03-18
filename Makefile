@@ -149,7 +149,7 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Build complete"
 
 # ---- Test ----
-test: test-unit test-napi test-wasm
+test: test-unit test-napi test-wasm test-manifest
 
 test-unit:
 	@echo ">>> Running unit tests..."
@@ -170,6 +170,14 @@ test-release-gate:
 release-gate:
 	@echo ">>> Running phase close release gate..."
 	cd $(ROOT_DIR) && node scripts/release-gate.mjs
+
+test-manifest:
+	@echo ">>> Running Manifest & Size checks..."
+	cd $(ROOT_DIR) && node tests/test-manifest.mjs
+
+bench:
+	@echo ">>> Running JSPI Call-Chain Benchmarks..."
+	cd $(ROOT_DIR) && node --experimental-wasm-jspi tests/benchmark-jspi.mjs
 
 # ---- Size Report ----
 size:

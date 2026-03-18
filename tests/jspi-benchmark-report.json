@@ -1,0 +1,9 @@
+[
+  {
+    "date": "2026-03-18T19:52:13.642Z",
+    "iterations": 100000,
+    "syncTimeMs": 1.5655000000000001,
+    "asyncTimeMs": 70.1835,
+    "realJSPI": true
+  }
+]

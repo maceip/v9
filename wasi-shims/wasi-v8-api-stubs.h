@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_V8_API_STUBS_H_
 #define WASI_V8_API_STUBS_H_
@@ -75,7 +76,7 @@ class HandleScope {
 
 class EscapableHandleScope : public HandleScope {
  public:
-  explicit EscapableHandleScope(Isolate* isolate) : HandleScope(isolate) {}
+  explicit EscapableHandleScope(Isolate* isolate) : HandleScope(isolate) { abort(); }
 
   template <class T>
   Local<T> Escape(Local<T> value) {
@@ -94,10 +95,10 @@ inline int SmiValue(internal::Address value) {
 }
 
 // IncrementLongTasksStatsCounter
-inline void IncrementLongTasksStatsCounter() {}
+inline void IncrementLongTasksStatsCounter() { abort(); }
 
 // TryGetCurrent
-inline Isolate* TryGetCurrent() { return nullptr; }
+inline Isolate* TryGetCurrent() { abort(); return nullptr; }
 
 }  // namespace v8
 

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_V8_NODE_MISSING_H_
 #define WASI_V8_NODE_MISSING_H_
@@ -55,9 +56,7 @@ struct CppHeapCreateParams {
 
 class CppHeap {
  public:
-  static std::unique_ptr<CppHeap> Create(Platform*, const CppHeapCreateParams&) {
-    return nullptr;
-  }
+  static std::unique_ptr<CppHeap> Create(Platform*, const CppHeapCreateParams&) { abort(); return nullptr; }
 };
 #endif
 
@@ -66,17 +65,17 @@ class CppHeap {
 #define V8_HANDLESCOPE_DEFINED
 class HandleScope {
  public:
-  explicit HandleScope(Isolate*) {}
+  explicit HandleScope(Isolate*) { abort(); }
   ~HandleScope() = default;
   HandleScope(const HandleScope&) = delete;
   void operator=(const HandleScope&) = delete;
-  static int NumberOfHandles(Isolate*) { return 0; }
-  Isolate* GetIsolate() const { return nullptr; }
+  static int NumberOfHandles(Isolate*) { abort(); return 0; }
+  Isolate* GetIsolate() const { abort(); return nullptr; }
 };
 
 class EscapableHandleScope : public HandleScope {
  public:
-  explicit EscapableHandleScope(Isolate* isolate) : HandleScope(isolate) {}
+  explicit EscapableHandleScope(Isolate* isolate) : HandleScope(isolate) { abort(); }
   template <typename T> Local<T> Escape(Local<T> value) { return value; }
   template <typename T> MaybeLocal<T> EscapeMaybe(MaybeLocal<T> value) { return value; }
 };
@@ -91,36 +90,34 @@ struct StartupData {
 class SnapshotCreator {
  public:
   enum class FunctionCodeHandling { kClear, kKeep };
-  explicit SnapshotCreator(Isolate*) {}
-  ~SnapshotCreator() {}
-  void SetDefaultContext(Local<Context>) {}
-  size_t AddContext(Local<Context>) { return 0; }
-  size_t AddData(Local<Value>) { return 0; }
+  explicit SnapshotCreator(Isolate*) { abort(); }
+  ~SnapshotCreator() { abort(); }
+  void SetDefaultContext(Local<Context>) { abort(); }
+  size_t AddContext(Local<Context>) { abort(); return 0; }
+  size_t AddData(Local<Value>) { abort(); return 0; }
   StartupData CreateBlob(FunctionCodeHandling) { return {nullptr, 0}; }
 };
 
 // ---- Isolate setter free functions ----
-inline void Isolate_SetOOMErrorHandler(Isolate*, OOMErrorCallback) {}
-inline void Isolate_SetFatalErrorHandler(Isolate*, FatalErrorCallback) {}
-inline void Isolate_SetPromiseRejectCallback(Isolate*, PromiseRejectCallback) {}
-inline void Isolate_SetAllowWasmCodeGenerationCallback(Isolate*, AllowWasmCodeGenerationCallback) {}
-inline void Isolate_SetModifyCodeGenerationFromStringsCallback(Isolate*, ModifyCodeGenerationFromStringsCallback2) {}
-inline void Isolate_SetMicrotasksPolicy(Isolate*, MicrotasksPolicy) {}
-inline void Isolate_SetCppHeap(Isolate*, CppHeap*) {}
+inline void Isolate_SetOOMErrorHandler(Isolate*, OOMErrorCallback) { abort(); }
+inline void Isolate_SetFatalErrorHandler(Isolate*, FatalErrorCallback) { abort(); }
+inline void Isolate_SetPromiseRejectCallback(Isolate*, PromiseRejectCallback) { abort(); }
+inline void Isolate_SetAllowWasmCodeGenerationCallback(Isolate*, AllowWasmCodeGenerationCallback) { abort(); }
+inline void Isolate_SetModifyCodeGenerationFromStringsCallback(Isolate*, ModifyCodeGenerationFromStringsCallback2) { abort(); }
+inline void Isolate_SetMicrotasksPolicy(Isolate*, MicrotasksPolicy) { abort(); }
+inline void Isolate_SetCppHeap(Isolate*, CppHeap*) { abort(); }
 
 namespace internal {
-inline Isolate* TryGetCurrent() { return nullptr; }
-inline void IncrementLongTasksStatsCounter(v8::Isolate*) {}
+inline Isolate* TryGetCurrent() { abort(); return nullptr; }
+inline void IncrementLongTasksStatsCounter(v8::Isolate*) { abort(); }
 
 using Address = uintptr_t;
-class PtrComprCageBase {};
+class PtrComprCageBase { abort(); };
 
 template <bool check_statically_enabled>
 inline Address ReadExternalPointerField(Address field_address,
                                        const PtrComprCageBase&,
-                                       uint64_t) {
-  return 0;
-}
+                                       uint64_t) { abort(); return 0; }
 }  // namespace internal
 
 }  // namespace v8

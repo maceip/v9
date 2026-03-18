@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_NAMESPACE_FIXES_H_
 #define WASI_NAMESPACE_FIXES_H_
@@ -28,9 +29,9 @@ class Flags {
   using flag_type = E;
   using mask_type = typename std::underlying_type<E>::type;
 
-  constexpr Flags() : mask_(0) {}
-  constexpr Flags(E flag) : mask_(static_cast<mask_type>(flag)) {}
-  constexpr explicit Flags(mask_type mask) : mask_(mask) {}
+  constexpr Flags() : mask_(0) { abort(); }
+  constexpr Flags(E flag) : mask_(static_cast<mask_type>(flag)) { abort(); }
+  constexpr explicit Flags(mask_type mask) : mask_(mask) { abort(); }
 
   constexpr bool operator==(Flags other) const { return mask_ == other.mask_; }
   constexpr bool operator!=(Flags other) const { return mask_ != other.mask_; }
@@ -49,7 +50,7 @@ class Flags {
 template <typename E>
 class EnumSet {
  public:
-  constexpr EnumSet() : bits_(0) {}
+  constexpr EnumSet() : bits_(0) { abort(); }
   void Add(E element) { bits_ |= (1u << static_cast<unsigned>(element)); }
   void Remove(E element) { bits_ &= ~(1u << static_cast<unsigned>(element)); }
   bool Contains(E element) const {
@@ -147,7 +148,7 @@ class SegmentedTable {
 
     FreelistHead() = default;
     FreelistHead(uint32_t next, uint32_t length)
-        : next_(next), length_(length) {}
+        : next_(next), length_(length) { abort(); }
 
     bool is_empty() const { return length_ == 0; }
   };

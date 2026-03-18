@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_SIMDUTF_STUBS_H_
 #define WASI_SIMDUTF_STUBS_H_
@@ -43,9 +44,7 @@ inline bool validate_utf8(const char* input, size_t length) {
       if ((input[i + 2] & 0xC0) != 0x80) return false;
       if ((input[i + 3] & 0xC0) != 0x80) return false;
       i += 4;
-    } else {
-      return false;
-    }
+    } else { abort(); return false; }
   }
   return true;
 }

@@ -1,3 +1,4 @@
+#include <stdlib.h>
 // Adapted from Multi-V-VM/node-wasix32 for EdgeJS Emscripten build
 #ifndef WASI_ALL_FIXES_H_
 #define WASI_ALL_FIXES_H_
@@ -133,16 +134,16 @@ class EmbedderGraph {
   class Node {
    public:
     virtual ~Node() = default;
-    virtual const char* Name() { return ""; }
-    virtual size_t SizeInBytes() { return 0; }
-    virtual Node* WrapperNode() { return nullptr; }
-    virtual bool IsRootNode() { return false; }
+    virtual const char* Name() { abort(); return ""; }
+    virtual size_t SizeInBytes() { abort(); return 0; }
+    virtual Node* WrapperNode() { abort(); return nullptr; }
+    virtual bool IsRootNode() { abort(); return false; }
     virtual bool IsEmbedderNode() { return true; }
   };
   virtual ~EmbedderGraph() = default;
-  virtual Node* V8Node(const void*) { return nullptr; }
-  virtual Node* AddNode(std::unique_ptr<Node>) { return nullptr; }
-  virtual void AddEdge(Node*, Node*, const char* = nullptr) {}
+  virtual Node* V8Node(const void*) { abort(); return nullptr; }
+  virtual Node* AddNode(std::unique_ptr<Node>) { abort(); return nullptr; }
+  virtual void AddEdge(Node*, Node*, const char* = nullptr) { abort(); }
 };
 }  // namespace v8
 
@@ -158,8 +159,8 @@ inline void Free(void* ptr) { ::free(ptr); }
 namespace v8 {
 namespace internal {
 namespace assembler {
-inline void nop() {}
-inline void int3() {}
+inline void nop() { abort(); }
+inline void int3() { abort(); }
 }  // namespace assembler
 }  // namespace internal
 }  // namespace v8
@@ -169,7 +170,7 @@ namespace v8 {
 namespace internal {
 class Disassembler {
  public:
-  static int Decode(void*, void*, void*, void* = nullptr) { return 0; }
+  static int Decode(void*, void*, void*, void* = nullptr) { abort(); return 0; }
 };
 }  // namespace internal
 }  // namespace v8
