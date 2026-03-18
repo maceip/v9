@@ -112,6 +112,7 @@ class NapiBridge {
     // Minimal environment bookkeeping for unofficial_napi_* helpers.
     this.nextEnvId = 0x1000;
     this.nextEnvScopeId = 0x2000;
+    this.activeEnv = 0; // Set when an env is created; used by module hooks.
     this.envByScope = new Map(); // scope pointer -> env pointer
     this.edgeEnvironmentByEnv = new Map(); // env pointer -> native env pointer
     this.moduleWrapImportModuleDynamicallyCallback = 0;
@@ -257,6 +258,7 @@ class NapiBridge {
     if (!callbackHandle || !this.wasm || typeof this.wasm.dynCall !== 'function') {
       return { status: NAPI_GENERIC_FAILURE, resultHandle: 0 };
     }
+    this.openHandleScope();
     const specHandle = this.createHandle(specifier);
     const assertHandle = this.createHandle(importAssertions || {});
     const refHandle = this.createHandle(referrer || '');
@@ -269,17 +271,21 @@ class NapiBridge {
     try {
       const resultHandle = this.wasm.dynCall('iii', callbackHandle, [env, cbinfo]);
       if (typeof resultHandle === 'number' && resultHandle > 0) {
-        return { status: NAPI_OK, resultHandle };
+        // Escape the result handle from this scope by promoting it to the
+        // parent scope before we close, so the caller can read it.
+        const value = this.getHandle(resultHandle);
+        this.closeHandleScope();
+        const escapedHandle = this.createHandle(value);
+        return { status: NAPI_OK, resultHandle: escapedHandle };
       }
+      this.closeHandleScope();
       return { status: NAPI_OK, resultHandle: 1 }; // undefined
     } catch (e) {
+      this.closeHandleScope();
       this.setPendingException(e);
       return { status: NAPI_PENDING_EXCEPTION, resultHandle: 0 };
     } finally {
       this.callbackInfos.delete(cbinfo);
-      this.freeHandle(specHandle);
-      this.freeHandle(assertHandle);
-      this.freeHandle(refHandle);
     }
   }
 
@@ -302,6 +308,7 @@ class NapiBridge {
     if (!callbackHandle || !this.wasm || typeof this.wasm.dynCall !== 'function') {
       return NAPI_GENERIC_FAILURE;
     }
+    this.openHandleScope();
     const metaHandle = this.createHandle(metaObject);
     const modHandle = this.createHandle(moduleObject || {});
     const cbinfo = this.nextCallbackInfo++;
@@ -312,14 +319,14 @@ class NapiBridge {
     });
     try {
       this.wasm.dynCall('iii', callbackHandle, [env, cbinfo]);
+      this.closeHandleScope();
       return NAPI_OK;
     } catch (e) {
+      this.closeHandleScope();
       this.setPendingException(e);
       return NAPI_PENDING_EXCEPTION;
     } finally {
       this.callbackInfos.delete(cbinfo);
-      this.freeHandle(metaHandle);
-      this.freeHandle(modHandle);
     }
   }
 
@@ -1441,9 +1448,19 @@ class NapiBridge {
           bridge.setLastError(NAPI_GENERIC_FAILURE, 'Wasm memory not initialized');
           return NAPI_GENERIC_FAILURE;
         }
+        const argCount = argc >>> 0;
+        if (argCount > 0 && !argvPtr) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'argv is null with non-zero argc');
+          return NAPI_INVALID_ARG;
+        }
+        const requiredBytes = argvPtr + argCount * 4;
+        if (argCount > 0 && requiredBytes > buffer.byteLength) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'argv extends beyond Wasm memory');
+          return NAPI_INVALID_ARG;
+        }
         const view = new DataView(buffer);
         const args = [];
-        for (let i = 0; i < argc; i++) {
+        for (let i = 0; i < argCount; i++) {
           const argHandle = view.getInt32(argvPtr + i * 4, true);
           args.push(bridge.getHandle(argHandle));
         }
@@ -1715,6 +1732,7 @@ class NapiBridge {
       unofficial_napi_create_env(moduleApiVersion, envOutPtr, scopeOutPtr) {
         const envId = bridge.nextEnvId++;
         const scopeId = bridge.nextEnvScopeId++;
+        bridge.activeEnv = envId;
         bridge.envByScope.set(scopeId, envId);
         if (envOutPtr) bridge.writePointer(envOutPtr, envId);
         if (scopeOutPtr) bridge.writePointer(scopeOutPtr, scopeId);
@@ -1725,6 +1743,7 @@ class NapiBridge {
         void optionsPtr;
         const envId = bridge.nextEnvId++;
         const scopeId = bridge.nextEnvScopeId++;
+        bridge.activeEnv = envId;
         bridge.envByScope.set(scopeId, envId);
         if (envOutPtr) bridge.writePointer(envOutPtr, envId);
         if (scopeOutPtr) bridge.writePointer(scopeOutPtr, scopeId);
@@ -2109,13 +2128,17 @@ export async function initEdgeJS(options = {}) {
     instantiateWasm(info, receiveInstance) {
       // Minimal env-level overrides for functions that have no native Emscripten
       // equivalent. Every other env import must be provided by the Emscripten
-      // glue; undefined imports will trap at instantiation.
-      const envOverrides = {
-        uv_setup_args: (argc, argv) => argv,
-        uv__hrtime: () => 0,
-      };
+      // glue; missing imports will surface during instantiation because the
+      // `has` trap returns false for unknown properties.
+      const envOverrides = Object.create(null);
+      envOverrides.uv_setup_args = (argc, argv) => argv;
+      envOverrides.uv__hrtime = () => 0;
+
       const envBase = info.env || {};
       const envProxy = new Proxy(envBase, {
+        has(target, prop) {
+          return prop in envOverrides || prop in target;
+        },
         get(target, prop) {
           if (prop in envOverrides) return envOverrides[prop];
           if (prop in target) return target[prop];
@@ -2268,7 +2291,7 @@ export async function initEdgeJS(options = {}) {
        * Returns a Promise resolving to the module namespace.
        */
       importModuleDynamically(specifier, assertions, referrer) {
-        const envId = bridge.nextEnvId - 1; // most recently created env
+        const envId = bridge.activeEnv;
         const { status, resultHandle } =
           bridge.invokeImportModuleDynamically(envId, specifier, assertions, referrer);
         if (status !== NAPI_OK) {

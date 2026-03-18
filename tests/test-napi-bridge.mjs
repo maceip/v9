@@ -646,6 +646,119 @@ test('module_wrap callback setters store handles', () => {
     'meta callback should be stored');
 });
 
+// ---- WS2-T3 v2: Env proxy `has` trap ----
+console.log('\nWS2-T3 v2 — Env Proxy Has-Trap:');
+
+test('env proxy has-trap reports false for unknown properties', () => {
+  const envOverrides = Object.create(null);
+  envOverrides.uv_setup_args = (argc, argv) => argv;
+  envOverrides.uv__hrtime = () => 0;
+  const envBase = { real_fn: () => 1 };
+  const envProxy = new Proxy(envBase, {
+    has(target, prop) {
+      return prop in envOverrides || prop in target;
+    },
+    get(target, prop) {
+      if (prop in envOverrides) return envOverrides[prop];
+      if (prop in target) return target[prop];
+      return undefined;
+    },
+  });
+  assertEq('uv_setup_args' in envProxy, true, 'override should be reported as present');
+  assertEq('real_fn' in envProxy, true, 'real env function should be reported as present');
+  assertEq('totally_unknown' in envProxy, false, 'unknown prop should NOT be present');
+  assertEq('some_missing_syscall' in envProxy, false, 'missing syscall should NOT be present');
+});
+
+// ---- WS3-T2 v2: argc/argvPtr validation ----
+console.log('\nWS3-T2 v2 — argc/argvPtr Validation:');
+
+test('napi_call_function returns NAPI_INVALID_ARG when argc>0 and argvPtr is null', () => {
+  const fn = bridge.createHandle(() => 'should not run');
+  const resultPtr = 3800;
+  bridge.clearPendingException();
+  const status = imports.napi_call_function(0, 3, fn, 2, 0, resultPtr);
+  assertEq(status, 1, 'should return NAPI_INVALID_ARG (1) for null argvPtr with argc>0');
+});
+
+test('napi_call_function returns NAPI_INVALID_ARG when argvPtr extends beyond memory', () => {
+  const fn = bridge.createHandle(() => 'should not run');
+  const resultPtr = 3900;
+  bridge.clearPendingException();
+  // memoryBuffer is 4096 bytes; argvPtr=4090 with argc=2 needs 4090+8=4098 > 4096.
+  const status = imports.napi_call_function(0, 3, fn, 2, 4090, resultPtr);
+  assertEq(status, 1, 'should return NAPI_INVALID_ARG for out-of-bounds argvPtr');
+});
+
+test('napi_call_function succeeds with argc=0 and argvPtr=0', () => {
+  const fn = bridge.createHandle(() => 42);
+  const resultPtr = 4000;
+  bridge.clearPendingException();
+  const status = imports.napi_call_function(0, 3, fn, 0, 0, resultPtr);
+  assertEq(status, 0, 'argc=0 with argvPtr=0 should succeed');
+  const resultHandle = new Int32Array(memoryBuffer, resultPtr, 1)[0];
+  assertEq(bridge.getHandle(resultHandle), 42, 'should return function result');
+});
+
+// ---- WS4-T3 v2: activeEnv tracking ----
+console.log('\nWS4-T3 v2 — Active Env Tracking:');
+
+test('unofficial_napi_create_env sets activeEnv', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const freshImports = freshBridge.getImports();
+
+  assertEq(freshBridge.activeEnv, 0, 'activeEnv should be 0 initially');
+
+  const envOutPtr = 100;
+  const scopeOutPtr = 104;
+  freshImports.unofficial_napi_create_env(9, envOutPtr, scopeOutPtr);
+  assert(freshBridge.activeEnv !== 0, 'activeEnv should be set after create_env');
+  const envId = new Uint32Array(freshBridge.memory.buffer, envOutPtr, 1)[0];
+  assertEq(freshBridge.activeEnv, envId, 'activeEnv should match the created env id');
+});
+
+test('unofficial_napi_create_env_with_options sets activeEnv', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+  const freshImports = freshBridge.getImports();
+
+  const envOutPtr = 200;
+  const scopeOutPtr = 204;
+  freshImports.unofficial_napi_create_env_with_options(9, 0, envOutPtr, scopeOutPtr);
+  assert(freshBridge.activeEnv !== 0, 'activeEnv should be set');
+  const envId = new Uint32Array(freshBridge.memory.buffer, envOutPtr, 1)[0];
+  assertEq(freshBridge.activeEnv, envId, 'activeEnv should match');
+});
+
+// ---- WS4-T3 v2: Handle scope protection ----
+console.log('\nWS4-T3 v2 — Handle Scope Protection:');
+
+test('invokeImportModuleDynamically does not leak handles when no wasm', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+
+  const before = freshBridge.getActiveHandleCount();
+  // No wasm, so invocation fails early — but we should not leak handles.
+  freshBridge.moduleWrapImportModuleDynamicallyCallback = 0xBEEF;
+  const result = freshBridge.invokeImportModuleDynamically(0x1000, './mod.js', {}, 'main.js');
+  assertEq(result.status, 9, 'should fail without wasm');
+  const after = freshBridge.getActiveHandleCount();
+  assertEq(after, before, 'should not leak handles on early failure');
+});
+
+test('invokeInitializeImportMeta does not leak handles when no wasm', () => {
+  const freshBridge = new NapiBridge(null);
+  freshBridge.memory = { buffer: new ArrayBuffer(4096) };
+
+  const before = freshBridge.getActiveHandleCount();
+  freshBridge.moduleWrapInitializeImportMetaObjectCallback = 0xBEEF;
+  const status = freshBridge.invokeInitializeImportMeta(0x1000, {}, {});
+  assertEq(status, 9, 'should fail without wasm');
+  const after = freshBridge.getActiveHandleCount();
+  assertEq(after, before, 'should not leak handles on early failure');
+});
+
 // ---- Summary ----
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 process.exit(failed > 0 ? 1 : 0);
