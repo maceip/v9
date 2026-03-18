@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 Plan 02-01 (bridge hardening in progress)
-last_updated: "2026-03-18T12:36:00.000Z"
-last_activity: 2026-03-18 -- Phase 2 bootstrap stabilized, eval/runFile probes green, soak validation pending
+stopped_at: Phase 2 Plan 02-01 (CurSOR workstreams delivered; nightly soak evidence pending)
+last_updated: "2026-03-18T23:45:00.000Z"
+last_activity: 2026-03-18 -- CurSOR hardening wave shipped (strict gating, browser smoke, guardrails, soak harness, CI tiers)
 progress:
   total_phases: 6
   completed_phases: 0
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-03-18)
 
 Phase: 2 of 6 (N-API Bridge Hardening)
 Plan: 1 of 1 in current phase (02-01 in progress)
-Status: Executing — bootstrap and probe path stable; soak/perf validation pending
-Last activity: 2026-03-18 -- eval('1+1') and runFile('/probe.js') probes passing with clean diagnostics
+Status: Executing — CurSOR-tagged hardening workstreams implemented; full nightly soak evidence pending
+Last activity: 2026-03-18 -- strict gating, browser smoke, instrumentation counters, soak harness, CI tiers, and guardrails added
 
 Progress: [##........] 17%
 
@@ -63,16 +63,17 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Full 30+ minute nightly soak/perf evidence run and artifact review.
+- Phase 2 closure documentation package for NAPI-01/NAPI-02.
 
 ### Blockers/Concerns
 
-- [Phase 2]: NAPI-02 soak coverage (30+ minute handle growth characterization) still pending
-- [Phase 2]: Some runtime behavior is currently wrapped for deterministic probe completion; parity tightening is still needed
-- [Research]: JSPI call-chain performance remains a concern and should be benchmarked before higher-phase feature work
+- [Phase 2]: Nightly (30+ minute) soak run evidence still required for NAPI-02 closure packet.
+- [Phase 2]: Bootstrap compatibility paths still exist and should be ratcheted down under strict profile coverage.
+- [Research]: JSPI call-chain performance remains a concern and should continue to be monitored in soak trends.
 
 ## Session Continuity
 
-Last session: 2026-03-18T12:36:00.000Z
-Stopped at: Phase 2 progress snapshot documented
+Last session: 2026-03-18T23:45:00.000Z
+Stopped at: CurSOR hardening wave completed and pushed
 Resume file: .planning/phases/02-napi-bridge-hardening/02-01-PLAN.md

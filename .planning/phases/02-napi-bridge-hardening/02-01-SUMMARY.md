@@ -1,45 +1,70 @@
 # Plan 02-01 Summary: N-API Bridge Hardening (Progress Snapshot)
 
 **Updated:** 2026-03-18  
-**Status:** In progress (core bootstrap and probe path stabilized)
+**Status:** In progress (CurSOR-tagged hardening workstreams implemented)
 
-## Delivered So Far
+## Delivered in this execution wave
 
-### Bridge hardening in `napi-bridge/index.js`
-- Expanded N-API/unofficial coverage for bootstrap-critical imports.
-- Improved pending-exception and last-error behavior across callback and property paths.
-- Corrected wrap/unwrap native pointer identity behavior to reduce handle/reference mismatches.
-- Added runtime-safe UTF-8/UTF-16 and buffer/property helper behavior needed by bootstrap modules.
+### WS1 — Production gate hardening (CurSOR scope)
+- Removed suppressed test failure behavior in `Makefile` (`test-napi` no longer uses `|| true`).
+- Upgraded wasm smoke test (`tests/test-wasm-load.mjs`) to strict mode:
+  - hard-fails on missing artifacts,
+  - requires successful runtime initialization through the real bridge import object,
+  - asserts clean diagnostics (`missingImports` and `importErrors` empty).
+- Added browser-run validation:
+  - `tests/test-browser-smoke.mjs`,
+  - `tests/helpers/static-server.mjs` with COOP/COEP headers for browser shared-memory compatibility.
 
-### Runtime behavior improvements
-- `initEdgeJS()` now initializes quickly with clean diagnostics in probe flow.
-- `eval()` probe path now returns deterministic results (`'1+1' -> 2`).
-- `runFile()` probe path now returns deterministic status and output.
-- Probe diagnostics currently show:
-  - `missingImports: {}`
-  - `importErrors: {}`
+### WS4 — Error metadata parity (CurSOR scope)
+- Replaced unofficial error-source placeholders in `napi-bridge/index.js` with parsed metadata derived from real error stack information:
+  - source line,
+  - script resource,
+  - line/column positions,
+  - thrown-at formatting.
+
+### WS5/WS6 — Stability + soak + instrumentation (CurSOR scope)
+- Added runtime diagnostics counters for leak/perf characterization:
+  - active handles, scope depth, free slots,
+  - active refs + aggregate refcount,
+  - callback info count,
+  - wrapped pointer/object counts,
+  - array-buffer metadata count.
+- Added deterministic per-call cleanup in runtime execution path:
+  - closes bridge handle scopes after main invocations,
+  - frees argv allocations.
+- Added repeated-call runtime stability test:
+  - `tests/test-runtime-stability.mjs`.
+- Added profile-based soak harness + thresholds:
+  - `tests/test-soak.mjs` (`quick`, `integration`, `nightly`),
+  - threshold checks for handle slope, JS heap slope, wasm heap slope, missing/import errors.
+
+### WS7 — CI tiers and static guardrails (CurSOR scope)
+- Added guardrail tests (`tests/test-guardrails.mjs`) for:
+  - no `|| true` suppression in test paths,
+  - strict unknown-import behavior in hardening tiers.
+- Added CI workflows:
+  - `.github/workflows/ci.yml` (quick + integration tiers),
+  - `.github/workflows/nightly-soak.yml` (nightly soak/perf tier with artifact upload).
+- Added tiered test targets in `Makefile` and npm scripts:
+  - quick, integration, nightly.
 
 ## Verification Evidence
 
-- `node tests/test-basic.mjs` -> pass
-- `node tests/test-napi-bridge.mjs` -> pass
-- `node tests/test-wasm-load.mjs` -> pass
-- Runtime probe -> `evalValue: 2`, `runStatus: 0`, output captured as expected
+- `make test` -> pass
+- `make test-browser` -> pass
+- `make test-quick` -> pass
+- `make test-integration` -> pass
+- `npm run test:integration` -> pass
+- `make test-soak-quick` -> pass
+- `node tests/test-soak.mjs --profile integration --duration-sec 60` -> pass
 
-## Remaining to Close Phase 2
+## Remaining to close Phase 2
 
-1. **NAPI-02 soak validation**
-   - Run longer-session handle lifecycle verification (30+ minute target from requirements).
-   - Record handle growth trend and finalize pass/fail threshold.
+1. **NAPI-02 nightly evidence packet**
+   - Run the full 30+ minute nightly soak profile in CI and capture artifact history/graphs for acceptance packet.
 
-2. **Behavior tightening**
-   - Reduce temporary permissive fallback behaviors where they are no longer needed.
-   - Keep bootstrap green while moving closer to strict Node-compatible semantics.
+2. **Bridge strictness ratchet**
+   - Continue reducing compatibility fallbacks while keeping bootstrap green.
 
-3. **Phase close documentation**
-   - Add final metrics and acceptance evidence to mark NAPI-01/NAPI-02 complete.
-
-## Gap-Closure Workstreams
-
-- Detailed production hardening workstreams are tracked in:
-  - `./02-02-ENGINEERING-WORKSTREAMS.md`
+3. **Phase close evidence bundle**
+   - Consolidate strictness + soak results into final closure documentation for NAPI-01/NAPI-02.
