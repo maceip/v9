@@ -12,7 +12,7 @@ EdgeJS v9 delivers Claude Code running in the browser through six phases that fo
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Wasm Compilation** - Node.js C++ modules compile to .wasm and load in browser
+- [ ] **Phase 1: Wasm Compilation** - Node.js C++ modules compile to .wasm and load in browser (01-01 done)
 - [ ] **Phase 2: N-API Bridge Hardening** - Bridge is correct, leak-free, and performance-characterized
 - [ ] **Phase 3: Core Modules + Filesystem** - Runtime has working EventEmitter, streams, Buffer, fs, process, and browser builtins
 - [ ] **Phase 4: Networking** - HTTPS requests with SSE streaming work through browser fetch proxy
@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Consolidate shim headers with pointer width assertions and CMake/patch infrastructure
+- [x] 01-01-PLAN.md — Consolidate shim headers with pointer width assertions and CMake/patch infrastructure
 - [ ] 01-02-PLAN.md — Compile EdgeJS to .wasm via iterative error fixing and browser load verification
 
 ### Phase 2: N-API Bridge Hardening
@@ -119,7 +119,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Wasm Compilation | 0/2 | Planning complete | - |
+| 1. Wasm Compilation | 1/2 | 01-01 done, 01-02 in progress | 01-01 |
 | 2. N-API Bridge Hardening | 0/? | Not started | - |
 | 3. Core Modules + Filesystem | 0/? | Not started | - |
 | 4. Networking | 0/? | Not started | - |
