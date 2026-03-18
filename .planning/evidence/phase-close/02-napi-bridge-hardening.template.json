@@ -1,0 +1,26 @@
+{
+  "phase": "02-napi-bridge-hardening",
+  "updatedAt": "YYYY-MM-DDTHH:MM:SSZ",
+  "artifacts": {
+    "browserInstantiation": {
+      "status": "pending",
+      "summary": "Attach the browser/headless instantiation result here"
+    },
+    "manifestSnapshot": {
+      "status": "pending",
+      "summary": "Record the export/import manifest snapshot evidence here"
+    },
+    "sizeBudget": {
+      "status": "pending",
+      "summary": "Record artifact size delta and threshold result here"
+    },
+    "diagnostics": {
+      "status": "pending",
+      "summary": "Record missingImports/importErrors evidence here"
+    },
+    "soak": {
+      "status": "pending",
+      "summary": "Record 30+ minute soak result and thresholds here"
+    }
+  }
+}

@@ -5,7 +5,7 @@ milestone_name: milestone
 status: executing
 stopped_at: Phase 2 Plan 02-01 (bridge hardening in progress)
 last_updated: "2026-03-18T18:30:00.000Z"
-last_activity: 2026-03-18 -- WS7-T3 release checklist and machine-enforced gate added; permissive runtime blockers still intentionally fail the gate
+last_activity: 2026-03-18 -- WS7-T3 upgraded to a policy-driven release gate with structured evidence requirements
 progress:
   total_phases: 6
   completed_phases: 0
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-03-18)
 
 Phase: 2 of 6 (N-API Bridge Hardening)
 Plan: 1 of 1 in current phase (02-01 in progress)
-Status: Executing — bootstrap/probe path stable; WS7-T3 release gating added; soak/perf validation pending
-Last activity: 2026-03-18 -- release gate added and intentionally failing on remaining permissive runtime blockers
+Status: Executing — bootstrap/probe path stable; WS7-T3 policy-driven release gating added; soak/perf validation pending
+Last activity: 2026-03-18 -- policy-driven release gate added; remaining runtime blockers and missing evidence now fail explicit checkpoints
 
 Progress: [##........] 17%
 

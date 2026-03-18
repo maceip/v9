@@ -12,9 +12,9 @@
 - Added runtime-safe UTF-8/UTF-16 and buffer/property helper behavior needed by bootstrap modules.
 
 ### Integration/release gating
-- Added a phase close checklist that translates WS7-T3 into explicit Phase 1/2 checkpoints.
-- Added a machine-enforced release gate script and target to block phase close while permissive runtime/test behaviors still exist.
-- Added unit coverage for the release gate so checklist and guard logic are exercised without needing a full release-ready runtime.
+- Added a machine-readable Phase 1/2 close policy that maps checkpoints to concrete checks and structured evidence requirements.
+- Reworked the release gate into a policy-driven engine so future CI tiers can extend the gate without rewriting code.
+- Added fixture-based unit coverage for the release gate so policy, evidence, and checkpoint resolution are exercised together.
 
 ### Runtime behavior improvements
 - `initEdgeJS()` now initializes quickly with clean diagnostics in probe flow.
