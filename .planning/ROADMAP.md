@@ -44,10 +44,11 @@ Plans:
   1. Errors thrown in JS callback propagate through N-API and are retrievable via napi_get_last_error_info
   2. A 30-minute simulated session shows no monotonic handle count growth (handle scopes clean up correctly)
   3. A basic JS expression evaluated through the Wasm runtime returns the correct result (runtime.eval('1+1') === 2)
-**Plans**: TBD
+**Plans**: 2 plans (02-01 in progress, 02-02 defined)
 
 Plans:
-- [ ] 02-01: TBD
+- [ ] 02-01-PLAN.md — Bridge bootstrap correctness, error propagation, handle lifecycle hardening
+- [ ] 02-02-ENGINEERING-WORKSTREAMS.md — Production gap audit + hole-closing workstreams for Phase 1/2
 
 ### Phase 3: Core Modules + Filesystem
 **Goal**: The runtime provides working EventEmitter, Buffer, streams, process, path/url utilities, and a complete in-memory filesystem
@@ -120,7 +121,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Wasm Compilation | 1/2 | 01-01 done, 01-02 in progress | 01-01 |
-| 2. N-API Bridge Hardening | 0/? | Not started | - |
+| 2. N-API Bridge Hardening | 0/2 | 02-01 in progress; 02-02 gap-closure plan defined | - |
 | 3. Core Modules + Filesystem | 0/? | Not started | - |
 | 4. Networking | 0/? | Not started | - |
 | 5. Subprocess Emulation | 0/? | Not started | - |
