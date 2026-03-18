@@ -167,7 +167,7 @@ test-manifest:
 
 bench:
 	@echo ">>> Running JSPI Call-Chain Benchmarks..."
-	cd $(ROOT_DIR) && node tests/benchmark-jspi.mjs
+	cd $(ROOT_DIR) && node --experimental-wasm-jspi tests/benchmark-jspi.mjs
 
 # ---- Size Report ----
 size:
