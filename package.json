@@ -14,14 +14,26 @@
     "test": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs",
     "test:basic": "node tests/test-basic.mjs",
     "test:napi": "node tests/test-napi-bridge.mjs",
+    "test:wasm": "node tests/test-wasm-load.mjs",
+    "test:browser": "node tests/test-browser-smoke.mjs",
     "build": "bash build-emscripten.sh",
     "build:debug": "bash build-emscripten.sh --debug",
     "lint": "make lint",
     "size": "make size",
     "clean": "make clean"
   },
-  "keywords": ["wasm", "emscripten", "nodejs", "browser", "edgejs", "napi"],
+  "keywords": [
+    "wasm",
+    "emscripten",
+    "nodejs",
+    "browser",
+    "edgejs",
+    "napi"
+  ],
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.58.2"
   }
 }

@@ -15,7 +15,7 @@
 
 SHELL := /bin/bash
 .ONESHELL:
-.PHONY: all setup fetch configure build test clean distclean lint size help
+.PHONY: all setup fetch configure build test clean distclean lint size help test-browser
 
 # ---- Paths ----
 ROOT_DIR   := $(shell pwd)
@@ -160,6 +160,10 @@ test-napi:
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
 	cd $(ROOT_DIR) && node tests/test-wasm-load.mjs
+
+test-browser:
+	@echo ">>> Running browser smoke tests..."
+	cd $(ROOT_DIR) && node tests/test-browser-smoke.mjs
 
 # ---- Size Report ----
 size:
