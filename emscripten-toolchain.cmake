@@ -75,6 +75,7 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sFORCE_FILESYSTEM=1"
     "-sALLOW_UNIMPLEMENTED_SYSCALLS=0"
     "${UNDEFINED_SYMBOLS_FLAG}"
+    "--js-library=${CMAKE_CURRENT_LIST_DIR}/wasi-shims/napi-emscripten-library.js"
     "-Wl,--wrap=sysconf"
     "-Wl,--wrap=mmap"
     "-Wl,--wrap=munmap"

@@ -36,7 +36,7 @@ BUILD_TYPE ?= Release
 JOBS       ?= $(shell nproc 2>/dev/null || echo 4)
 
 # ---- EdgeJS Source ----
-EDGEJS_REPO := https://github.com/aspect-build/aspect-edgejs.git
+EDGEJS_REPO := https://github.com/wasmerio/edgejs.git
 EDGEJS_BRANCH ?= main
 
 # ---- node-wasix32 ----
@@ -159,11 +159,11 @@ test-napi:
 
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
-	cd $(ROOT_DIR) && node tests/test-wasm-load.mjs
+	cd $(ROOT_DIR) && node --experimental-wasm-return_call --experimental-wasm-jspi tests/test-wasm-load.mjs
 
 test-manifest:
 	@echo ">>> Running Manifest & Size checks..."
-	cd $(ROOT_DIR) && node tests/test-manifest.mjs
+	cd $(ROOT_DIR) && node --experimental-wasm-return_call --experimental-wasm-jspi tests/test-manifest.mjs
 
 bench:
 	@echo ">>> Running JSPI Call-Chain Benchmarks..."
