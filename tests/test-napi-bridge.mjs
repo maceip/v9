@@ -365,6 +365,54 @@ test('thrown callback propagates pending exception + last_error_info', () => {
   assertEq(new Int32Array(memoryBuffer, pendingPtr, 1)[0], 0, 'pending exception should clear');
 });
 
+test('unofficial error-source helpers return meaningful metadata', () => {
+  const metaError = new Error('metadata smoke');
+  const errHandle = bridge.createHandle(metaError);
+
+  const posPtr = 2800;
+  const posStatus = imports.unofficial_napi_get_error_source_positions(0, errHandle, posPtr);
+  assertEq(posStatus, 0);
+
+  const posView = new Int32Array(memoryBuffer, posPtr, 5);
+  const sourceLine = bridge.getHandle(posView[0]);
+  const resourceName = bridge.getHandle(posView[1]);
+  const lineNumber = posView[2];
+  const startColumn = posView[3];
+  const endColumn = posView[4];
+
+  assert(typeof sourceLine === 'string' && sourceLine.length > 0, 'source line metadata should be populated');
+  assert(typeof resourceName === 'string' && resourceName.length > 0, 'resource metadata should be populated');
+  assert(lineNumber >= 0, 'line number should be non-negative');
+  assert(startColumn >= 0, 'start column should be non-negative');
+  assert(endColumn >= 0, 'end column should be non-negative');
+
+  const stderrPtr = 2840;
+  const stderrStatus = imports.unofficial_napi_get_error_source_line_for_stderr(0, errHandle, stderrPtr);
+  assertEq(stderrStatus, 0);
+  const stderrLine = bridge.getHandle(new Int32Array(memoryBuffer, stderrPtr, 1)[0]);
+  assert(typeof stderrLine === 'string' && stderrLine.length > 0, 'stderr source line should be available');
+
+  const thrownAtPtr = 2844;
+  const thrownAtStatus = imports.unofficial_napi_get_error_thrown_at(0, errHandle, thrownAtPtr);
+  assertEq(thrownAtStatus, 0);
+  const thrownAt = bridge.getHandle(new Int32Array(memoryBuffer, thrownAtPtr, 1)[0]);
+  assert(typeof thrownAt === 'string' && thrownAt.length > 0, 'thrown-at metadata should be populated');
+
+  const sourceOutPtr = 2848;
+  const thrownOutPtr = 2852;
+  const takeStatus = imports.unofficial_napi_take_preserved_error_formatting(
+    0,
+    errHandle,
+    sourceOutPtr,
+    thrownOutPtr,
+  );
+  assertEq(takeStatus, 0);
+  const preservedSource = bridge.getHandle(new Int32Array(memoryBuffer, sourceOutPtr, 1)[0]);
+  const preservedThrownAt = bridge.getHandle(new Int32Array(memoryBuffer, thrownOutPtr, 1)[0]);
+  assert(typeof preservedSource === 'string' && preservedSource.length > 0);
+  assert(typeof preservedThrownAt === 'string' && preservedThrownAt.length > 0);
+});
+
 test('handle scopes do not show monotonic growth under load', () => {
   const baseline = bridge.getActiveHandleCount();
   const scopePtr = 2752;
@@ -407,6 +455,25 @@ test('writeF64 writes 64-bit float', () => {
   bridge.writeF64(3008, Math.PI); // 8-byte aligned
   const val = new Float64Array(memoryBuffer, 3008, 1)[0];
   assert(Math.abs(val - Math.PI) < 1e-10);
+});
+
+test('diagnostics counters include refs/callbacks/wrapped pointers/metadata', () => {
+  const counters = bridge.getInstrumentationCounters();
+  const requiredKeys = [
+    'activeHandles',
+    'handleScopeDepth',
+    'freeHandleSlots',
+    'activeRefs',
+    'totalRefCount',
+    'callbackInfoCount',
+    'wrappedPointerCount',
+    'wrappedObjectPointerCount',
+    'arrayBufferMetadataCount',
+  ];
+  for (const key of requiredKeys) {
+    assert(Object.prototype.hasOwnProperty.call(counters, key), `missing counter ${key}`);
+    assert(typeof counters[key] === 'number', `counter ${key} should be numeric`);
+  }
 });
 
 // ---- Summary ----
