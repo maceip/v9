@@ -33,10 +33,10 @@ console.log('NapiBridge Handle Table:');
 
 const bridge = new NapiBridge(null);
 
-test('well-known handles: undefined=0, null=1, global=2', () => {
-  assert(bridge.getHandle(0) === undefined);
-  assert(bridge.getHandle(1) === null);
-  assert(bridge.getHandle(2) === globalThis);
+test('well-known handles: undefined=1, null=2, global=3', () => {
+  assert(bridge.getHandle(1) === undefined);
+  assert(bridge.getHandle(2) === null);
+  assert(bridge.getHandle(3) === globalThis);
 });
 
 test('createHandle returns unique handles', () => {
@@ -50,8 +50,8 @@ test('createHandle returns unique handles', () => {
 });
 
 test('undefined/null return well-known handles', () => {
-  assert(bridge.createHandle(undefined) === 0);
-  assert(bridge.createHandle(null) === 1);
+  assert(bridge.createHandle(undefined) === 1);
+  assert(bridge.createHandle(null) === 2);
 });
 
 test('handle scopes isolate handles', () => {

@@ -116,9 +116,10 @@ configure: $(BUILD_DIR)/CMakeCache.txt
 
 $(BUILD_DIR)/CMakeCache.txt: $(EDGEJS_SRC)/CMakeLists.txt emscripten-toolchain.cmake
 	@echo ">>> Configuring EdgeJS for Emscripten..."
+	set -euo pipefail
 	@mkdir -p $(BUILD_DIR)
-	@cd $(EDGEJS_SRC) && git checkout -- . 2>/dev/null || true
-	@cd $(EDGEJS_SRC) && (git apply --check ../patches/edgejs-emscripten.patch 2>/dev/null && git apply ../patches/edgejs-emscripten.patch) || echo ">>> Patch already applied or not needed"
+	@cd $(ROOT_DIR) && git checkout -- edgejs-src 2>/dev/null || true
+	@cd $(ROOT_DIR) && (git apply --check patches/edgejs-emscripten.patch 2>/dev/null && git apply patches/edgejs-emscripten.patch) || echo ">>> Patch already applied or not needed"
 	@source $(EMSDK_DIR)/emsdk_env.sh 2>/dev/null || true
 	$(EMCMAKE) cmake \
 		-S $(EDGEJS_SRC) \
@@ -136,12 +137,13 @@ build: $(WASM_OUT)
 
 $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Building EdgeJS ($(BUILD_TYPE), $(JOBS) jobs)..."
+	set -euo pipefail
 	@mkdir -p $(OUTPUT_DIR)
 	cmake --build $(BUILD_DIR) -j $(JOBS) 2>&1 | tee $(BUILD_DIR)/build.log
 	@# Copy outputs
-	@cp $(BUILD_DIR)/edgejs.js $(JS_OUT) 2>/dev/null || true
-	@cp $(BUILD_DIR)/edgejs.wasm $(WASM_OUT) 2>/dev/null || true
-	@cp $(BUILD_DIR)/edgejs.worker.js $(WORKER_OUT) 2>/dev/null || true
+	@cp $(BUILD_DIR)/edgejs.js $(JS_OUT) 2>/dev/null || cp $(BUILD_DIR)/edge $(JS_OUT) 2>/dev/null || true
+	@cp $(BUILD_DIR)/edgejs.wasm $(WASM_OUT) 2>/dev/null || cp $(BUILD_DIR)/edge.wasm $(WASM_OUT) 2>/dev/null || true
+	@cp $(BUILD_DIR)/edgejs.worker.js $(WORKER_OUT) 2>/dev/null || cp $(BUILD_DIR)/edge.worker.js $(WORKER_OUT) 2>/dev/null || true
 	@echo ">>> Build complete"
 
 # ---- Test ----

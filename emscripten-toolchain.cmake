@@ -19,6 +19,8 @@ set(EMSCRIPTEN_ROOT "${EMSDK_DIR}/upstream/emscripten")
 set(CMAKE_SYSTEM_NAME Emscripten)
 set(CMAKE_SYSTEM_PROCESSOR wasm32)
 set(CMAKE_CROSSCOMPILING TRUE)
+# Avoid CMake link checks inheriting Emscripten export constraints.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(EDGE_IS_EMSCRIPTEN_TARGET ON)
 set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
 
@@ -55,8 +57,6 @@ set(EXPORTED_FUNCTIONS
     "_main"
     "_malloc"
     "_free"
-    "_napi_module_register"
-    "_edge_napi_init"
 )
 
 # ---- Emscripten-specific link flags ----
@@ -74,23 +74,22 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sFORCE_FILESYSTEM=1"
     "-sALLOW_UNIMPLEMENTED_SYSCALLS=1"
     "-sERROR_ON_UNDEFINED_SYMBOLS=0"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_napi_module_register','_edge_napi_init']"
-    "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','addFunction','UTF8ToString','stringToUTF8','FS','HEAPU8','HEAP32']"
+    "-Wl,--wrap=sysconf"
+    "-Wl,--wrap=mmap"
+    "-Wl,--wrap=munmap"
+    "-Wl,--wrap=mprotect"
+    "-Wl,--wrap=madvise"
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
+    "-Wl,--export-if-defined=napi_module_register"
+    "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','addFunction','dynCall','UTF8ToString','stringToUTF8','FS','HEAPU8','HEAP32']"
 )
 string(JOIN " " CMAKE_EXE_LINKER_FLAGS_INIT ${EMSCRIPTEN_LINK_FLAGS})
-
-# ---- Force-include WASI shims ----
-if(DEFINED EDGE_EXTRA_INCLUDES)
-    add_compile_options(-include "${EDGE_EXTRA_INCLUDES}/wasi-all-fixes.h")
-    include_directories(SYSTEM "${EDGE_EXTRA_INCLUDES}")
-endif()
 
 # ---- Definitions ----
 # Tell EdgeJS we're in browser/Emscripten mode
 add_definitions(
     -DEDGE_PLATFORM_EMSCRIPTEN=1
     -DEDGE_NAPI_PROVIDER_IMPORTS=1
-    -D__EMSCRIPTEN__=1
     -DV8_JITLESS_MODE=1
 )
 

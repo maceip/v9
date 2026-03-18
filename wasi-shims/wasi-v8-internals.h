@@ -42,6 +42,17 @@ static constexpr intptr_t kSmiTagMask = (1 << kSmiTagSize) - 1;
 
 static constexpr uint64_t kExternalAllocationSoftLimit = 64 * 1024 * 1024;  // 64MB
 
+// Fail fast if wasm32 layout assumptions drift.
+static_assert(sizeof(void*) == 4, "WASI shims require wasm32 pointer width");
+static_assert(sizeof(uintptr_t) == 4, "WASI shims require 32-bit uintptr_t");
+static_assert(kApiTaggedSize == 4, "kApiTaggedSize must stay 4 on wasm32");
+static_assert(kApiSystemPointerSize == sizeof(void*),
+              "kApiSystemPointerSize must match target pointer width");
+static_assert(kHeapObjectTag == 1, "kHeapObjectTag must stay 1");
+static_assert(kHeapObjectTagSize == 2, "kHeapObjectTagSize must stay 2");
+static_assert(kSmiShiftSize == 0, "kSmiShiftSize must stay 0 on 32-bit");
+static_assert(kSmiValueSize == 31, "kSmiValueSize must stay 31 on 32-bit");
+
 // Root indices
 enum RootIndex {
   kEmptyStringRootIndex = 0,

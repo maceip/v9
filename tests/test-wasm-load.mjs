@@ -77,8 +77,11 @@ test('exports include _free', () => {
 });
 
 test('exports include entry point (_main or main)', () => {
-  const hasMain = exportNames.includes('main') || exportNames.includes('_main');
-  assert(hasMain, 'expected main entry point in exports');
+  const hasMain =
+    exportNames.includes('main') ||
+    exportNames.includes('_main') ||
+    exportNames.includes('__main_argc_argv');
+  assert(hasMain, 'expected entry point export (main/_main/__main_argc_argv)');
 });
 
 // --- Check imports ---

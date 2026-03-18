@@ -13,6 +13,7 @@ console.log('=== N-API Bridge Extended Tests ===\n');
 
 let passed = 0;
 let failed = 0;
+const NAPI_PENDING_EXCEPTION = 10;
 
 function test(name, fn) {
   try {
@@ -31,6 +32,14 @@ function assert(cond, msg) {
 
 function assertEq(a, b, msg) {
   if (a !== b) throw new Error(msg || `Expected ${b}, got ${a}`);
+}
+
+function readCString(memory, ptr) {
+  if (!ptr) return '';
+  const bytes = new Uint8Array(memory);
+  let end = ptr;
+  while (end < bytes.length && bytes[end] !== 0) end++;
+  return new TextDecoder().decode(bytes.subarray(ptr, end));
 }
 
 // ---- Setup ----
@@ -100,22 +109,22 @@ test('napi_get_global returns globalThis handle', () => {
   const resultPtr = 500;
   imports.napi_get_global(0, resultPtr);
   const handle = new Int32Array(memoryBuffer, resultPtr, 1)[0];
-  assertEq(handle, 2);
+  assertEq(handle, 3);
   assertEq(bridge.getHandle(handle), globalThis);
 });
 
-test('napi_get_undefined returns handle 0', () => {
+test('napi_get_undefined returns handle 1', () => {
   const resultPtr = 600;
   imports.napi_get_undefined(0, resultPtr);
   const handle = new Int32Array(memoryBuffer, resultPtr, 1)[0];
-  assertEq(handle, 0);
+  assertEq(handle, 1);
 });
 
-test('napi_get_null returns handle 1', () => {
+test('napi_get_null returns handle 2', () => {
   const resultPtr = 700;
   imports.napi_get_null(0, resultPtr);
   const handle = new Int32Array(memoryBuffer, resultPtr, 1)[0];
-  assertEq(handle, 1);
+  assertEq(handle, 2);
 });
 
 // ---- Type Checking ----
@@ -124,12 +133,12 @@ console.log('\nType Checking:');
 test('napi_typeof identifies types correctly', () => {
   const resultPtr = 800;
 
-  // undefined (handle 0)
-  imports.napi_typeof(0, 0, resultPtr);
+  // undefined (handle 1)
+  imports.napi_typeof(0, 1, resultPtr);
   assertEq(new Int32Array(memoryBuffer, resultPtr, 1)[0], 0, 'undefined');
 
-  // null (handle 1)
-  imports.napi_typeof(0, 1, resultPtr);
+  // null (handle 2)
+  imports.napi_typeof(0, 2, resultPtr);
   assertEq(new Int32Array(memoryBuffer, resultPtr, 1)[0], 1, 'null');
 
   // number
@@ -320,6 +329,57 @@ test('napi_throw_error does not crash', () => {
 
   const status = imports.napi_throw_error(0, 0, 2700);
   assertEq(status, 0);
+});
+
+test('thrown callback propagates pending exception + last_error_info', () => {
+  const throwingHandle = bridge.createHandle(() => {
+    throw new Error('boom from callback');
+  });
+  const resultPtr = 2712;
+  const status = imports.napi_call_function(0, 3, throwingHandle, 0, 0, resultPtr);
+  assertEq(status, NAPI_PENDING_EXCEPTION, 'napi_call_function should report pending exception');
+
+  const pendingPtr = 2720;
+  imports.napi_is_exception_pending(0, pendingPtr);
+  assertEq(new Int32Array(memoryBuffer, pendingPtr, 1)[0], 1, 'exception should be pending');
+
+  const errorInfoOutPtr = 2728;
+  const errInfoStatus = imports.napi_get_last_error_info(0, errorInfoOutPtr);
+  assertEq(errInfoStatus, 0);
+  const errorInfoPtr = new Uint32Array(memoryBuffer, errorInfoOutPtr, 1)[0];
+  assert(errorInfoPtr !== 0, 'error info pointer should be set');
+
+  const msgPtr = new Uint32Array(memoryBuffer, errorInfoPtr, 1)[0];
+  const errorCode = new Int32Array(memoryBuffer, errorInfoPtr + 12, 1)[0];
+  assertEq(errorCode, NAPI_PENDING_EXCEPTION, 'last error should track pending exception');
+  assert(readCString(memoryBuffer, msgPtr).includes('boom'), 'last error message should include callback error');
+
+  const exOutPtr = 2736;
+  const exStatus = imports.napi_get_and_clear_last_exception(0, exOutPtr);
+  assertEq(exStatus, 0);
+  const exHandle = new Int32Array(memoryBuffer, exOutPtr, 1)[0];
+  const exValue = bridge.getHandle(exHandle);
+  assert(exValue instanceof Error, 'cleared exception should be an Error');
+
+  imports.napi_is_exception_pending(0, pendingPtr);
+  assertEq(new Int32Array(memoryBuffer, pendingPtr, 1)[0], 0, 'pending exception should clear');
+});
+
+test('handle scopes do not show monotonic growth under load', () => {
+  const baseline = bridge.getActiveHandleCount();
+  const scopePtr = 2752;
+  const valuePtr = 2760;
+
+  for (let i = 0; i < 20000; i++) {
+    imports.napi_open_handle_scope(0, scopePtr);
+    imports.napi_create_int32(0, i, valuePtr);
+    imports.napi_create_double(0, i + 0.5, valuePtr + 8);
+    imports.napi_close_handle_scope(0, 0);
+  }
+
+  const finalCount = bridge.getActiveHandleCount();
+  assert(finalCount <= baseline + 4,
+    `active handles should remain near baseline (baseline=${baseline}, final=${finalCount})`);
 });
 
 // ---- Memory Helpers ----
