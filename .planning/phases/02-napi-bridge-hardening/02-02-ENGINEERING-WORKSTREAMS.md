@@ -281,78 +281,51 @@ This project should run with strict artifact containment. Parallel work is safe 
 
 #### WS1 - Phase 1 Production Gate Hardening
 
-- `WS1-T1` Replace permissive linker/runtime flags with strict mode and explicit allowlists.  
-  `Owner: Gemini` `Support: CurSOR` `Escalation: Codex`
-- `WS1-T2` Remove test suppression (`|| true`) and enforce hard test gating.  
-  `Owner: CurSOR` `Support: Gemini` `Escalation: Codex`
-- `WS1-T3` Upgrade smoke requirements to require real bridge import instantiation.  
-  `Owner: CurSOR` `Support: cloud` `Escalation: Codex`
-- `WS1-T4` Add browser-run validation (headless Chrome/Playwright).  
-  `Owner: CurSOR` `Support: Gemini` `Escalation: Codex`
-- `WS1-T5` Add deterministic export/import manifest snapshots and size regression checks.  
-  `Owner: Gemini` `Support: CurSOR` `Escalation: Codex`
+- `WS1-T1` Replace permissive linker/runtime flags with strict mode and explicit allowlists. `Gemini`
+- `WS1-T2` Remove test suppression (`|| true`) and enforce hard test gating. `CurSOR`
+- `WS1-T3` Upgrade smoke requirements to require real bridge import instantiation. `CurSOR`
+- `WS1-T4` Add browser-run validation (headless Chrome/Playwright). `CurSOR`
+- `WS1-T5` Add deterministic export/import manifest snapshots and size regression checks. `Gemini`
 
 #### WS2 - Platform/OS Contract Fidelity
 
-- `WS2-T1` Audit/classify every shim (`retain/replace/remove`).  
-  `Owner: Gemini` `Support: cloud` `Escalation: Codex`
-- `WS2-T2` Refactor mmap wrapper semantics and unsupported-mode error behavior.  
-  `Owner: Gemini` `Support: Kimmy` `Escalation: Codex`
-- `WS2-T3` Remove catch-all no-op layers once concrete behavior exists.  
-  `Owner: cloud` `Support: Gemini` `Escalation: Codex`
+- `WS2-T1` Audit/classify every shim (`retain/replace/remove`). `Gemini`
+- `WS2-T2` Refactor mmap wrapper semantics and unsupported-mode error behavior. `Gemini`
+- `WS2-T3` Remove catch-all no-op layers once concrete behavior exists. `cloud`
 
 #### WS3 - Core N-API Semantics Correctness (NAPI-01)
 
-- `WS3-T1` Remove implicit success fallback for unknown imports in `getImportModule()`.  
-  `Owner: cloud` `Support: CurSOR` `Escalation: Codex`
-- `WS3-T2` Tighten `napi_call_function` semantics and receiver validation.  
-  `Owner: cloud` `Support: Kimmy` `Escalation: Codex`
-- `WS3-T3` Tighten property API status/exception propagation behavior.  
-  `Owner: Kimmy` `Support: cloud` `Escalation: Codex`
-- `WS3-T4` Complete wrap/unwrap lifecycle + finalize callback handling.  
-  `Owner: Kimmy` `Support: cloud` `Escalation: Codex`
+- `WS3-T1` Remove implicit success fallback for unknown imports in `getImportModule()`. `cloud`
+- `WS3-T2` Tighten `napi_call_function` semantics and receiver validation. `cloud`
+- `WS3-T3` Tighten property API status/exception propagation behavior. `Kimmy`
+- `WS3-T4` Complete wrap/unwrap lifecycle + finalize callback handling. `Kimmy`
 
 #### WS4 - Unofficial Node API Parity
 
-- `WS4-T1` Implement realistic microtask checkpoint behavior.  
-  `Owner: Kimmy` `Support: cloud` `Escalation: Codex`
-- `WS4-T2` Implement promise detail parity (state/result semantics).  
-  `Owner: Kimmy` `Support: CurSOR` `Escalation: Codex`
-- `WS4-T3` Wire module_wrap callbacks to active execution paths.  
-  `Owner: cloud` `Support: Kimmy` `Escalation: Codex`
-- `WS4-T4` Improve contextify parity and metadata behavior for CJS loader paths.  
-  `Owner: Kimmy` `Support: cloud` `Escalation: Codex`
-- `WS4-T5` Replace error-source placeholder defaults with meaningful metadata.  
-  `Owner: CurSOR` `Support: Kimmy` `Escalation: Codex`
+- `WS4-T1` Implement realistic microtask checkpoint behavior. `Kimmy`
+- `WS4-T2` Implement promise detail parity (state/result semantics). `Kimmy`
+- `WS4-T3` Wire module_wrap callbacks to active execution paths. `cloud`
+- `WS4-T4` Improve contextify parity and metadata behavior for CJS loader paths. `Kimmy`
+- `WS4-T5` Replace error-source placeholder defaults with meaningful metadata. `CurSOR`
 
 #### WS5 - Runtime API Contract Hardening (`eval`/`runFile`)
 
-- `WS5-T1` Remove temp-script + forced-exit wrappers from production API paths.  
-  `Owner: Kimmy` `Support: cloud` `Escalation: Codex`
-- `WS5-T2` Introduce explicit execution API with deterministic capture semantics.  
-  `Owner: Kimmy` `Support: CurSOR` `Escalation: Codex`
-- `WS5-T3` Validate repeated-call runtime stability and cleanup invariants.  
-  `Owner: CurSOR` `Support: Kimmy` `Escalation: Codex`
+- `WS5-T1` Remove temp-script + forced-exit wrappers from production API paths. `Kimmy`
+- `WS5-T2` Introduce explicit execution API with deterministic capture semantics. `Kimmy`
+- `WS5-T3` Validate repeated-call runtime stability and cleanup invariants. `CurSOR`
 
 #### WS6 - Soak/Leak/Performance Characterization (NAPI-02)
 
-- `WS6-T1` Add runtime instrumentation counters for handles/refs/callbacks/metadata.  
-  `Owner: CurSOR` `Support: cloud` `Escalation: Codex`
-- `WS6-T2` Build 30+ minute soak harness across representative workloads.  
-  `Owner: CurSOR` `Support: Kimmy` `Escalation: Codex`
-- `WS6-T3` Define and enforce leak/perf pass-fail thresholds.  
-  `Owner: CurSOR` `Support: Gemini` `Escalation: Codex`
-- `WS6-T4` Add JSPI call-chain benchmark suite and regression reporting.  
-  `Owner: Gemini` `Support: CurSOR` `Escalation: Codex`
+- `WS6-T1` Add runtime instrumentation counters for handles/refs/callbacks/metadata. `CurSOR`
+- `WS6-T2` Build 30+ minute soak harness across representative workloads. `CurSOR`
+- `WS6-T3` Define and enforce leak/perf pass-fail thresholds. `CurSOR`
+- `WS6-T4` Add JSPI call-chain benchmark suite and regression reporting. `Gemini`
 
 #### WS7 - CI, Safety Rails, Release Gates
 
-- `WS7-T1` Add CI tiering (quick/integration/nightly soak-perf).  
-  `Owner: CurSOR` `Support: Codex` `Escalation: Codex`
-- `WS7-T2` Add static guardrails (no `|| true`, no unknown-import release fallback).  
-  `Owner: CurSOR` `Support: cloud` `Escalation: Codex`
-- `WS7-T3` Build phase close checklist and machine-enforced release gate.  
-  `Owner: Codex` `Support: CurSOR` `Escalation: Codex`
+- `WS7-T1` Add CI tiering (quick/integration/nightly soak-perf). `CurSOR`
+- `WS7-T2` Add static guardrails (no `|| true`, no unknown-import release fallback). `CurSOR`
+- `WS7-T3` Build phase close checklist and machine-enforced release gate. `Codex`
 
 ### By Engineer (Responsibility View)
 
