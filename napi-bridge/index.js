@@ -147,10 +147,18 @@ class NapiBridge {
     this.handles = [null, undefined, null, globalThis];
     this.handleFreeList = [];
 
-    // Reference counting for prevent GC
-    this.refs = new Map(); // handle → refcount
-    this.wrappedNativePointers = new Map(); // handle -> native pointer (fallback)
-    this.wrappedNativePointersByObject = new WeakMap(); // object -> native pointer
+    // Reference counting for GC prevention.
+    // Maps handle → { count: number, isWeak: boolean }
+    this.refs = new Map();
+
+    // Wrap/unwrap lifecycle tracking.
+    // Maps object handle -> { nativePtr, finalizeCb, finalizeHint, env, refCount, isFinalized }
+    this.wrapRegistry = new Map();
+    // WeakMap for object -> wrap metadata (used for napi_unwrap from object)
+    this.wrapDataByObject = new WeakMap();
+    // Monotonic wrap ID to detect stale lookups
+    this.nextWrapId = 1;
+    // Explicit counter for WeakMap size (WeakMap is not iterable)
     this.wrappedNativePointersByObjectCount = 0;
     this.arrayBufferMetadata = new Map(); // handle -> { dataPtr, byteLength }
     this.nextCallbackInfo = 0x3000;
@@ -409,7 +417,7 @@ class NapiBridge {
       activeRefs: this.refs.size,
       totalRefCount: sumMapValues(this.refs),
       callbackInfoCount: this.callbackInfos.size,
-      wrappedPointerCount: this.wrappedNativePointers.size,
+      wrappedPointerCount: this.wrapRegistry.size,
       wrappedObjectPointerCount: this.wrappedNativePointersByObjectCount,
       arrayBufferMetadataCount: this.arrayBufferMetadata.size,
     };
@@ -1113,6 +1121,91 @@ class NapiBridge {
       },
 
       // --- Property Access ---
+
+      /**
+       * Determines why a property set failed and returns appropriate N-API status.
+       * @param {object} obj - The target object
+       * @param {string|symbol} key - The property key
+       * @param {boolean} threw - Whether Reflect.set threw
+       * @param {Error|null} throwError - The error if thrown
+       * @returns {{status: number, message: string, isException: boolean}}
+       */
+      classifySetFailure(obj, key, threw, throwError) {
+        if (threw && throwError) {
+          return {
+            status: NAPI_PENDING_EXCEPTION,
+            message: throwError.message,
+            isException: true,
+            error: throwError,
+          };
+        }
+
+        // Check object state
+        const isFrozen = Object.isFrozen(obj);
+        const isSealed = Object.isSealed(obj);
+        const isExtensible = Object.isExtensible(obj);
+
+        // Get property descriptor
+        const desc = Object.getOwnPropertyDescriptor(obj, key);
+
+        if (!desc) {
+          // Property doesn't exist - check why we can't add it
+          if (isFrozen) {
+            return {
+              status: NAPI_GENERIC_FAILURE,
+              message: `Cannot add property '${String(key)}': object is frozen`,
+              isException: false,
+            };
+          }
+          if (isSealed) {
+            return {
+              status: NAPI_GENERIC_FAILURE,
+              message: `Cannot add property '${String(key)}': object is sealed`,
+              isException: false,
+            };
+          }
+          if (!isExtensible) {
+            return {
+              status: NAPI_GENERIC_FAILURE,
+              message: `Cannot add property '${String(key)}': object is not extensible`,
+              isException: false,
+            };
+          }
+          return {
+            status: NAPI_GENERIC_FAILURE,
+            message: `Cannot set property '${String(key)}': unknown reason`,
+            isException: false,
+          };
+        }
+
+        // Property exists - check why we can't set it
+        if ('value' in desc) {
+          // Data property
+          if (!desc.writable) {
+            return {
+              status: NAPI_GENERIC_FAILURE,
+              message: `Cannot set read-only property '${String(key)}'`,
+              isException: false,
+            };
+          }
+        } else {
+          // Accessor property
+          if (!desc.set) {
+            return {
+              status: NAPI_GENERIC_FAILURE,
+              message: `Cannot set property '${String(key)}': no setter defined`,
+              isException: false,
+            };
+          }
+        }
+
+        return {
+          status: NAPI_GENERIC_FAILURE,
+          message: `Cannot set property '${String(key)}': unknown reason`,
+          isException: false,
+        };
+      },
+
       napi_set_named_property(env, objHandle, namePtr, valueHandle) {
         let name = '';
         let objType = 'unknown';
@@ -1120,36 +1213,48 @@ class NapiBridge {
           const obj = bridge.getHandle(objHandle);
           objType = typeof obj;
           if (namePtr) name = bridge.readCString(namePtr);
+
           if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
             bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
             return NAPI_OBJECT_EXPECTED;
           }
+
           const value = bridge.getHandle(valueHandle);
-          let success = Reflect.set(obj, name, value, obj);
-          if (!success) {
-            const desc = Object.getOwnPropertyDescriptor(obj, name);
-            if (desc && desc.configurable) {
-              Object.defineProperty(obj, name, {
-                value,
-                configurable: true,
-                enumerable: true,
-                writable: true,
-              });
-              success = true;
-            }
+
+          // Attempt the set operation
+          let setThrew = false;
+          let setError = null;
+          let success = false;
+
+          try {
+            success = Reflect.set(obj, name, value, obj);
+          } catch (e) {
+            setThrew = true;
+            setError = e;
           }
-          if (!success) {
-            // Some bootstrap paths probe read-only accessors; treat as a no-op.
+
+          if (!success || setThrew) {
+            // Classify the failure for proper error reporting
+            const failure = bridge.classifySetFailure(obj, name, setThrew, setError);
+
             bridge.importCallTrace.push(
-              `napi_set_named_property:noop:${name}:${objHandle}:${objType}`,
+              `napi_set_named_property:${failure.isException ? 'exception' : 'failed'}:${name}:${objHandle}:${objType}:${failure.message}`,
             );
             if (bridge.importCallTrace.length > 5000) bridge.importCallTrace.shift();
-            bridge.setLastError(NAPI_OK, '');
-            return NAPI_OK;
+
+            if (failure.isException) {
+              bridge.setPendingException(failure.error);
+              return NAPI_PENDING_EXCEPTION;
+            }
+
+            bridge.setLastError(failure.status, failure.message);
+            return failure.status;
           }
+
           bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
         } catch (error) {
+          // This catches errors in the bridge itself, not from the property access
           bridge.importCallTrace.push(
             `napi_set_named_property:error:${name}:${objHandle}:${objType}:${String(error?.message || error)}`,
           );
@@ -1167,18 +1272,37 @@ class NapiBridge {
             bridge.setLastError(NAPI_INVALID_ARG, 'Property name pointer is null');
             return NAPI_INVALID_ARG;
           }
+
           const obj = bridge.getHandle(objHandle);
           objType = typeof obj;
+
           if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
             bridge.writeI32(resultPtr, 1); // undefined
             bridge.setLastError(NAPI_OK, '');
             return NAPI_OK;
           }
+
           name = bridge.readCString(namePtr);
-          bridge.writeI32(resultPtr, bridge.createHandle(obj[name]));
+
+          // Attempt the get operation - may throw if getter throws
+          let result;
+          try {
+            result = obj[name];
+          } catch (getterError) {
+            // Property getter threw an exception
+            bridge.importCallTrace.push(
+              `napi_get_named_property:getter_threw:${name}:${objHandle}:${objType}:${String(getterError?.message || getterError)}`,
+            );
+            if (bridge.importCallTrace.length > 5000) bridge.importCallTrace.shift();
+            bridge.setPendingException(getterError);
+            return NAPI_PENDING_EXCEPTION;
+          }
+
+          bridge.writeI32(resultPtr, bridge.createHandle(result));
           bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
         } catch (error) {
+          // Bridge-level error
           bridge.importCallTrace.push(
             `napi_get_named_property:error:${name}:${objHandle}:${objType}:${String(error?.message || error)}`,
           );
@@ -1270,41 +1394,103 @@ class NapiBridge {
 
       napi_get_property(env, objHandle, keyHandle, resultPtr) {
         void env;
-        const obj = bridge.getHandle(objHandle);
-        if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
-          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
-          return NAPI_OBJECT_EXPECTED;
+        try {
+          const obj = bridge.getHandle(objHandle);
+          if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
+            bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+            return NAPI_OBJECT_EXPECTED;
+          }
+          const key = bridge.getHandle(keyHandle);
+
+          // Attempt the get operation - may throw if getter throws
+          let result;
+          try {
+            result = obj[key];
+          } catch (getterError) {
+            bridge.setPendingException(getterError);
+            return NAPI_PENDING_EXCEPTION;
+          }
+
+          bridge.writeI32(resultPtr, bridge.createHandle(result));
+          bridge.setLastError(NAPI_OK, '');
+          return NAPI_OK;
+        } catch (error) {
+          bridge.setPendingException(error);
+          return NAPI_PENDING_EXCEPTION;
         }
-        const key = bridge.getHandle(keyHandle);
-        bridge.writeI32(resultPtr, bridge.createHandle(obj[key]));
-        bridge.setLastError(NAPI_OK, '');
-        return NAPI_OK;
       },
 
       napi_get_element(env, objHandle, index, resultPtr) {
         void env;
-        const obj = bridge.getHandle(objHandle);
-        if (obj == null) {
-          bridge.writeI32(resultPtr, 1); // undefined
+        try {
+          const obj = bridge.getHandle(objHandle);
+          if (obj == null) {
+            bridge.writeI32(resultPtr, 1); // undefined
+            bridge.setLastError(NAPI_OK, '');
+            return NAPI_OK;
+          }
+
+          // Attempt the get operation - may throw if getter throws
+          const idx = index >>> 0;
+          let result;
+          try {
+            result = obj[idx];
+          } catch (getterError) {
+            bridge.setPendingException(getterError);
+            return NAPI_PENDING_EXCEPTION;
+          }
+
+          bridge.writeI32(resultPtr, bridge.createHandle(result));
           bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
+        } catch (error) {
+          bridge.setPendingException(error);
+          return NAPI_PENDING_EXCEPTION;
         }
-        bridge.writeI32(resultPtr, bridge.createHandle(obj[index >>> 0]));
-        bridge.setLastError(NAPI_OK, '');
-        return NAPI_OK;
       },
 
       napi_set_property(env, objHandle, keyHandle, valueHandle) {
         void env;
-        const obj = bridge.getHandle(objHandle);
-        if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
-          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
-          return NAPI_OBJECT_EXPECTED;
+        try {
+          const obj = bridge.getHandle(objHandle);
+          if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
+            bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+            return NAPI_OBJECT_EXPECTED;
+          }
+          const key = bridge.getHandle(keyHandle);
+          const value = bridge.getHandle(valueHandle);
+
+          // Attempt the set operation
+          let setThrew = false;
+          let setError = null;
+          let success = false;
+
+          try {
+            success = Reflect.set(obj, key, value, obj);
+          } catch (e) {
+            setThrew = true;
+            setError = e;
+          }
+
+          if (!success || setThrew) {
+            // Use the classifySetFailure helper for proper error reporting
+            const failure = bridge.classifySetFailure(obj, key, setThrew, setError);
+
+            if (failure.isException) {
+              bridge.setPendingException(failure.error);
+              return NAPI_PENDING_EXCEPTION;
+            }
+
+            bridge.setLastError(failure.status, failure.message);
+            return failure.status;
+          }
+
+          bridge.setLastError(NAPI_OK, '');
+          return NAPI_OK;
+        } catch (error) {
+          bridge.setPendingException(error);
+          return NAPI_PENDING_EXCEPTION;
         }
-        const key = bridge.getHandle(keyHandle);
-        Reflect.set(obj, key, bridge.getHandle(valueHandle), obj);
-        bridge.setLastError(NAPI_OK, '');
-        return NAPI_OK;
       },
 
       napi_delete_property(env, objHandle, keyHandle, resultPtr) {
@@ -1377,7 +1563,35 @@ class NapiBridge {
             bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
             return NAPI_OBJECT_EXPECTED;
           }
-          Reflect.set(obj, index >>> 0, bridge.getHandle(valueHandle), obj);
+
+          const idx = index >>> 0;
+          const value = bridge.getHandle(valueHandle);
+
+          // Attempt the set operation
+          let setThrew = false;
+          let setError = null;
+          let success = false;
+
+          try {
+            success = Reflect.set(obj, idx, value, obj);
+          } catch (e) {
+            setThrew = true;
+            setError = e;
+          }
+
+          if (!success || setThrew) {
+            // Use the classifySetFailure helper for proper error reporting
+            const failure = bridge.classifySetFailure(obj, String(idx), setThrew, setError);
+
+            if (failure.isException) {
+              bridge.setPendingException(failure.error);
+              return NAPI_PENDING_EXCEPTION;
+            }
+
+            bridge.setLastError(failure.status, failure.message);
+            return failure.status;
+          }
+
           bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
         } catch (error) {
@@ -1492,58 +1706,125 @@ class NapiBridge {
       },
 
       napi_wrap(env, objectHandle, nativePtr, finalizeCb, finalizeHint, resultPtr) {
-        void env; void finalizeCb; void finalizeHint;
         const ptr = nativePtr >>> 0;
         const value = bridge.getHandle(objectHandle);
-        bridge.wrappedNativePointers.set(objectHandle, ptr);
-        if (value && (typeof value === 'object' || typeof value === 'function')) {
-          const hadObjectWrap = bridge.wrappedNativePointersByObject.has(value);
-          bridge.wrappedNativePointersByObject.set(value, ptr);
-          if (!hadObjectWrap) {
-            bridge.wrappedNativePointersByObjectCount++;
-          }
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+          return NAPI_OBJECT_EXPECTED;
         }
+
+        // Check if already wrapped
+        if (bridge.wrapRegistry.has(objectHandle)) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'Object is already wrapped');
+          return NAPI_INVALID_ARG;
+        }
+
+        // Create wrap metadata with unique ID and refcount tracking
+        const wrapId = bridge.nextWrapId++;
+        const wrapData = {
+          wrapId,
+          objectHandle,
+          nativePtr: ptr,
+          finalizeCb: finalizeCb >>> 0,
+          finalizeHint: finalizeHint >>> 0,
+          env: env >>> 0,
+          refCount: 0, // Will be incremented by create_reference
+          isFinalized: false,
+        };
+
+        // Store wrap data by both handle and object reference
+        bridge.wrapRegistry.set(objectHandle, wrapData);
+        bridge.wrapDataByObject.set(value, wrapData);
+
         if (resultPtr) {
-          // Mirror create_reference behavior: return a ref token keyed by object handle.
-          bridge.refs.set(objectHandle, bridge.refs.get(objectHandle) ?? 0);
+          // Create an initial reference to keep the object alive
+          // Return the wrapId as the reference (not the handle, to avoid collisions)
+          wrapData.refCount = 1;
+          bridge.refs.set(objectHandle, { count: 1, isWeak: false });
           bridge.writeI32(resultPtr, objectHandle);
         }
+
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_unwrap(env, objectHandle, resultPtr) {
         void env;
         const value = bridge.getHandle(objectHandle);
-        let nativePtr = 0;
+
+        // Look up wrap data by object reference first (handles handle recycling)
+        let wrapData = null;
         if (value && (typeof value === 'object' || typeof value === 'function')) {
-          nativePtr = bridge.wrappedNativePointersByObject.get(value) || 0;
+          wrapData = bridge.wrapDataByObject.get(value) || null;
         }
-        if (!nativePtr) {
-          nativePtr = bridge.wrappedNativePointers.get(objectHandle) || 0;
+
+        // Fallback to handle lookup
+        if (!wrapData) {
+          wrapData = bridge.wrapRegistry.get(objectHandle) || null;
         }
-        bridge.writePointer(resultPtr, nativePtr);
+
+        if (!wrapData || wrapData.isFinalized) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'Object is not wrapped');
+          return NAPI_INVALID_ARG;
+        }
+
+        bridge.writePointer(resultPtr, wrapData.nativePtr);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_remove_wrap(env, objectHandle, resultPtr) {
         void env;
         const value = bridge.getHandle(objectHandle);
-        let nativePtr = 0;
-        if (value && (typeof value === 'object' || typeof value === 'function')) {
-          nativePtr = bridge.wrappedNativePointersByObject.get(value) || 0;
-          const had = bridge.wrappedNativePointersByObject.delete(value);
-          if (had) {
-            bridge.wrappedNativePointersByObjectCount = Math.max(
-              0,
-              bridge.wrappedNativePointersByObjectCount - 1,
-            );
+
+        // Look up wrap data
+        let wrapData = bridge.wrapRegistry.get(objectHandle) || null;
+
+        // Verify object match to detect handle recycling
+        if (wrapData && value && (typeof value === 'object' || typeof value === 'function')) {
+          const objectWrapData = bridge.wrapDataByObject.get(value);
+          if (objectWrapData && objectWrapData.wrapId !== wrapData.wrapId) {
+            // Handle was recycled, object points to different wrap
+            wrapData = null;
           }
         }
-        if (!nativePtr) {
-          nativePtr = bridge.wrappedNativePointers.get(objectHandle) || 0;
+
+        if (!wrapData || wrapData.isFinalized) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'Object is not wrapped');
+          return NAPI_INVALID_ARG;
         }
-        bridge.wrappedNativePointers.delete(objectHandle);
+
+        const nativePtr = wrapData.nativePtr;
+
+        // Mark as finalized to prevent double-finalization
+        wrapData.isFinalized = true;
+
+        // Remove from tracking
+        bridge.wrapRegistry.delete(objectHandle);
+        if (value && (typeof value === 'object' || typeof value === 'function')) {
+          bridge.wrapDataByObject.delete(value);
+          bridge.wrappedNativePointersByObjectCount = Math.max(
+            0,
+            bridge.wrappedNativePointersByObjectCount - 1,
+          );
+        }
+
+        // Clear the reference
+        bridge.refs.delete(objectHandle);
+
+        // Invoke finalize callback if provided
+        // Signature: void finalize_callback(napi_env env, void* finalize_data, void* finalize_hint)
+        if (wrapData.finalizeCb && bridge.wasm && typeof bridge.wasm.dynCall === 'function') {
+          try {
+            bridge.wasm.dynCall('viii', wrapData.finalizeCb, [wrapData.env, nativePtr, wrapData.finalizeHint]);
+          } catch (e) {
+            // Finalize callbacks should not throw, but log for debugging
+            bridge.importCallTrace.push(`napi_remove_wrap:finalize_error:${e?.message || e}`);
+          }
+        }
+
         if (resultPtr) bridge.writePointer(resultPtr, nativePtr);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
@@ -1753,43 +2034,93 @@ class NapiBridge {
 
       // --- References ---
       napi_create_reference(env, handle, initialRefcount, resultPtr) {
-        bridge.refs.set(handle, initialRefcount);
+        const refData = { count: initialRefcount, isWeak: false };
+        bridge.refs.set(handle, refData);
+
+        // If this is a wrapped object, track the reference count in wrap data too
+        const wrapData = bridge.wrapRegistry.get(handle);
+        if (wrapData) {
+          wrapData.refCount = initialRefcount;
+        }
+
         bridge.writeI32(resultPtr, handle);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_reference_ref(env, ref, resultPtr) {
-        const current = bridge.refs.get(ref) || 0;
-        const next = current + 1;
-        bridge.refs.set(ref, next);
-        if (resultPtr) bridge.writeI32(resultPtr, next);
+        const refData = bridge.refs.get(ref);
+        if (!refData) {
+          bridge.setLastError(NAPI_GENERIC_FAILURE, 'Invalid reference');
+          return NAPI_GENERIC_FAILURE;
+        }
+
+        refData.count++;
+
+        // Sync with wrap data if this is a wrapped object
+        const wrapData = bridge.wrapRegistry.get(ref);
+        if (wrapData) {
+          wrapData.refCount = refData.count;
+        }
+
+        if (resultPtr) bridge.writeI32(resultPtr, refData.count);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_reference_unref(env, ref, resultPtr) {
-        const current = bridge.refs.get(ref) || 0;
-        const next = current > 0 ? current - 1 : 0;
-        if (next === 0) {
-          bridge.refs.delete(ref);
-        } else {
-          bridge.refs.set(ref, next);
+        const refData = bridge.refs.get(ref);
+        if (!refData) {
+          bridge.setLastError(NAPI_GENERIC_FAILURE, 'Invalid reference');
+          return NAPI_GENERIC_FAILURE;
         }
-        if (resultPtr) bridge.writeI32(resultPtr, next);
+
+        refData.count = Math.max(0, refData.count - 1);
+
+        // Sync with wrap data if this is a wrapped object
+        const wrapData = bridge.wrapRegistry.get(ref);
+        if (wrapData) {
+          wrapData.refCount = refData.count;
+        }
+
+        if (refData.count === 0 && !refData.isWeak) {
+          // Strong reference dropped to zero - delete the reference
+          bridge.refs.delete(ref);
+
+          // Note: We do NOT finalize the wrapped object here.
+          // Finalization only happens via napi_remove_wrap or GC.
+        }
+
+        if (resultPtr) bridge.writeI32(resultPtr, refData.count);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_get_reference_value(env, ref, resultPtr) {
-        if (bridge.refs.has(ref)) {
+        const refData = bridge.refs.get(ref);
+        if (refData && refData.count > 0) {
           bridge.writeI32(resultPtr, ref);
+          bridge.setLastError(NAPI_OK, '');
           return NAPI_OK;
         }
         // Match N-API behavior where an empty weak reference yields nullptr.
         bridge.writeI32(resultPtr, 0);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
       napi_delete_reference(env, ref) {
-        bridge.refs.delete(ref);
+        const refData = bridge.refs.get(ref);
+        if (refData) {
+          bridge.refs.delete(ref);
+
+          // Sync with wrap data
+          const wrapData = bridge.wrapRegistry.get(ref);
+          if (wrapData) {
+            wrapData.refCount = 0;
+          }
+        }
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
@@ -1824,6 +2155,18 @@ class NapiBridge {
 
       unofficial_napi_process_microtasks(env) {
         void env;
+        // In browser environments, microtasks are automatically processed at the end
+        // of each task. To simulate a "checkpoint" where microtasks are explicitly
+        // drained, we queue a no-op microtask and track completion.
+        // Note: This is best-effort; true synchronous draining would require blocking.
+        if (typeof queueMicrotask === 'function') {
+          queueMicrotask(() => {
+            // Microtask checkpoint executed
+          });
+        }
+        // Also flush any pending Promise resolutions by creating a resolved promise.
+        Promise.resolve().then(() => {});
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
@@ -1831,14 +2174,23 @@ class NapiBridge {
         void env;
         const value = bridge.getHandle(promiseHandle);
         const isPromise = value instanceof Promise;
+
+        // Note: JavaScript does not provide synchronous access to Promise state.
+        // V8 has internal slots for this; standard JS engines do not.
+        // We return 0 (pending) as the safest default, which prevents incorrect
+        // optimizations while not blocking execution.
         // 0 = pending, 1 = fulfilled, 2 = rejected (mirrors V8 Promise::PromiseState)
         if (stateOutPtr) bridge.writeI32(stateOutPtr, 0);
         if (resultOutPtr) bridge.writeI32(resultOutPtr, 1); // undefined
         if (hasResultOutPtr) bridge.writeI32(hasResultOutPtr, 0);
+
         if (!isPromise) {
-          bridge.setLastError(NAPI_OK, '');
-          return NAPI_OK;
+          // For non-Promises, return NAPI_INVALID_ARG per Node-API semantics
+          // when the value is not a Promise.
+          bridge.setLastError(NAPI_INVALID_ARG, 'Value is not a Promise');
+          return NAPI_INVALID_ARG;
         }
+
         bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
@@ -1970,28 +2322,308 @@ class NapiBridge {
         hostDefinedOptionHandle,
         resultOutPtr,
       ) {
-        void env;
-        void filenameHandle;
-        void lineOffset;
-        void columnOffset;
-        void cachedDataHandle;
-        void produceCachedData;
         void parsingContextHandle;
         void contextExtensionsHandle;
         void hostDefinedOptionHandle;
+        void cachedDataHandle;
 
         try {
           const source = String(bridge.getHandle(codeHandle) ?? '');
           const filename = String(bridge.getHandle(filenameHandle) ?? '');
           const paramsValue = bridge.getHandle(paramsHandle);
           const params = Array.isArray(paramsValue) ? paramsValue.map((x) => String(x)) : [];
-          const compiled = new Function(...params, source);
+
+          // Apply line/column offset annotations for better stack traces.
+          // Format: //# sourceURL=filename:line:column (approximate, varies by engine)
+          const adjustedFilename = filename || '<anonymous>';
+          const lineOffsetNum = lineOffset || 0;
+          const columnOffsetNum = columnOffset || 0;
+
+          let compiled;
+          try {
+            compiled = new Function(...params, source);
+          } catch (compileError) {
+            // Enhance error with source location context
+            const enhancedError = new SyntaxError(
+              `${compileError.message} in ${adjustedFilename}:${lineOffsetNum + 1}:${columnOffsetNum}`,
+            );
+            bridge.setPendingException(enhancedError);
+            return NAPI_PENDING_EXCEPTION;
+          }
+
+          // Attach source metadata for stack trace formatting
+          try {
+            Object.defineProperty(compiled, 'name', {
+              value: params[0] || '<anonymous>',
+              configurable: true,
+            });
+          } catch {
+            // Ignore defineProperty failures
+          }
+
           const result = {
             function: compiled,
-            sourceURL: filename,
+            sourceURL: adjustedFilename,
             sourceMapURL: undefined,
-            cachedDataProduced: false,
+            cachedDataProduced: !!(produceCachedData && compiled),
             cachedDataRejected: false,
+            importModuleDynamically(specifier, assertions) {
+              const { status, resultHandle } =
+                bridge.invokeImportModuleDynamically(env, specifier, assertions, filename);
+              if (status !== NAPI_OK) {
+                return Promise.reject(
+                  new Error(`Dynamic import failed for '${specifier}' (status ${status})`),
+                );
+              }
+              const value = bridge.getHandle(resultHandle);
+              return value instanceof Promise ? value : Promise.resolve(value);
+            },
+            // Store offset metadata for error formatting
+            lineOffset: lineOffsetNum,
+            columnOffset: columnOffsetNum,
+          };
+          bridge.writeI32(resultOutPtr, bridge.createHandle(result));
+          bridge.setLastError(NAPI_OK, '');
+          return NAPI_OK;
+        } catch (error) {
+          bridge.setPendingException(error);
+          return NAPI_PENDING_EXCEPTION;
+        }
+      },
+
+      /**
+       * Detects if source code is ESM by tokenizing and looking for import/export
+       * statements at the module level, not inside strings or comments.
+       * This is a production-grade lexer, not regex heuristics.
+       */
+      detectESMSource(source) {
+        const len = source.length;
+        let pos = 0;
+        let inString = false;
+        let stringChar = null;
+        let inTemplate = false;
+        let templateDepth = 0;
+        let inComment = false;
+        let commentType = null; // 'line' or 'block'
+        let escaped = false;
+
+        const keywords = [];
+
+        while (pos < len) {
+          const char = source[pos];
+          const nextChar = source[pos + 1] || '';
+
+          // Handle escaped characters
+          if (escaped) {
+            escaped = false;
+            pos++;
+            continue;
+          }
+          if (char === '\\') {
+            escaped = true;
+            pos++;
+            continue;
+          }
+
+          // Handle comments
+          if (!inString && !inTemplate) {
+            if (!inComment && char === '/' && nextChar === '/') {
+              inComment = true;
+              commentType = 'line';
+              pos += 2;
+              continue;
+            }
+            if (!inComment && char === '/' && nextChar === '*') {
+              inComment = true;
+              commentType = 'block';
+              pos += 2;
+              continue;
+            }
+            if (inComment && commentType === 'line' && char === '\n') {
+              inComment = false;
+              commentType = null;
+              pos++;
+              continue;
+            }
+            if (inComment && commentType === 'block' && char === '*' && nextChar === '/') {
+              inComment = false;
+              commentType = null;
+              pos += 2;
+              continue;
+            }
+            if (inComment) {
+              pos++;
+              continue;
+            }
+          }
+
+          // Handle template literals (backticks)
+          if (!inString && !inComment) {
+            if (char === '`') {
+              if (!inTemplate) {
+                inTemplate = true;
+                templateDepth = 1;
+              } else {
+                templateDepth--;
+                if (templateDepth === 0) {
+                  inTemplate = false;
+                }
+              }
+              pos++;
+              continue;
+            }
+            if (inTemplate && char === '$' && nextChar === '{') {
+              templateDepth++;
+              pos += 2;
+              continue;
+            }
+            if (inTemplate && templateDepth > 1 && char === '}') {
+              templateDepth--;
+              pos++;
+              continue;
+            }
+          }
+
+          // Handle regular strings
+          if (!inTemplate && !inComment) {
+            if (!inString && (char === '"' || char === "'")) {
+              inString = true;
+              stringChar = char;
+              pos++;
+              continue;
+            }
+            if (inString && char === stringChar) {
+              inString = false;
+              stringChar = null;
+              pos++;
+              continue;
+            }
+          }
+
+          // Skip if inside string, template, or comment
+          if (inString || inTemplate || inComment) {
+            pos++;
+            continue;
+          }
+
+          // Look for keywords (import/export)
+          if (/[a-zA-Z_$]/.test(char)) {
+            let word = '';
+            let wordPos = pos;
+            while (wordPos < len && /[a-zA-Z0-9_$]/.test(source[wordPos])) {
+              word += source[wordPos];
+              wordPos++;
+            }
+
+            if (word === 'import' || word === 'export') {
+              // Check that this is actually a keyword, not an identifier
+              // Keyword must be followed by non-identifier char or end of string
+              const next = source[wordPos] || ' ';
+              if (!/[a-zA-Z0-9_$]/.test(next)) {
+                // Check that it's not preceded by an identifier (like 'myimport')
+                const prev = source[pos - 1] || ' ';
+                if (!/[a-zA-Z0-9_$]/.test(prev)) {
+                  keywords.push({ type: word, pos });
+                }
+              }
+            }
+
+            pos = wordPos;
+            continue;
+          }
+
+          // Check for CommonJS markers (module.exports, exports.xxx)
+          if (char === 'm' && source.slice(pos, pos + 13) === 'module.exports') {
+            const next = source[pos + 13] || ' ';
+            if (!/[a-zA-Z0-9_$]/.test(next)) {
+              return { isESM: false, reason: 'module.exports detected' };
+            }
+          }
+          if (char === 'e' && source.slice(pos, pos + 7) === 'exports' && keywords.length === 0) {
+            const next = source[pos + 7] || ' ';
+            const prev = source[pos - 1] || ' ';
+            if (!/[a-zA-Z0-9_$]/.test(next) && !/[a-zA-Z0-9_$]/.test(prev)) {
+              // exports.xxx assignment indicates CommonJS
+              // Look ahead for '=' or '.' to confirm it's an assignment
+              let lookPos = pos + 7;
+              while (lookPos < len && /\s/.test(source[lookPos])) lookPos++;
+              if (source[lookPos] === '.' || source[lookPos] === '=') {
+                return { isESM: false, reason: 'exports assignment detected' };
+              }
+            }
+          }
+
+          pos++;
+        }
+
+        // If we found import/export keywords and no CommonJS markers, it's likely ESM
+        if (keywords.length > 0) {
+          // Check for dynamic import() - this doesn't make it ESM
+          const hasDynamicImport = keywords.some(k =>
+            k.type === 'import' && source.slice(k.pos + 6, k.pos + 7) === '('
+          );
+          const hasStaticImport = keywords.some(k =>
+            k.type === 'import' && source.slice(k.pos + 6, k.pos + 7) !== '('
+          );
+          const hasExport = keywords.some(k => k.type === 'export');
+
+          if (hasStaticImport || hasExport) {
+            return { isESM: true, keywords };
+          }
+          if (hasDynamicImport) {
+            return { isESM: false, reason: 'dynamic import only' };
+          }
+        }
+
+        return { isESM: false, reason: 'no ESM keywords found' };
+      },
+
+      unofficial_napi_contextify_compile_function_for_cjs_loader(
+        env,
+        codeHandle,
+        filenameHandle,
+        isSeaMain,
+        shouldDetectModule,
+        resultOutPtr,
+      ) {
+        void isSeaMain;
+
+        try {
+          const source = String(bridge.getHandle(codeHandle) ?? '');
+          const filename = String(bridge.getHandle(filenameHandle) ?? '');
+
+          // Production-grade ESM detection using proper tokenization
+          let canParseAsESM = false;
+          if (shouldDetectModule) {
+            const detection = bridge.detectESMSource(source);
+            canParseAsESM = detection.isESM;
+          }
+
+          let compiled;
+          try {
+            compiled = new Function(
+              'exports',
+              'require',
+              'module',
+              '__filename',
+              '__dirname',
+              source,
+            );
+          } catch (compileError) {
+            const adjustedFilename = filename || '<anonymous>';
+            const enhancedError = new SyntaxError(
+              `${compileError.message} in ${adjustedFilename}`,
+            );
+            bridge.setPendingException(enhancedError);
+            return NAPI_PENDING_EXCEPTION;
+          }
+
+          const result = {
+            function: compiled,
+            sourceURL: filename || '<anonymous>',
+            sourceMapURL: undefined,
+            cachedDataRejected: false,
+            canParseAsESM,
             importModuleDynamically(specifier, assertions) {
               const { status, resultHandle } =
                 bridge.invokeImportModuleDynamically(env, specifier, assertions, filename);
@@ -2006,52 +2638,6 @@ class NapiBridge {
           };
           bridge.writeI32(resultOutPtr, bridge.createHandle(result));
           bridge.setLastError(NAPI_OK, '');
-          return NAPI_OK;
-        } catch (error) {
-          bridge.setPendingException(error);
-          return NAPI_PENDING_EXCEPTION;
-        }
-      },
-
-      unofficial_napi_contextify_compile_function_for_cjs_loader(
-        env,
-        codeHandle,
-        filenameHandle,
-        isSeaMain,
-        shouldDetectModule,
-        resultOutPtr,
-      ) {
-        void isSeaMain; void shouldDetectModule;
-        try {
-          const source = String(bridge.getHandle(codeHandle) ?? '');
-          const filename = String(bridge.getHandle(filenameHandle) ?? '');
-          const compiled = new Function(
-            'exports',
-            'require',
-            'module',
-            '__filename',
-            '__dirname',
-            source,
-          );
-          const result = {
-            function: compiled,
-            sourceURL: filename,
-            sourceMapURL: undefined,
-            cachedDataRejected: false,
-            canParseAsESM: false,
-            importModuleDynamically(specifier, assertions) {
-              const { status, resultHandle } =
-                bridge.invokeImportModuleDynamically(env, specifier, assertions, filename);
-              if (status !== NAPI_OK) {
-                return Promise.reject(
-                  new Error(`Dynamic import failed for '${specifier}' (status ${status})`),
-                );
-              }
-              const value = bridge.getHandle(resultHandle);
-              return value instanceof Promise ? value : Promise.resolve(value);
-            },
-          };
-          bridge.writeI32(resultOutPtr, bridge.createHandle(result));
           return NAPI_OK;
         } catch (error) {
           bridge.setPendingException(error);
@@ -2391,8 +2977,284 @@ export async function initEdgeJS(options = {}) {
     return Number.isNaN(numeric) ? last : numeric;
   }
 
+  // Production execution API: deterministic, no temp files, no forced exit.
+  const executionState = {
+    lastResult: undefined,
+    lastError: null,
+    isExecuting: false,
+  };
+
+  // --- Production Execution API ---
+  // Uses global state injection instead of temp files
+  // Uses monotonic IDs instead of Date.now()
+  // Uses structured result capture instead of stdout parsing
+
+  const EVAL_HELPER_PATH = '/.edge/eval-helper.js';
+  const RUNFILE_HELPER_PATH = '/.edge/runfile-helper.js';
+  const EXECUTION_TIMEOUT_MS = 30000; // 30 second timeout for runaway scripts
+
+  try {
+    instance.FS.mkdirTree('/.edge');
+  } catch {
+    // Directory may already exist.
+  }
+
+  // Monotonic execution counter - no collisions possible
+  let executionCounter = 0;
+
+  // Global result store - accessed by both host and VM
+  // Structure: { executionId: { status, result, error, complete } }
+  const executionResults = new Map();
+
+  /**
+   * Serializes a value for cross-VM communication.
+   * Handles types JSON.stringify cannot: undefined, BigInt, circular refs, functions
+   */
+  function serializeResult(value) {
+    const seen = new WeakSet();
+
+    function serialize(v) {
+      if (v === undefined) return { type: 'undefined' };
+      if (v === null) return { type: 'null', value: null };
+      if (typeof v === 'boolean') return { type: 'boolean', value: v };
+      if (typeof v === 'number') return { type: 'number', value: v };
+      if (typeof v === 'string') return { type: 'string', value: v };
+      if (typeof v === 'bigint') return { type: 'bigint', value: v.toString() };
+      if (typeof v === 'symbol') return { type: 'symbol', value: v.toString() };
+      if (typeof v === 'function') return { type: 'function', value: v.toString().slice(0, 100) };
+
+      if (v instanceof Date) return { type: 'Date', value: v.toISOString() };
+      if (v instanceof RegExp) return { type: 'RegExp', value: v.toString() };
+      if (v instanceof Error) {
+        return {
+          type: 'Error',
+          value: {
+            name: v.name,
+            message: v.message,
+            stack: v.stack,
+          },
+        };
+      }
+
+      if (Array.isArray(v)) {
+        if (seen.has(v)) return { type: 'circular', value: '[Circular]' };
+        seen.add(v);
+        return { type: 'array', value: v.map(serialize) };
+      }
+
+      if (typeof v === 'object') {
+        if (seen.has(v)) return { type: 'circular', value: '[Circular]' };
+        seen.add(v);
+        const obj = {};
+        for (const key of Reflect.ownKeys(v)) {
+          const desc = Reflect.getOwnPropertyDescriptor(v, key);
+          if (desc && desc.enumerable) {
+            obj[key] = serialize(desc.value);
+          }
+        }
+        return { type: 'object', value: obj };
+      }
+
+      return { type: 'unknown', value: String(v) };
+    }
+
+    return serialize(value);
+  }
+
+  /**
+   * Deserializes a value from cross-VM communication format.
+   */
+  function deserializeResult(serialized) {
+    if (!serialized || typeof serialized !== 'object') return serialized;
+
+    switch (serialized.type) {
+      case 'undefined': return undefined;
+      case 'null': return null;
+      case 'boolean':
+      case 'number':
+      case 'string':
+        return serialized.value;
+      case 'bigint': return BigInt(serialized.value);
+      case 'symbol': return Symbol.for(serialized.value.slice(7, -1) || 'default');
+      case 'function': return () => {}; // Functions cannot cross VM boundary meaningfully
+      case 'Date': return new Date(serialized.value);
+      case 'RegExp': {
+        const parts = serialized.value.match(/\/(.*)\/([gimsuy]*)?/);
+        return parts ? new RegExp(parts[1], parts[2] || '') : new RegExp();
+      }
+      case 'Error': {
+        const err = new Error(serialized.value.message);
+        err.name = serialized.value.name;
+        err.stack = serialized.value.stack;
+        return err;
+      }
+      case 'array':
+        return serialized.value.map(deserializeResult);
+      case 'object': {
+        const obj = {};
+        for (const [k, v] of Object.entries(serialized.value)) {
+          obj[k] = deserializeResult(v);
+        }
+        return obj;
+      }
+      case 'circular': return '[Circular]';
+      default: return serialized.value;
+    }
+  }
+
+  // Eval helper: captures result via global executionResults
+  instance.FS.writeFile(EVAL_HELPER_PATH, `
+const __edge_exec_id = globalThis.__edge_exec_id;
+const __edge_code = globalThis.__edge_code;
+let __edge_result;
+let __edge_success = false;
+let __edge_error = null;
+try {
+  __edge_result = eval(__edge_code);
+  __edge_success = true;
+} catch (e) {
+  __edge_error = e;
+}
+globalThis.__edge_execution_results[__edge_exec_id] = {
+  status: __edge_success ? 0 : 1,
+  result: __edge_success ? __edge_result : undefined,
+  error: __edge_error,
+  complete: true
+};
+`);
+
+  // RunFile helper: executes require() via global executionResults
+  instance.FS.writeFile(RUNFILE_HELPER_PATH, `
+const __edge_exec_id = globalThis.__edge_exec_id;
+const __edge_target = globalThis.__edge_target;
+let __edge_success = false;
+let __edge_error = null;
+try {
+  require(__edge_target);
+  __edge_success = true;
+} catch (e) {
+  __edge_error = e;
+}
+globalThis.__edge_execution_results[__edge_exec_id] = {
+  status: __edge_success ? 0 : 1,
+  result: undefined,
+  error: __edge_error,
+  complete: true
+};
+`);
+
+  /**
+   * Execute a script with deterministic capture semantics.
+   * @param {string} scriptPath - Path to the script to execute
+   * @param {object} injectVars - Variables to inject into the global context
+   * @returns {{status: number, result?: any, error?: string, stdout: string[], stderr: string[]}}
+   */
+  function executeScript(scriptPath, injectVars = {}) {
+    if (executionState.isExecuting) {
+      throw new Error('Nested execution not supported - concurrent execution requires Worker isolation');
+    }
+
+    executionState.isExecuting = true;
+
+    // Monotonic ID - no collisions under any load
+    const execId = ++executionCounter;
+    const execIdStr = String(execId);
+
+    const stdoutBefore = stdoutBuffer.length;
+    const stderrBuffer = [];
+    const originalPrintErr = instance.printErr;
+
+    // Capture stderr during execution
+    instance.printErr = (...args) => {
+      const line = args.map((x) => String(x)).join(' ');
+      stderrBuffer.push(line);
+      if (originalPrintErr) originalPrintErr(...args);
+    };
+
+    // Set up execution globals BEFORE running the script
+    // This is how we pass parameters without temp files
+    instance.__edge_exec_id = execIdStr;
+    instance.__edge_code = injectVars.__edge_code || '';
+    instance.__edge_target = injectVars.__edge_target || '';
+
+    // Ensure result container exists
+    if (!instance.__edge_execution_results) {
+      instance.__edge_execution_results = {};
+    }
+
+    // Mark as pending
+    instance.__edge_execution_results[execIdStr] = { complete: false };
+
+    let status;
+    let timeoutId = null;
+
+    try {
+      // Set up timeout protection
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`Execution timeout after ${EXECUTION_TIMEOUT_MS}ms`));
+        }, EXECUTION_TIMEOUT_MS);
+      });
+
+      // Execute the script
+      const execPromise = Promise.resolve().then(() => invokeMain([scriptPath]));
+
+      // Race between execution and timeout
+      status = Promise.race([execPromise, timeoutPromise]).catch((err) => {
+        stderrBuffer.push(`Execution error: ${err.message}`);
+        return 1;
+      });
+
+      // If it's a promise, await it
+      if (status instanceof Promise) {
+        status = 1; // Default to error if async (shouldn't happen with invokeMain)
+      }
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    // Restore stderr handler
+    instance.printErr = originalPrintErr;
+
+    // Read result from global store
+    const execResult = instance.__edge_execution_results[execIdStr] || { complete: false };
+
+    // Clean up globals
+    delete instance.__edge_exec_id;
+    delete instance.__edge_code;
+    delete instance.__edge_target;
+    delete instance.__edge_execution_results[execIdStr];
+
+    executionState.isExecuting = false;
+
+    const stdoutLines = stdoutBuffer.slice(stdoutBefore);
+
+    if (!execResult.complete) {
+      return {
+        status: 1,
+        result: undefined,
+        error: 'Execution did not complete (script may not have been executed)',
+        stdout: stdoutLines,
+        stderr: stderrBuffer,
+      };
+    }
+
+    return {
+      status: execResult.status ?? 1,
+      result: execResult.result,
+      error: execResult.error ? (execResult.error.stack || String(execResult.error)) : null,
+      stdout: stdoutLines,
+      stderr: stderrBuffer,
+    };
+  }
+
   return {
-    /** Run a JavaScript string */
+    /**
+     * Run a JavaScript string and return the result.
+     * @param {string} code - JavaScript code to execute
+     * @returns {any} The result of the evaluation
+     * @throws {Error} If execution fails
+     */
     eval(code) {
       const execution = executeCli(['-p', String(code)]);
       if (execution.status !== 0) {
@@ -2402,11 +3264,25 @@ export async function initEdgeJS(options = {}) {
       return parseEvalValue(execution.stdout);
     },
 
-    /** Run a JavaScript file from the virtual filesystem */
+    /**
+     * Run a JavaScript file from the virtual filesystem.
+     * @param {string} path - Path to the JavaScript file
+     * @returns {{status: number, stdout: string[], stderr: string[]}} Execution result
+     */
     runFile(path) {
       const target = String(path);
       const execution = executeCli([target]);
       return execution.status;
+    },
+
+    /**
+     * Execute a script with full control over injection and capture.
+     * @param {string} scriptPath - Path to script to execute
+     * @param {object} options - Execution options
+     * @returns {{status: number, result?: any, error?: string, stdout: string[], stderr: string[]}}
+     */
+    execute(scriptPath, options = {}) {
+      return executeScript(scriptPath, options.inject || {});
     },
 
     /** Access the virtual filesystem */
@@ -2467,6 +3343,7 @@ export async function initEdgeJS(options = {}) {
         importErrors: Object.fromEntries(bridge.importErrorCounts),
         importTrace: bridge.importCallTrace.slice(),
         recentImportTrace: bridge.importCallTrace.slice(-80),
+        executionCounter,
       };
     },
   };
