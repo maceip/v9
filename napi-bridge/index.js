@@ -134,9 +134,11 @@ function extractErrorSourceMetadata(value) {
  * and real JavaScript values in the browser.
  */
 class NapiBridge {
-  constructor(wasmModule) {
+  constructor(wasmModule, options = {}) {
     this.wasm = wasmModule;
     this.memory = null; // Set when module initializes
+    this.logNapiErrors = options.logNapiErrors !== false;
+    this.strictUnknownImports = Boolean(options.strictUnknownImports);
 
     // Handle table: maps integer handles ↔ JS values
     // Handle 0 is reserved as "null pointer / invalid handle"
@@ -1584,7 +1586,9 @@ class NapiBridge {
         const error = new Error(msg || 'N-API error');
         if (code) error.code = code;
         bridge.setPendingException(error);
-        console.error(`[napi] Error: ${msg}`);
+        if (bridge.logNapiErrors) {
+          console.error(`[napi] Error: ${msg}`);
+        }
         return NAPI_OK;
       },
 
@@ -2024,6 +2028,9 @@ class NapiBridge {
           if (bridge.importCallTrace.length > 5000) {
             bridge.importCallTrace.shift();
           }
+          if (bridge.strictUnknownImports) {
+            throw new Error(`[napi] Missing import implementation: ${prop}`);
+          }
           void args;
           return NAPI_OK;
         };
@@ -2042,7 +2049,13 @@ class NapiBridge {
  * @returns {Promise<object>} EdgeJS runtime instance
  */
 export async function initEdgeJS(options = {}) {
-  const bridge = new NapiBridge(null);
+  const strictUnknownImportsOption =
+    options.strictUnknownImports ??
+    (typeof process !== 'undefined' && process.env?.EDGEJS_STRICT_IMPORTS === '1');
+  const bridge = new NapiBridge(null, {
+    logNapiErrors: options.logNapiErrors,
+    strictUnknownImports: strictUnknownImportsOption,
+  });
 
   const isNode = typeof process !== 'undefined' && !!process.versions?.node;
 
@@ -2130,6 +2143,9 @@ export async function initEdgeJS(options = {}) {
             return () => 0;
           }
           if (value === undefined) {
+            if (bridge.strictUnknownImports) {
+              throw new Error(`[env] Missing import implementation: ${String(prop)}`);
+            }
             return () => 0;
           }
           return value;
@@ -2190,24 +2206,42 @@ export async function initEdgeJS(options = {}) {
       throw new Error('Edge main entry point not available');
     }
 
+    const baselineScopeDepth = bridge.handleScopes.length;
+    bridge.openHandleScope();
+
     const cliArgs = ['edge', ...args.map((arg) => String(arg))];
     bridge.lastMainArgPath = cliArgs[1] || '';
     const argvPointers = [];
-    for (const value of cliArgs) {
-      const byteLength = utf8ByteLength(value) + 1;
-      const ptr = instance._malloc(byteLength);
-      instance.stringToUTF8(value, ptr, byteLength);
-      argvPointers.push(ptr);
-    }
+    let argvPtr = 0;
 
-    const argvPtr = instance._malloc((argvPointers.length + 1) * 4);
-    for (let i = 0; i < argvPointers.length; i++) {
-      instance.HEAPU32[(argvPtr >> 2) + i] = argvPointers[i];
-    }
-    instance.HEAPU32[(argvPtr >> 2) + argvPointers.length] = 0;
+    try {
+      for (const value of cliArgs) {
+        const byteLength = utf8ByteLength(value) + 1;
+        const ptr = instance._malloc(byteLength);
+        instance.stringToUTF8(value, ptr, byteLength);
+        argvPointers.push(ptr);
+      }
 
-    const status = instance._main(cliArgs.length, argvPtr);
-    return status;
+      argvPtr = instance._malloc((argvPointers.length + 1) * 4);
+      for (let i = 0; i < argvPointers.length; i++) {
+        instance.HEAPU32[(argvPtr >> 2) + i] = argvPointers[i];
+      }
+      instance.HEAPU32[(argvPtr >> 2) + argvPointers.length] = 0;
+
+      return instance._main(cliArgs.length, argvPtr);
+    } finally {
+      if (typeof instance._free === 'function') {
+        if (argvPtr) {
+          instance._free(argvPtr);
+        }
+        for (const ptr of argvPointers) {
+          instance._free(ptr);
+        }
+      }
+      while (bridge.handleScopes.length > baselineScopeDepth) {
+        bridge.closeHandleScope();
+      }
+    }
   }
 
   return {
