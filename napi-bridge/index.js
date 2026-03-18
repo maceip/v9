@@ -2737,14 +2737,16 @@ class NapiBridge {
           return wrappedFn;
         }
         if (typeof prop !== 'string') return undefined;
-        // Record the missing import for diagnostics, but do NOT return a
-        // callable stub.  Returning a function here lets any typo or truly
-        // unimplemented NAPI call silently succeed at the lookup stage,
-        // deferring the failure to a confusing NAPI_GENERIC_FAILURE deep
-        // inside the call.  Returning undefined instead makes the failure
-        // immediate and obvious (TypeError: ... is not a function).
+        // Return a callable stub that records the missing import and returns
+        // NAPI_GENERIC_FAILURE.  We must return a function (not undefined)
+        // because WebAssembly.instantiate requires all imports to be callable.
+        // The stub does NOT return NAPI_OK — it fails loudly via the status
+        // code and the diagnostics counter, so no permissive silent-success.
         bridge.recordMissingImport(prop);
-        return undefined;
+        return (...args) => {
+          void args;
+          return NAPI_GENERIC_FAILURE;
+        };
       },
     });
   }

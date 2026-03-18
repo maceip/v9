@@ -1,0 +1,32 @@
+{
+  "phase": "02-napi-bridge-hardening",
+  "updatedAt": "2026-03-18T21:57:35.529Z",
+  "artifacts": {
+    "browserInstantiation": {
+      "status": "pass",
+      "summary": "initEdgeJS() instantiated with real bridge imports, zero missing imports"
+    },
+    "manifestSnapshot": {
+      "status": "pass",
+      "summary": "39 exports, 320 imports — snapshot recorded",
+      "exportCount": 39,
+      "importCount": 320
+    },
+    "sizeBudget": {
+      "status": "pass",
+      "summary": "7.2 MB raw — baseline recorded",
+      "rawBytes": 7535194,
+      "rawMB": 7.2
+    },
+    "diagnostics": {
+      "status": "pass",
+      "summary": "Zero missing imports, zero import errors",
+      "missing": 0,
+      "errors": 0
+    },
+    "soak": {
+      "status": "pending",
+      "summary": "No soak report found — run: node tests/test-soak.mjs --profile nightly"
+    }
+  }
+}

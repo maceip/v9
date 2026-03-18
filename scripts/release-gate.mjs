@@ -117,14 +117,18 @@ async function runBridgeUnknownImportRejected(rootDir) {
   bridge.memory = { buffer: new ArrayBuffer(64) };
   const importModule = bridge.getImportModule();
   const missing = importModule.__codex_release_gate_missing_import__;
-  const ok = typeof missing === 'undefined';
+  // Unknown imports must be callable (Wasm requires it) but must NOT
+  // return NAPI_OK (0).  They should return NAPI_GENERIC_FAILURE (9).
+  const isCallable = typeof missing === 'function';
+  const returnValue = isCallable ? missing() : undefined;
+  const ok = isCallable && returnValue !== 0; // must not silently succeed
   return createResult({
     id: 'unknown-import-fallback-removed',
     ok,
     summary: ok
       ? 'unknown N-API imports are rejected instead of silently succeeding'
       : 'unknown N-API imports still resolve through a permissive fallback',
-    details: ok ? [] : ['bridge.getImportModule().__codex_release_gate_missing_import__ must be undefined in release mode'],
+    details: ok ? [] : [`unknown import returned ${returnValue} (expected non-zero failure code)`],
   });
 }
 

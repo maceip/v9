@@ -63,10 +63,12 @@ async function checkBrowserInstantiation() {
     return result('fail', 'No Wasm binary — cannot test instantiation');
   }
   try {
-    const { initEdgeJS } = await import(path.join(ROOT, 'napi-bridge', 'index.js'));
+    const { initEdgeJS } = await import(new URL('../napi-bridge/index.js', import.meta.url).href);
     const runtime = await initEdgeJS({
-      wasmPath: WASM_PATH,
-      modulePath: path.join(ROOT, 'build', 'edge'),
+      wasmPath: '../dist/edgejs.wasm',
+      modulePath: '../build/edge',
+      onStdout: () => {},
+      onStderr: () => {},
     });
     const diag = runtime.diagnostics();
     if (diag.missingImports && diag.missingImports.length > 0) {
@@ -119,10 +121,12 @@ async function checkDiagnostics() {
     return result('fail', 'No Wasm binary — cannot run diagnostics');
   }
   try {
-    const { initEdgeJS } = await import(path.join(ROOT, 'napi-bridge', 'index.js'));
+    const { initEdgeJS } = await import(new URL('../napi-bridge/index.js', import.meta.url).href);
     const runtime = await initEdgeJS({
-      wasmPath: WASM_PATH,
-      modulePath: path.join(ROOT, 'build', 'edge'),
+      wasmPath: '../dist/edgejs.wasm',
+      modulePath: '../build/edge',
+      onStdout: () => {},
+      onStderr: () => {},
     });
     const diag = runtime.diagnostics();
     const missing = diag.missingImports?.length || 0;

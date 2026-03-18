@@ -50,26 +50,14 @@ test('package test scripts do not suppress failures with || true', () => {
     `suppressed test scripts found: ${JSON.stringify(violations)}`);
 });
 
-test('strict unknown import mode throws for missing N-API imports', () => {
-  const strictBridge = new NapiBridge(null, { strictUnknownImports: true });
-  const strictImports = strictBridge.getImportModule();
-  let threw = false;
-  try {
-    strictImports.__missing_import_for_guardrail();
-  } catch (error) {
-    threw = true;
-    assert(String(error.message).includes('Missing import implementation'),
-      'strict mode should emit missing-import error');
-  }
-  assert(threw, 'strict mode must throw on unknown import');
-});
-
-test('compat unknown import mode records missing import and returns NAPI_OK', () => {
-  const compatBridge = new NapiBridge(null, { strictUnknownImports: false });
-  const compatImports = compatBridge.getImportModule();
-  const status = compatImports.__missing_import_for_guardrail();
-  assert(status === 0, 'compat mode should return NAPI_OK');
-  const count = compatBridge.missingImports.get('__missing_import_for_guardrail') || 0;
+test('unknown N-API imports return callable stubs that fail (not NAPI_OK)', () => {
+  const bridge = new NapiBridge(null);
+  const imports = bridge.getImportModule();
+  const stub = imports.__missing_import_for_guardrail;
+  assert(typeof stub === 'function', 'unknown import must be callable (Wasm requires it)');
+  const status = stub();
+  assert(status !== 0, `unknown import must NOT return NAPI_OK (0), got ${status}`);
+  const count = bridge.missingImports.get('__missing_import_for_guardrail') || 0;
   assert(count === 1, `expected missing import counter to be 1, got ${count}`);
 });
 
