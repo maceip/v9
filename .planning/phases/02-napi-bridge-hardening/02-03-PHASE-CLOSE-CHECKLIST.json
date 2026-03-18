@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "phase": "02-napi-bridge-hardening",
+  "owner": "Codex",
+  "checks": [
+    {
+      "id": "required-documents",
+      "type": "required_files",
+      "description": "Planning and release-gate source-of-truth files exist",
+      "files": [
+        ".planning/PROJECT.md",
+        ".planning/STATE.md",
+        ".planning/phases/02-napi-bridge-hardening/02-01-PLAN.md",
+        ".planning/phases/02-napi-bridge-hardening/02-01-SUMMARY.md",
+        ".planning/phases/02-napi-bridge-hardening/02-02-ENGINEERING-WORKSTREAMS.md",
+        ".planning/phases/02-napi-bridge-hardening/02-03-PHASE-CLOSE-CHECKLIST.md",
+        ".planning/phases/02-napi-bridge-hardening/02-03-PHASE-CLOSE-CHECKLIST.json"
+      ]
+    },
+    {
+      "id": "unit-basic",
+      "type": "command",
+      "description": "Basic bridge smoke tests succeed",
+      "command": ["node", "tests/test-basic.mjs"]
+    },
+    {
+      "id": "unit-napi-bridge",
+      "type": "command",
+      "description": "N-API bridge tests succeed",
+      "command": ["node", "tests/test-napi-bridge.mjs"]
+    },
+    {
+      "id": "unit-wasm-load",
+      "type": "command",
+      "description": "Wasm artifact load validation succeeds",
+      "command": ["node", "tests/test-wasm-load.mjs"]
+    },
+    {
+      "id": "no-test-suppression",
+      "type": "forbidden_pattern",
+      "description": "No test target suppresses failure with || true",
+      "file": "Makefile",
+      "pattern": "(^|\\n)[^\\n]*test[^\\n]*\\|\\|\\s*true",
+      "flags": "g"
+    },
+    {
+      "id": "unknown-import-fallback-removed",
+      "type": "custom",
+      "description": "Unknown N-API imports are rejected rather than silently succeeding",
+      "name": "bridge_unknown_import_rejected"
+    },
+    {
+      "id": "runtime-probe-wrappers-removed",
+      "type": "custom",
+      "description": "Public runtime execution APIs do not depend on probe-only temp scripts",
+      "name": "runtime_wrappers_removed"
+    },
+    {
+      "id": "browser-instantiation-evidence",
+      "type": "json_field_equals",
+      "description": "Browser instantiation evidence records a pass",
+      "file": ".planning/evidence/phase-close/02-napi-bridge-hardening.json",
+      "path": ["artifacts", "browserInstantiation", "status"],
+      "expected": "pass"
+    },
+    {
+      "id": "manifest-snapshot-evidence",
+      "type": "json_field_equals",
+      "description": "Manifest snapshot evidence records a pass",
+      "file": ".planning/evidence/phase-close/02-napi-bridge-hardening.json",
+      "path": ["artifacts", "manifestSnapshot", "status"],
+      "expected": "pass"
+    },
+    {
+      "id": "size-budget-evidence",
+      "type": "json_field_equals",
+      "description": "Size budget evidence records a pass",
+      "file": ".planning/evidence/phase-close/02-napi-bridge-hardening.json",
+      "path": ["artifacts", "sizeBudget", "status"],
+      "expected": "pass"
+    },
+    {
+      "id": "soak-evidence",
+      "type": "json_field_equals",
+      "description": "Soak evidence records a pass",
+      "file": ".planning/evidence/phase-close/02-napi-bridge-hardening.json",
+      "path": ["artifacts", "soak", "status"],
+      "expected": "pass"
+    },
+    {
+      "id": "diagnostics-evidence",
+      "type": "json_field_equals",
+      "description": "Diagnostics evidence records a pass",
+      "file": ".planning/evidence/phase-close/02-napi-bridge-hardening.json",
+      "path": ["artifacts", "diagnostics", "status"],
+      "expected": "pass"
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "P1-GATE-STRICT-BUILD",
+      "description": "Strict build/test entry points are present and do not suppress failures",
+      "requires": ["required-documents", "unit-basic", "unit-napi-bridge", "no-test-suppression"]
+    },
+    {
+      "id": "P1-GATE-BROWSER-INSTANTIATION",
+      "description": "Browser/headless instantiation has passing evidence and the wasm artifact loads",
+      "requires": ["unit-wasm-load", "browser-instantiation-evidence"]
+    },
+    {
+      "id": "P1-GATE-MANIFESTS",
+      "description": "Manifest snapshots and size checks are recorded as passing evidence",
+      "requires": ["manifest-snapshot-evidence", "size-budget-evidence"]
+    },
+    {
+      "id": "P2-GATE-NAPI-CONFORMANCE",
+      "description": "Release profile rejects permissive unknown-import behavior",
+      "requires": ["unit-napi-bridge", "unknown-import-fallback-removed", "diagnostics-evidence"]
+    },
+    {
+      "id": "P2-GATE-RUNTIME-CONTRACT",
+      "description": "Runtime execution APIs are no longer probe-only wrappers",
+      "requires": ["runtime-probe-wrappers-removed"]
+    },
+    {
+      "id": "P2-GATE-SOAK-EVIDENCE",
+      "description": "Long-session soak evidence exists and is marked passing",
+      "requires": ["soak-evidence"]
+    },
+    {
+      "id": "P2-GATE-RELEASE-GUARDS",
+      "description": "Static release guards are active for suppression and permissive runtime fallbacks",
+      "requires": ["no-test-suppression", "unknown-import-fallback-removed", "runtime-probe-wrappers-removed"]
+    }
+  ]
+}
