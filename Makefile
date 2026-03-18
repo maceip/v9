@@ -147,7 +147,7 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Build complete"
 
 # ---- Test ----
-test: test-unit test-napi test-wasm
+test: test-unit test-napi test-wasm test-manifest
 
 test-unit:
 	@echo ">>> Running unit tests..."
@@ -160,6 +160,14 @@ test-napi:
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
 	cd $(ROOT_DIR) && node tests/test-wasm-load.mjs
+
+test-manifest:
+	@echo ">>> Running Manifest & Size checks..."
+	cd $(ROOT_DIR) && node tests/test-manifest.mjs
+
+bench:
+	@echo ">>> Running JSPI Call-Chain Benchmarks..."
+	cd $(ROOT_DIR) && node tests/benchmark-jspi.mjs
 
 # ---- Size Report ----
 size:

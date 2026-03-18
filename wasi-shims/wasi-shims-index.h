@@ -13,7 +13,6 @@
 #if defined(__wasi__) || defined(__EMSCRIPTEN__)
 
 // ======== Layer 0: Minimal / Foundational ========
-#include "wasi-minimal-fixes.h"              // kSystemPointerSize
 #include "wasi-pointer-assertions.h"         // compile-time pointer width validation
 #include "wasi-filesystem-stubs.h"           // (empty placeholder)
 
@@ -28,7 +27,6 @@
 // ======== Layer 3: V8 Internals (low-level) ========
 #include "wasi-v8-internals.h"               // Internals class (SMI, tags, roots)
 #include "wasi-v8-internals-constants.h"      // ValueHelper, instance type constants
-#include "wasi-v8-internals-minimal.h"        // (delegates to nuclear-fix.h)
 #include "wasi-external-pointer-compat.h"     // ExternalPointer_t typedef
 #include "wasi-v8-essential-constants.h"      // kSmiTag, kHeapObjectTag, bits bridge
 #include "wasi-v8-missing-types.h"            // Forwarding shim for missing types
@@ -62,9 +60,7 @@
 
 // ======== Layer 9: V8 Complete Types ========
 #include "wasi-v8-complete-types.h"           // TypedArrays, Isolate, PromiseReject
-#include "wasi-v8-complete-missing.h"         // All remaining stubs
 #include "wasi-v8-node-missing.h"             // Node.js-specific V8 API gaps
-#include "wasi-v8-minimal-missing.h"          // Delegates to node-missing
 
 // ======== Layer 10: simdutf ========
 #include "wasi-simdutf-compat.h"              // result struct, base64_type enum
@@ -79,8 +75,6 @@
 
 // ======== Layer 13: Comprehensive / Catch-all ========
 #include "wasi-additional-fixes.h"            // Zone, Hash, SmallVector, Assembler
-#include "wasi-comprehensive-fixes.h"         // Namespace re-exports, profiling
-#include "wasi-consolidated-fixes.h"          // Base types, assertions, allocators
 #include "wasi-runtime-profiler-fixes.h"      // CPU/Heap profiler, tracing, DTOA
 
 // ======== Master Include ========
