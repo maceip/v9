@@ -164,4 +164,11 @@ extern "C" int __wrap_madvise(void* addr, size_t len, int advice) {
   return 0;
 }
 
+// ---- Emscripten missing POSIX syscall stubs ----
+extern "C" int execve(const char* pathname, char* const argv[], char* const envp[]) {
+  (void)pathname; (void)argv; (void)envp;
+  errno = ENOSYS;
+  return -1;
+}
+
 #endif  // defined(__EMSCRIPTEN__)
