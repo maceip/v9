@@ -31,7 +31,8 @@ The markdown file exists for human review, but the gate executes the JSON policy
 3. Use `.planning/evidence/phase-close/02-napi-bridge-hardening.template.json` as the schema/template starting point.
 4. Run `make release-gate`.
 5. Do **not** mark a phase closed unless every checkpoint below is satisfied and the release gate exits successfully.
-6. Update `.planning/STATE.md` and the active phase summary with the evidence snapshot used for the decision.
+6. Treat missing evidence as a real blocker; do not paper over it with default-pass files.
+7. Update `.planning/STATE.md` and the active phase summary with the evidence snapshot used for the decision.
 
 ## Phase 1 Release Checkpoints
 
@@ -69,3 +70,8 @@ Each artifact must provide a `status` field. The machine-enforced gate currently
 - evidence requirements are structured and machine-readable,
 - gate output distinguishes individual check failures from checkpoint failures,
 - future CI tiers can extend the JSON policy without rewriting the engine.
+
+
+## Current Gate Posture
+
+As of this wave, the gate has already been tightened to remove fixable local blockers (suppressed tests, permissive unknown-import fallback, and probe temp-script runtime wrappers). Remaining failures should correspond to genuine missing evidence or later-lane work rather than placeholder logic.

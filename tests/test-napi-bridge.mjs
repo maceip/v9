@@ -63,6 +63,14 @@ test('getImports returns object with N-API functions', () => {
   assert(typeof imports.napi_call_function === 'function');
 });
 
+const importModule = bridge.getImportModule();
+
+test('getImportModule rejects unknown imports instead of returning success shims', () => {
+  assertEq(typeof importModule.napi_create_int32, 'function');
+  assertEq(importModule.__definitely_missing_import__, undefined);
+  assertEq(bridge.missingImports.get('__definitely_missing_import__'), 1, 'missing import should be recorded');
+});
+
 // ---- Value Creation via Imports ----
 console.log('\nValue Creation:');
 

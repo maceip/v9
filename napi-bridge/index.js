@@ -1913,16 +1913,8 @@ class NapiBridge {
           return wrappedFn;
         }
         if (typeof prop !== 'string') return undefined;
-        return (...args) => {
-          bridge.recordMissingImport(prop);
-          bridge.importCallCounts.set(prop, (bridge.importCallCounts.get(prop) || 0) + 1);
-          bridge.importCallTrace.push(prop);
-          if (bridge.importCallTrace.length > 5000) {
-            bridge.importCallTrace.shift();
-          }
-          void args;
-          return NAPI_OK;
-        };
+        bridge.recordMissingImport(prop);
+        return undefined;
       },
     });
   }
@@ -1983,6 +1975,7 @@ export async function initEdgeJS(options = {}) {
 
   const napiImports = bridge.getImportModule();
   const stdoutBuffer = [];
+  const stderrBuffer = [];
   let wasmBinary = null;
   if (isNode) {
     try {
@@ -2075,7 +2068,11 @@ export async function initEdgeJS(options = {}) {
       stdoutBuffer.push(line);
       (options.onStdout || console.log)(...args);
     },
-    printErr: options.onStderr || console.error,
+    printErr: (...args) => {
+      const line = args.map((x) => String(x)).join(' ');
+      stderrBuffer.push(line);
+      (options.onStderr || console.error)(...args);
+    },
   });
 
   bridge.wasm = instance;
@@ -2089,76 +2086,69 @@ export async function initEdgeJS(options = {}) {
     const cliArgs = ['edge', ...args.map((arg) => String(arg))];
     bridge.lastMainArgPath = cliArgs[1] || '';
     const argvPointers = [];
-    for (const value of cliArgs) {
-      const byteLength = utf8ByteLength(value) + 1;
-      const ptr = instance._malloc(byteLength);
-      instance.stringToUTF8(value, ptr, byteLength);
-      argvPointers.push(ptr);
-    }
+    let argvPtr = 0;
+    try {
+      for (const value of cliArgs) {
+        const byteLength = utf8ByteLength(value) + 1;
+        const ptr = instance._malloc(byteLength);
+        instance.stringToUTF8(value, ptr, byteLength);
+        argvPointers.push(ptr);
+      }
 
-    const argvPtr = instance._malloc((argvPointers.length + 1) * 4);
-    for (let i = 0; i < argvPointers.length; i++) {
-      instance.HEAPU32[(argvPtr >> 2) + i] = argvPointers[i];
-    }
-    instance.HEAPU32[(argvPtr >> 2) + argvPointers.length] = 0;
+      argvPtr = instance._malloc((argvPointers.length + 1) * 4);
+      for (let i = 0; i < argvPointers.length; i++) {
+        instance.HEAPU32[(argvPtr >> 2) + i] = argvPointers[i];
+      }
+      instance.HEAPU32[(argvPtr >> 2) + argvPointers.length] = 0;
 
-    const status = instance._main(cliArgs.length, argvPtr);
-    return status;
+      return instance._main(cliArgs.length, argvPtr);
+    } finally {
+      if (argvPtr) {
+        instance._free(argvPtr);
+      }
+      for (const ptr of argvPointers) {
+        instance._free(ptr);
+      }
+    }
+  }
+
+  function executeCli(args) {
+    const stdoutStart = stdoutBuffer.length;
+    const stderrStart = stderrBuffer.length;
+    const status = invokeMain(args);
+    return {
+      status,
+      stdout: stdoutBuffer.slice(stdoutStart),
+      stderr: stderrBuffer.slice(stderrStart),
+    };
+  }
+
+  function parseEvalValue(lines) {
+    const trimmed = lines.map((line) => line.trim()).filter(Boolean);
+    const last = trimmed[trimmed.length - 1];
+    if (last === undefined || last === 'undefined') return undefined;
+    if (last === 'true') return true;
+    if (last === 'false') return false;
+    const numeric = Number(last);
+    return Number.isNaN(numeric) ? last : numeric;
   }
 
   return {
     /** Run a JavaScript string */
     eval(code) {
-      const before = stdoutBuffer.length;
-      const evalScript = [
-        'let __edge_eval_result;',
-        `try { __edge_eval_result = eval(${JSON.stringify(String(code))}); }`,
-        'catch (__edge_eval_error) {',
-        "  console.error(__edge_eval_error && __edge_eval_error.stack ? __edge_eval_error.stack : String(__edge_eval_error));",
-        '  process.exit(1);',
-        '}',
-        "if (typeof __edge_eval_result !== 'undefined') console.log(__edge_eval_result);",
-        'process.exit(0);',
-      ].join('\n');
-      const evalPath = `/__edge_eval_${Date.now()}_${Math.floor(Math.random() * 1e9)}.js`;
-      instance.FS.writeFile(evalPath, evalScript);
-      const status = invokeMain([evalPath]);
-      try {
-        instance.FS.unlink(evalPath);
-      } catch {
-        // Best-effort cleanup.
+      const execution = executeCli(['-p', String(code)]);
+      if (execution.status !== 0) {
+        const detail = execution.stderr.map((line) => line.trim()).filter(Boolean).join('\n');
+        throw new Error(detail || `edge eval failed with status ${execution.status}`);
       }
-      if (status !== 0) {
-        throw new Error(`edge eval failed with status ${status}`);
-      }
-      const lines = stdoutBuffer.slice(before).map((line) => line.trim()).filter(Boolean);
-      const last = lines[lines.length - 1] ?? '';
-      const numeric = Number(last);
-      return Number.isNaN(numeric) ? last : numeric;
+      return parseEvalValue(execution.stdout);
     },
 
     /** Run a JavaScript file from the virtual filesystem */
     runFile(path) {
       const target = String(path);
-      const runnerScript = [
-        `const __edge_target = ${JSON.stringify(target)};`,
-        'try {',
-        '  require(__edge_target);',
-        '  process.exit(0);',
-        '} catch (__edge_run_error) {',
-        "  console.error(__edge_run_error && __edge_run_error.stack ? __edge_run_error.stack : String(__edge_run_error));",
-        '  process.exit(1);',
-        '}',
-      ].join('\n');
-      const runnerPath = `/__edge_run_${Date.now()}_${Math.floor(Math.random() * 1e9)}.js`;
-      instance.FS.writeFile(runnerPath, runnerScript);
-      const status = invokeMain([runnerPath]);
-      try {
-        instance.FS.unlink(runnerPath);
-      } catch {
-        // Best-effort cleanup.
-      }
-      return status;
+      const execution = executeCli([target]);
+      return execution.status;
     },
 
     /** Access the virtual filesystem */

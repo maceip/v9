@@ -13,8 +13,8 @@
 
 ### Integration/release gating
 - Added a machine-readable Phase 1/2 close policy that maps checkpoints to concrete checks and structured evidence requirements.
-- Reworked the release gate into a policy-driven engine so future CI tiers can extend the gate without rewriting code.
-- Added fixture-based unit coverage for the release gate so policy, evidence, and checkpoint resolution are exercised together.
+- Reworked the release gate into a policy-driven engine and removed fixable blockers by enforcing strict `test-napi` gating, rejecting unknown imports, and replacing probe temp-script wrappers with direct CLI execution paths.
+- Added fixture-based unit coverage for the release gate plus bridge coverage for unknown-import rejection.
 
 ### Runtime behavior improvements
 - `initEdgeJS()` now initializes quickly with clean diagnostics in probe flow.

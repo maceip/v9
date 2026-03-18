@@ -157,7 +157,7 @@ test-unit:
 
 test-napi:
 	@echo ">>> Running N-API bridge tests..."
-	cd $(ROOT_DIR) && node tests/test-napi-bridge.mjs 2>/dev/null || true
+	cd $(ROOT_DIR) && node tests/test-napi-bridge.mjs
 
 test-wasm:
 	@echo ">>> Running Wasm load tests..."
