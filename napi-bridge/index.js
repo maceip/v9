@@ -1559,7 +1559,7 @@ class NapiBridge {
 
         // Look up wrap data by object reference first (handles handle recycling)
         let wrapData = null;
-        if (value && (typeof value === 'object' || typeof value !== 'function')) {
+        if (value && (typeof value === 'object' || typeof value === 'function')) {
           wrapData = bridge.wrapDataByObject.get(value) || null;
         }
 
@@ -1586,7 +1586,7 @@ class NapiBridge {
         let wrapData = bridge.wrapRegistry.get(objectHandle) || null;
 
         // Verify object match to detect handle recycling
-        if (wrapData && value && (typeof value === 'object' || typeof value !== 'function')) {
+        if (wrapData && value && (typeof value === 'object' || typeof value === 'function')) {
           const objectWrapData = bridge.wrapDataByObject.get(value);
           if (objectWrapData && objectWrapData.wrapId !== wrapData.wrapId) {
             // Handle was recycled, object points to different wrap
@@ -1606,7 +1606,7 @@ class NapiBridge {
 
         // Remove from tracking
         bridge.wrapRegistry.delete(objectHandle);
-        if (value && (typeof value === 'object' || typeof value !== 'function')) {
+        if (value && (typeof value === 'object' || typeof value === 'function')) {
           bridge.wrapDataByObject.delete(value);
         }
 
@@ -1617,7 +1617,7 @@ class NapiBridge {
         // Signature: void finalize_callback(napi_env env, void* finalize_data, void* finalize_hint)
         if (wrapData.finalizeCb && bridge.wasm && typeof bridge.wasm.dynCall === 'function') {
           try {
-            bridge.wasm.dynCall('vii', wrapData.finalizeCb, [wrapData.env, nativePtr, wrapData.finalizeHint]);
+            bridge.wasm.dynCall('viii', wrapData.finalizeCb, [wrapData.env, nativePtr, wrapData.finalizeHint]);
           } catch (e) {
             // Finalize callbacks should not throw, but log for debugging
             bridge.importCallTrace.push(`napi_remove_wrap:finalize_error:${e?.message || e}`);
