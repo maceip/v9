@@ -6,17 +6,25 @@ This is an EdgeJS Browser Runtime project — a WebAssembly-compiled Node.js run
 
 ### Key commands
 
+See `Makefile` targets and `package.json` scripts for the full list. Summary:
+
 | Action | Command | Notes |
 |--------|---------|-------|
-| Unit tests | `npm test` | Runs `test-basic.mjs` + `test-napi-bridge.mjs` (N-API bridge JS tests) |
-| Full tests | `make test` | Also runs `test-wasm-load.mjs`, which gracefully skips if no `.wasm` built |
+| Unit tests | `npm test` | Runs `test-basic.mjs` + `test-napi-bridge.mjs` |
+| Full tests | `make test` | Also runs `test-wasm-load.mjs` (needs `dist/edgejs.wasm` for full results) |
 | Lint | `make lint` | Checks shim header include guards + `node --check napi-bridge/index.js` |
-| Build (Wasm) | `make build` | Requires Emscripten SDK; build is currently incomplete (Phase 2 of 6) |
+| Configure | `make configure` | Requires Emscripten sourced: `source ~/emsdk/emsdk_env.sh` |
+| Build | `make build` | Compiles EdgeJS C++ to `.wasm` via Emscripten (~3 min) |
+| Size report | `make size` | Shows raw/gzip/brotli sizes of `dist/edgejs.wasm` |
 
 ### Non-obvious notes
 
-- **No npm dependencies**: `package.json` has zero `dependencies`/`devDependencies`. No `node_modules` directory is needed or created.
-- **Emscripten SDK**: Full Wasm build requires Emscripten 3.1.64 (`make setup` installs it to `~/emsdk`). This is only needed for `make configure` / `make build`, not for running tests or lint.
-- **Wasm build incomplete**: The project is in early development. The `test-wasm-load.mjs` test gracefully skips when `dist/edgejs.wasm` is absent — this is expected.
-- **lint warning**: `wasi-v8-internals-minimal.h` intentionally lacks an include guard — the `make lint` warning about it is known and expected.
+- **Emscripten must be sourced** before `make configure` or `make build`: run `source ~/emsdk/emsdk_env.sh` in your shell first.
+- **EdgeJS upstream repo**: The Makefile references `aspect-build/aspect-edgejs` which is private/unavailable. The actual working upstream is `wasmerio/edgejs` — clone via `git clone --depth 1 https://github.com/wasmerio/edgejs.git edgejs-src` if `make fetch` fails.
+- **No npm dependencies**: `package.json` has zero `dependencies`/`devDependencies`. No `node_modules` directory is needed.
+- **Build produces ~7 MB `.wasm`** (2.0 MB brotli). Output goes to `dist/edgejs.wasm`, `dist/edgejs.js`, `dist/edgejs.worker.js`.
+- **Undefined symbol warnings during build are expected**: The N-API and libuv symbols are provided by the browser bridge at runtime, not at link time.
+- **lint warning**: `wasi-v8-internals-minimal.h` intentionally lacks an include guard — the `make lint` warning about it is known.
 - The project uses ES Modules (`"type": "module"` in `package.json`).
+- **`initEdgeJS()` runtime init**: Currently fails to load the Emscripten module factory via CJS `require()`. This is expected — full runtime integration is Phase 3+.
+- **`edgejs-src/` is gitignored**: It's cloned at build time and not committed to the repo.
