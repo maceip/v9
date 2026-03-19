@@ -15,6 +15,7 @@ import util from './util.js';
 import fs from './fs.js';
 import { http, https } from './http.js';
 import { net, tls, dns } from './net-stubs.js';
+import childProcess from './child-process.js';
 
 /**
  * crypto — Pure JS synchronous SHA + HMAC + randomBytes.
@@ -1058,6 +1059,7 @@ export function registerBrowserBuiltins(edgeInstance) {
     'net': net,
     'tls': tls,
     'dns': dns,
+    'child_process': childProcess,
   };
 
   // Inject into EdgeJS's module resolution
