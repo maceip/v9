@@ -1,8 +1,15 @@
 /**
  * MEMFS — In-memory filesystem with POSIX inode tree.
  *
- * Each inode: { type: 'file'|'dir', content: Uint8Array|null, children: Map, stat: {...} }
+ * Each inode: { type, content, children, ino, version, contentHash, atime, mtime, ctime }
  * Paths resolved via POSIX rules. No symlinks in v1.
+ *
+ * Architecture:
+ *   - Instance-based: createFilesystem() returns an isolated MEMFS instance
+ *   - Mutation journal: every write operation emits a structured record
+ *   - Content hashing: FNV-1a hash on file content for cheap change detection
+ *   - Version tracking: per-inode monotonic version counter
+ *   - Watcher hooks: onMutation callback for watch()/sync/snapshot consumers
  *
  * Error shapes match Node.js exactly:
  *   { code: 'ENOENT', errno: -2, syscall: 'open', path: '/missing',
@@ -46,9 +53,19 @@ export function createFsError(code, syscall, path) {
   return err;
 }
 
-// ─── Stat object ────────────────────────────────────────────────────
+// ─── Content hashing (FNV-1a 32-bit) ────────────────────────────────
+// Fast, non-cryptographic hash for change detection and snapshot diffing.
 
-let _inoCounter = 1;
+function fnv1a(data) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) {
+    hash ^= data[i];
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+// ─── Stat object ────────────────────────────────────────────────────
 
 class Stats {
   constructor(inode) {
@@ -95,24 +112,11 @@ class Dirent {
   isSocket() { return false; }
 }
 
-// ─── Inode helpers ──────────────────────────────────────────────────
+// ─── Canonical path resolution ──────────────────────────────────────
+// Single shared path normalizer. All subsystems (fs, shell, module
+// loader) should use resolvePath() for consistent canonical paths.
 
-function _makeInode(type, content) {
-  const now = Date.now();
-  return {
-    type,
-    content: content || null,
-    children: type === 'dir' ? new Map() : null,
-    ino: _inoCounter++,
-    atime: now,
-    mtime: now,
-    ctime: now,
-  };
-}
-
-// ─── Path resolution ────────────────────────────────────────────────
-
-function normalizePath(p) {
+export function normalizePath(p) {
   if (typeof p !== 'string' || p.length === 0) return '/';
   const parts = p.split('/').filter(Boolean);
   const result = [];
@@ -121,6 +125,20 @@ function normalizePath(p) {
     else if (part !== '.') result.push(part);
   }
   return '/' + result.join('/');
+}
+
+/**
+ * Resolve a path against a cwd. If the path is already absolute,
+ * it is normalized. If relative, it is joined with cwd first.
+ *
+ * This is the ONE canonical resolver that fs, shell, and module
+ * loader should all call.
+ */
+export function resolvePath(p, cwd) {
+  if (typeof p !== 'string' || p.length === 0) return normalizePath(cwd || '/');
+  if (p.startsWith('/')) return normalizePath(p);
+  const base = (cwd || '/').replace(/\/$/, '');
+  return normalizePath(base + '/' + p);
 }
 
 function parentAndName(p) {
@@ -136,9 +154,76 @@ function parentAndName(p) {
 
 export class MEMFS {
   constructor() {
-    this._root = _makeInode('dir');
+    this._root = this._makeInode('dir');
     this._fdTable = new Map();
     this._nextFd = 3; // 0,1,2 reserved for stdin/stdout/stderr
+    this._seq = 0;    // monotonic mutation sequence number
+    this._journal = []; // mutation log for sync/watchers/snapshots
+    this._maxJournal = 10000; // cap journal to prevent unbounded growth
+    this._onMutation = null; // optional callback: (record) => void
+    this._inoCounter = 1;
+  }
+
+  // ── Inode creation (per-instance counter) ──
+  _makeInode(type, content) {
+    const now = Date.now();
+    return {
+      type,
+      content: content || null,
+      children: type === 'dir' ? new Map() : null,
+      ino: this._inoCounter++,
+      version: 1,
+      contentHash: content ? fnv1a(content) : 0,
+      atime: now,
+      mtime: now,
+      ctime: now,
+    };
+  }
+
+  // ── Mutation journal ──
+  _emit(op, path, extra) {
+    const record = {
+      seq: ++this._seq,
+      op,
+      path,
+      timestamp: Date.now(),
+      ...extra,
+    };
+    this._journal.push(record);
+    if (this._journal.length > this._maxJournal) {
+      this._journal = this._journal.slice(-Math.floor(this._maxJournal * 0.75));
+    }
+    if (this._onMutation) {
+      try { this._onMutation(record); } catch { /* watcher errors must not break fs */ }
+    }
+    return record;
+  }
+
+  /**
+   * Get journal entries since a given sequence number.
+   * Useful for incremental sync.
+   */
+  getJournalSince(seq) {
+    const idx = this._journal.findIndex(r => r.seq > seq);
+    return idx === -1 ? [] : this._journal.slice(idx);
+  }
+
+  /**
+   * Register a mutation listener. Returns an unsubscribe function.
+   */
+  onMutation(callback) {
+    const prev = this._onMutation;
+    if (!prev) {
+      this._onMutation = callback;
+    } else {
+      // Support multiple listeners by chaining
+      this._onMutation = (record) => { prev(record); callback(record); };
+    }
+    return () => {
+      if (this._onMutation === callback) {
+        this._onMutation = null;
+      }
+    };
   }
 
   // ── Internal: resolve path to inode ──
@@ -175,10 +260,13 @@ export class MEMFS {
     if (recursive) {
       const parts = norm.split('/').filter(Boolean);
       let current = this._root;
+      let builtPath = '';
       for (const part of parts) {
+        builtPath += '/' + part;
         if (!current.children.has(part)) {
-          const child = _makeInode('dir');
+          const child = this._makeInode('dir');
           current.children.set(part, child);
+          this._emit('mkdir', builtPath, { ino: child.ino });
         }
         const next = current.children.get(part);
         if (next.type !== 'dir') {
@@ -198,7 +286,9 @@ export class MEMFS {
     if (parentInode.children.has(name)) {
       throw createFsError('EEXIST', 'mkdir', norm);
     }
-    parentInode.children.set(name, _makeInode('dir'));
+    const child = this._makeInode('dir');
+    parentInode.children.set(name, child);
+    this._emit('mkdir', norm, { ino: child.ino });
   }
 
   // ── readFile ──
@@ -229,16 +319,29 @@ export class MEMFS {
       content = _encoder.encode(String(data));
     }
 
+    const hash = fnv1a(content);
     const existing = parentInode.children.get(name);
     if (existing) {
       if (existing.type === 'dir') throw createFsError('EISDIR', 'open', norm);
+      const oldHash = existing.contentHash;
       existing.content = content;
+      existing.contentHash = hash;
+      existing.version++;
       const now = Date.now();
       existing.mtime = now;
       existing.ctime = now;
+      this._emit('writeFile', norm, {
+        ino: existing.ino, version: existing.version,
+        oldHash, newHash: hash, size: content.byteLength,
+      });
     } else {
-      const inode = _makeInode('file', content);
+      const inode = this._makeInode('file', content);
+      inode.contentHash = hash;
       parentInode.children.set(name, inode);
+      this._emit('create', norm, {
+        ino: inode.ino, version: inode.version,
+        newHash: hash, size: content.byteLength,
+      });
     }
   }
 
@@ -271,6 +374,24 @@ export class MEMFS {
     if (!child) throw createFsError('ENOENT', 'unlink', norm);
     if (child.type === 'dir') throw createFsError('EISDIR', 'unlink', norm);
     parentInode.children.delete(name);
+    this._emit('unlink', norm, { ino: child.ino, oldHash: child.contentHash });
+  }
+
+  // ── rmdir ──
+  rmdir(p) {
+    const norm = normalizePath(p);
+    if (norm === '/') throw createFsError('EPERM', 'rmdir', norm);
+    const inode = this._resolve(norm);
+    if (!inode) throw createFsError('ENOENT', 'rmdir', norm);
+    if (inode.type !== 'dir') throw createFsError('ENOTDIR', 'rmdir', norm);
+    if (inode.children.size > 0) throw createFsError('ENOTEMPTY', 'rmdir', norm);
+
+    const { parent, name } = parentAndName(norm);
+    const parentInode = parent === null ? this._root : this._resolve(parent);
+    if (parentInode) {
+      parentInode.children.delete(name);
+      this._emit('rmdir', norm, { ino: inode.ino });
+    }
   }
 
   // ── rename ──
@@ -293,7 +414,11 @@ export class MEMFS {
     const inode = oldParentInode.children.get(oldName);
     oldParentInode.children.delete(oldName);
     newParentInode.children.set(newName, inode);
+    inode.version++;
     inode.ctime = Date.now();
+    this._emit('rename', normOld, {
+      ino: inode.ino, newPath: normNew, version: inode.version,
+    });
   }
 
   // ── exists ──
@@ -357,13 +482,43 @@ export class MEMFS {
     if (position === null || position === undefined) {
       entry.position += data.byteLength;
     }
-    entry.inode.mtime = Date.now();
+    const now = Date.now();
+    entry.inode.mtime = now;
+    entry.inode.contentHash = fnv1a(entry.inode.content);
+    entry.inode.version++;
+    this._emit('writeFd', entry.path, {
+      ino: entry.inode.ino, version: entry.inode.version,
+      newHash: entry.inode.contentHash,
+    });
     return data.byteLength;
   }
 
   close(fd) {
     if (!this._fdTable.has(fd)) throw createFsError('EBADF', 'close', String(fd));
     this._fdTable.delete(fd);
+  }
+
+  // ── Snapshot: capture full filesystem state ──
+  snapshot() {
+    const files = {};
+    const _walk = (node, path) => {
+      for (const [name, child] of node.children) {
+        const childPath = path === '/' ? '/' + name : path + '/' + name;
+        if (child.type === 'file') {
+          files[childPath] = {
+            content: new Uint8Array(child.content),
+            ino: child.ino,
+            version: child.version,
+            contentHash: child.contentHash,
+            mtime: child.mtime,
+          };
+        } else if (child.type === 'dir') {
+          _walk(child, childPath);
+        }
+      }
+    };
+    _walk(this._root, '/');
+    return { seq: this._seq, files };
   }
 
   // ── Pre-populate from a files map ──
@@ -379,8 +534,22 @@ export class MEMFS {
   }
 }
 
-// Singleton for the default fs
-export const defaultMemfs = new MEMFS();
+// ─── Factory function ───────────────────────────────────────────────
+// Preferred way to create filesystem instances. Each runtime should
+// get its own instance for isolation, snapshots, and deterministic tests.
 
-// Ensure /tmp exists
-defaultMemfs.mkdir('/tmp', true);
+export function createFilesystem(options = {}) {
+  const fs = new MEMFS();
+  fs.mkdir('/tmp', true);
+  if (options.onMutation) {
+    fs.onMutation(options.onMutation);
+  }
+  if (options.files) {
+    fs.populate(options.files);
+  }
+  return fs;
+}
+
+// Singleton for backward compatibility — subsystems that haven't been
+// migrated to per-runtime instances yet still import this.
+export const defaultMemfs = createFilesystem();

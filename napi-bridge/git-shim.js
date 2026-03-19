@@ -8,7 +8,7 @@
  * blame implementation.
  */
 
-import { defaultMemfs } from './memfs.js';
+import { getMemfs } from './shell-commands.js';
 
 const _decoder = new TextDecoder('utf-8');
 
@@ -155,7 +155,7 @@ function gitDiff(args) {
   for (const f of changed.modified) {
     const original = gitState.initialFiles[f] || '';
     let current = '';
-    try { current = _decoder.decode(defaultMemfs.readFile(f)); } catch {}
+    try { current = _decoder.decode(getMemfs().readFile(f)); } catch {}
     lines.push(`diff --git a${f} b${f}`);
     lines.push(`--- a${f}`);
     lines.push(`+++ b${f}`);
@@ -173,7 +173,7 @@ function gitDiff(args) {
 
   for (const f of changed.added) {
     let current = '';
-    try { current = _decoder.decode(defaultMemfs.readFile(f)); } catch {}
+    try { current = _decoder.decode(getMemfs().readFile(f)); } catch {}
     lines.push(`diff --git a${f} b${f}`);
     lines.push('new file');
     lines.push(`+++ b${f}`);
@@ -197,7 +197,7 @@ function gitBlame(args) {
 
   let content;
   try {
-    content = _decoder.decode(defaultMemfs.readFile(file));
+    content = _decoder.decode(getMemfs().readFile(file));
   } catch {
     return { stdout: '', stderr: `fatal: no such path '${file}'\n`, exitCode: 1 };
   }
@@ -251,7 +251,7 @@ function getChangedFiles() {
   // Compare initialFiles with current MEMFS state
   for (const [path, content] of Object.entries(gitState.initialFiles)) {
     try {
-      const current = _decoder.decode(defaultMemfs.readFile(path));
+      const current = _decoder.decode(getMemfs().readFile(path));
       if (current !== content) modified.push(path);
     } catch {
       deleted.push(path);
@@ -279,11 +279,11 @@ function getChangedFiles() {
 
 function _walkForUntracked(dirPath, knownPaths, added) {
   let entries;
-  try { entries = defaultMemfs.readdir(dirPath); } catch { return; }
+  try { entries = getMemfs().readdir(dirPath); } catch { return; }
   for (const name of entries) {
     const full = dirPath === '/' ? '/' + name : dirPath + '/' + name;
     try {
-      const s = defaultMemfs.stat(full);
+      const s = getMemfs().stat(full);
       if (s.isDirectory()) {
         _walkForUntracked(full, knownPaths, added);
       } else if (!knownPaths.has(full)) {

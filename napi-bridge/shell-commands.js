@@ -4,51 +4,55 @@
  * Each shim: (args, options) → { stdout, stderr, exitCode }
  */
 
-import { defaultMemfs } from './memfs.js';
+import { defaultMemfs, resolvePath, normalizePath as _normPath } from './memfs.js';
 import fsModule from './fs.js';
 
 const _decoder = new TextDecoder('utf-8');
 const _encoder = new TextEncoder();
 
+// ─── Pluggable filesystem backend ───────────────────────────────────
+// Shell commands use _activeMemfs which defaults to the global singleton.
+// initEdgeJS() can override this with a per-runtime instance via setMemfs().
+let _activeMemfs = defaultMemfs;
+
+export function setMemfs(memfs) {
+  _activeMemfs = memfs;
+}
+
+export function getMemfs() {
+  return _activeMemfs;
+}
+
 function normalizePath(p) {
   if (typeof p !== 'string' || p.length === 0) return '/';
-  // Handle relative paths using cwd
-  if (!p.startsWith('/')) {
-    const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
-    p = cwd.replace(/\/$/, '') + '/' + p;
-  }
-  const parts = p.split('/').filter(Boolean);
-  const result = [];
-  for (const part of parts) {
-    if (part === '..') { if (result.length > 0) result.pop(); }
-    else if (part !== '.') result.push(part);
-  }
-  return '/' + result.join('/');
+  // Use canonical path resolution with cwd
+  const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
+  return resolvePath(p, cwd);
 }
 
 function readFileText(path) {
-  const data = defaultMemfs.readFile(path);
+  const data = _activeMemfs.readFile(path);
   return _decoder.decode(data);
 }
 
 function fileExists(path) {
-  return defaultMemfs.exists(path);
+  return _activeMemfs.exists(path);
 }
 
 function statFile(path) {
-  return defaultMemfs.stat(path);
+  return _activeMemfs.stat(path);
 }
 
 function isDir(path) {
   try {
-    const s = defaultMemfs.stat(path);
+    const s = _activeMemfs.stat(path);
     return s.isDirectory();
   } catch { return false; }
 }
 
 function isFile(path) {
   try {
-    const s = defaultMemfs.stat(path);
+    const s = _activeMemfs.stat(path);
     return s.isFile();
   } catch { return false; }
 }
@@ -83,7 +87,7 @@ function ls(args) {
       output.push(resolved.split('/').pop());
       return true;
     }
-    const entries = defaultMemfs.readdir(resolved);
+    const entries = _activeMemfs.readdir(resolved);
     const filtered = showAll ? entries : entries.filter(e => !e.startsWith('.'));
 
     if (recursive && output.length > 0) output.push('');
@@ -93,7 +97,7 @@ function ls(args) {
       for (const name of filtered) {
         const full = resolved === '/' ? '/' + name : resolved + '/' + name;
         try {
-          const s = defaultMemfs.stat(full);
+          const s = _activeMemfs.stat(full);
           const type = s.isDirectory() ? 'd' : '-';
           output.push(`${type}rwxr-xr-x 1 user user ${s.size || 0} Jan  1 00:00 ${name}`);
         } catch {
@@ -245,7 +249,7 @@ function grep(args, options) {
 
 function walkDir(dirPath, callback) {
   let entries;
-  try { entries = defaultMemfs.readdir(dirPath); } catch { return; }
+  try { entries = _activeMemfs.readdir(dirPath); } catch { return; }
   for (const name of entries) {
     const full = dirPath === '/' ? '/' + name : dirPath + '/' + name;
     if (isDir(full)) {
@@ -289,7 +293,7 @@ function find(args) {
   function walk(dir, depth) {
     if (depth > maxDepth) return;
     let entries;
-    try { entries = defaultMemfs.readdir(dir); } catch { return; }
+    try { entries = _activeMemfs.readdir(dir); } catch { return; }
     for (const name of entries) {
       const full = dir === '/' ? '/' + name : dir + '/' + name;
       const isDirectory = isDir(full);
@@ -398,7 +402,7 @@ function mkdir(args) {
     else paths.push(arg);
   }
   for (const p of paths) {
-    try { defaultMemfs.mkdir(normalizePath(p), recursive); }
+    try { _activeMemfs.mkdir(normalizePath(p), recursive); }
     catch (e) { return { stdout: '', stderr: `mkdir: ${e.message}\n`, exitCode: 1 }; }
   }
   return { stdout: '', stderr: '', exitCode: 0 };
@@ -425,7 +429,7 @@ function rm(args) {
         if (!recursive) return { stdout: '', stderr: `rm: cannot remove '${p}': Is a directory\n`, exitCode: 1 };
         rmRecursive(resolved);
       } else {
-        defaultMemfs.unlink(resolved);
+        _activeMemfs.unlink(resolved);
       }
     } catch (e) {
       if (!force) return { stdout: '', stderr: `rm: ${e.message}\n`, exitCode: 1 };
@@ -436,11 +440,11 @@ function rm(args) {
 
 // Bug #20: Use public MEMFS API instead of private _resolve()
 function rmRecursive(dirPath) {
-  const entries = defaultMemfs.readdir(dirPath);
+  const entries = _activeMemfs.readdir(dirPath);
   for (const name of entries) {
     const full = dirPath === '/' ? '/' + name : dirPath + '/' + name;
     if (isDir(full)) rmRecursive(full);
-    else defaultMemfs.unlink(full);
+    else _activeMemfs.unlink(full);
   }
   // Remove the now-empty directory via public rmdir-like unlink
   // MEMFS doesn't have rmdir, so use the fs module's rmdirSync
@@ -475,14 +479,14 @@ function cp(args) {
 function cpRecursive(src, dest, recursive) {
   if (isDir(src)) {
     if (!recursive) throw new Error(`-r not specified; omitting directory '${src}'`);
-    defaultMemfs.mkdir(dest, true);
-    const entries = defaultMemfs.readdir(src);
+    _activeMemfs.mkdir(dest, true);
+    const entries = _activeMemfs.readdir(src);
     for (const name of entries) {
       cpRecursive(src + '/' + name, dest + '/' + name, true);
     }
   } else {
-    const data = defaultMemfs.readFile(src);
-    defaultMemfs.writeFile(dest, data);
+    const data = _activeMemfs.readFile(src);
+    _activeMemfs.writeFile(dest, data);
   }
 }
 
@@ -492,7 +496,7 @@ function mv(args) {
   const paths = args.filter(a => !a.startsWith('-'));
   if (paths.length < 2) return { stdout: '', stderr: 'mv: missing operand\n', exitCode: 1 };
   try {
-    defaultMemfs.rename(normalizePath(paths[0]), normalizePath(paths[1]));
+    _activeMemfs.rename(normalizePath(paths[0]), normalizePath(paths[1]));
   } catch (e) {
     return { stdout: '', stderr: `mv: ${e.message}\n`, exitCode: 1 };
   }
@@ -507,12 +511,12 @@ function touch(args) {
   for (const p of paths) {
     const resolved = normalizePath(p);
     if (!fileExists(resolved)) {
-      defaultMemfs.writeFile(resolved, new Uint8Array(0));
+      _activeMemfs.writeFile(resolved, new Uint8Array(0));
     } else {
       // Re-write existing content to update mtime via public writeFile
       try {
-        const existing = defaultMemfs.readFile(resolved);
-        defaultMemfs.writeFile(resolved, existing);
+        const existing = _activeMemfs.readFile(resolved);
+        _activeMemfs.writeFile(resolved, existing);
       } catch { /* ignore: e.g. directories */ }
     }
   }
@@ -1094,16 +1098,16 @@ function tee(args, options) {
     const encoded = new TextEncoder().encode(stdinData);
     if (append) {
       try {
-        const existing = defaultMemfs.readFile(resolved);
+        const existing = _activeMemfs.readFile(resolved);
         const combined = new Uint8Array(existing.length + encoded.length);
         combined.set(existing);
         combined.set(encoded, existing.length);
-        defaultMemfs.writeFile(resolved, combined);
+        _activeMemfs.writeFile(resolved, combined);
       } catch {
-        defaultMemfs.writeFile(resolved, encoded);
+        _activeMemfs.writeFile(resolved, encoded);
       }
     } else {
-      defaultMemfs.writeFile(resolved, encoded);
+      _activeMemfs.writeFile(resolved, encoded);
     }
   }
 
@@ -1150,7 +1154,7 @@ function sed(args, options) {
       text = readFileText(resolved);
       const result = transform(text);
       if (inPlace) {
-        defaultMemfs.writeFile(resolved, new TextEncoder().encode(result));
+        _activeMemfs.writeFile(resolved, new TextEncoder().encode(result));
       } else {
         output.push(result);
       }

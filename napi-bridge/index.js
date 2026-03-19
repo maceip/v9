@@ -2813,15 +2813,24 @@ export async function initEdgeJS(options = {}) {
   }
 
   // ── Shared imports (used by both bridge-only and Wasm paths) ───────
-  const _sharedFsMod = await import('./fs.js');
-  const _sharedBridgeFs = _sharedFsMod.default || _sharedFsMod.fs || _sharedFsMod;
   const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
-  const { defaultMemfs: _sharedMemfs } = await import('./memfs.js');
+  const { createFilesystem } = await import('./memfs.js');
+  const { createFsModule } = await import('./fs.js');
+  const { setMemfs: _setShellMemfs } = await import('./shell-commands.js');
 
-  // Pre-populate MEMFS from options.files
-  if (options.files) {
-    _sharedMemfs.populate(options.files);
-  }
+  // ── Per-runtime filesystem instance ────────────────────────────────
+  // Each initEdgeJS() call gets its own isolated MEMFS for snapshots,
+  // sync, and deterministic tests.
+  const _sharedMemfs = createFilesystem({ files: options.files || {} });
+
+  // Wire shell/git subsystems to use this runtime's filesystem
+  _setShellMemfs(_sharedMemfs);
+
+  // Create fs module bound to this runtime's MEMFS + cwd
+  const _sharedBridgeFs = createFsModule(
+    _sharedMemfs,
+    () => _sharedProcessBridge.cwd(),
+  );
 
   // Wire onStdout / onStderr callbacks into processBridge.
   // Optimization: reuse a single TextDecoder and batch writes per microtask
@@ -2869,15 +2878,23 @@ export async function initEdgeJS(options = {}) {
 
   const _moduleCache = new Map();
 
-  function _normPath(p) {
-    const parts = p.split('/').filter(Boolean);
-    const result = [];
-    for (const part of parts) {
-      if (part === '..') { if (result.length > 0) result.pop(); }
-      else if (part !== '.') result.push(part);
+  // ── Module cache invalidation via mutation journal ─────────────────
+  // When a file is written/renamed/unlinked, evict its module cache entry
+  // so subsequent require() calls pick up the new content.
+  _sharedMemfs.onMutation((record) => {
+    if (record.op === 'writeFile' || record.op === 'create' ||
+        record.op === 'unlink' || record.op === 'rename') {
+      _moduleCache.delete(record.path);
+      // For rename, also evict the new path
+      if (record.op === 'rename' && record.newPath) {
+        _moduleCache.delete(record.newPath);
+      }
     }
-    return '/' + result.join('/');
-  }
+  });
+
+  // Use canonical path resolution from memfs
+  const { normalizePath: _normPath, resolvePath: _resolvePath } = await import('./memfs.js');
+
 
   function _resolveModule(name, fromDir) {
     const builtin = _builtinOverrides.get(name);
@@ -2994,7 +3011,7 @@ export async function initEdgeJS(options = {}) {
   // code runs, rather than relying on ad hoc registration in web/terminal.js.
   const { registerBrowserBuiltins: _autoRegister } = await import('./browser-builtins.js');
   const _runtimeShell = { _registerBuiltinOverride, _memfsRequire };
-  _autoRegister(_runtimeShell);
+  _autoRegister(_runtimeShell, { fs: _sharedBridgeFs });
 
   // ── Bridge-only mode ────────────────────────────────────────────────
   // When no Wasm module is available, return a lightweight runtime backed

@@ -3,9 +3,15 @@
  *
  * Provides sync, async (callback), and promise-based APIs.
  * Error shapes match Node.js exactly: { code, errno, syscall, path, message }.
+ *
+ * Architecture:
+ *   - All paths resolved against process.cwd() via resolvePath()
+ *   - Backed by a MEMFS instance (defaultMemfs for backward compat,
+ *     or a per-runtime instance via createFsModule())
+ *   - No direct _resolve() access — all ops go through MEMFS public API
  */
 
-import { defaultMemfs, createFsError } from './memfs.js';
+import { defaultMemfs, createFsError, resolvePath } from './memfs.js';
 import { Readable, Writable } from './streams.js';
 
 const _encoder = new TextEncoder();
@@ -44,248 +50,258 @@ function parseOptions(options, defaults) {
   return defaults;
 }
 
-// ─── Sync APIs ──────────────────────────────────────────────────────
+// ─── Factory: create fs module bound to a specific MEMFS instance ───
 
-function readFileSync(path, options) {
-  const opts = parseOptions(options, { encoding: null });
-  const data = defaultMemfs.readFile(path);
-  return opts.encoding ? fromBuffer(data, opts.encoding) : new Uint8Array(data);
-}
+export function createFsModule(memfs, getCwd) {
+  // getCwd returns the current working directory for relative path resolution
+  const _cwd = getCwd || (() => '/');
 
-function writeFileSync(path, data, options) {
-  const opts = parseOptions(options, { encoding: 'utf8' });
-  if (typeof data === 'string') {
-    defaultMemfs.writeFile(path, toBuffer(data, opts.encoding));
-  } else {
-    defaultMemfs.writeFile(path, data);
+  function _r(p) {
+    // Canonical path resolution: relative paths resolved against cwd
+    return resolvePath(String(p), _cwd());
   }
-}
 
-function readdirSync(path, options) {
-  const opts = parseOptions(options, { withFileTypes: false });
-  return defaultMemfs.readdir(path, opts.withFileTypes);
-}
+  // ─── Sync APIs ──────────────────────────────────────────────────────
 
-function statSync(path) {
-  return defaultMemfs.stat(path);
-}
-
-function mkdirSync(path, options) {
-  const opts = parseOptions(options, { recursive: false });
-  defaultMemfs.mkdir(path, opts.recursive);
-}
-
-function unlinkSync(path) {
-  defaultMemfs.unlink(path);
-}
-
-function renameSync(oldPath, newPath) {
-  defaultMemfs.rename(oldPath, newPath);
-}
-
-function existsSync(path) {
-  try {
-    return defaultMemfs.exists(path);
-  } catch {
-    return false;
+  function readFileSync(path, options) {
+    const opts = parseOptions(options, { encoding: null });
+    const data = memfs.readFile(_r(path));
+    return opts.encoding ? fromBuffer(data, opts.encoding) : new Uint8Array(data);
   }
-}
 
-function accessSync(path, mode) {
-  defaultMemfs.access(path);
-}
-
-function realpathSync(path) {
-  return defaultMemfs.realpath(path);
-}
-
-function openSync(path, flags) {
-  return defaultMemfs.open(path, flags);
-}
-
-function readSync(fd, buffer, offset, length, position) {
-  return defaultMemfs.readFd(fd, buffer, offset, length, position);
-}
-
-function writeSync(fd, buffer, offset, length, position) {
-  return defaultMemfs.writeFd(fd, buffer, offset, length, position);
-}
-
-function closeSync(fd) {
-  defaultMemfs.close(fd);
-}
-
-function rmdirSync(path) {
-  const inode = defaultMemfs._resolve(path);
-  if (!inode) throw createFsError('ENOENT', 'rmdir', path);
-  if (inode.type !== 'dir') throw createFsError('ENOTDIR', 'rmdir', path);
-  if (inode.children.size > 0) throw createFsError('ENOTEMPTY', 'rmdir', path);
-  const norm = path.replace(/\/+$/, '') || '/';
-  const idx = norm.lastIndexOf('/');
-  const parentPath = norm.substring(0, idx) || '/';
-  const name = norm.substring(idx + 1);
-  const parent = defaultMemfs._resolve(parentPath);
-  if (parent) parent.children.delete(name);
-}
-
-// ─── Async (callback) APIs ──────────────────────────────────────────
-
-function wrapAsync(syncFn) {
-  return (...args) => {
-    const callback = args.pop();
-    try {
-      const result = syncFn(...args);
-      Promise.resolve().then(() => callback(null, result));
-    } catch (err) {
-      Promise.resolve().then(() => callback(err));
+  function writeFileSync(path, data, options) {
+    const opts = parseOptions(options, { encoding: 'utf8' });
+    if (typeof data === 'string') {
+      memfs.writeFile(_r(path), toBuffer(data, opts.encoding));
+    } else {
+      memfs.writeFile(_r(path), data);
     }
-  };
-}
+  }
 
-const readFile = wrapAsync(readFileSync);
-const writeFile = wrapAsync(writeFileSync);
-const readdir = wrapAsync(readdirSync);
-const stat = wrapAsync(statSync);
-const mkdir = wrapAsync(mkdirSync);
-const unlink = wrapAsync(unlinkSync);
-const rename = wrapAsync(renameSync);
-const access = wrapAsync(accessSync);
-const realpath = wrapAsync(realpathSync);
-const open = wrapAsync(openSync);
-const close = wrapAsync(closeSync);
-const rmdir = wrapAsync(rmdirSync);
+  function readdirSync(path, options) {
+    const opts = parseOptions(options, { withFileTypes: false });
+    return memfs.readdir(_r(path), opts.withFileTypes);
+  }
 
-// ─── Promises API ───────────────────────────────────────────────────
+  function statSync(path) {
+    return memfs.stat(_r(path));
+  }
 
-function wrapPromise(syncFn) {
-  return (...args) => {
-    return new Promise((resolve, reject) => {
+  function mkdirSync(path, options) {
+    const opts = parseOptions(options, { recursive: false });
+    memfs.mkdir(_r(path), opts.recursive);
+  }
+
+  function unlinkSync(path) {
+    memfs.unlink(_r(path));
+  }
+
+  function renameSync(oldPath, newPath) {
+    memfs.rename(_r(oldPath), _r(newPath));
+  }
+
+  function existsSync(path) {
+    try {
+      return memfs.exists(_r(path));
+    } catch {
+      return false;
+    }
+  }
+
+  function accessSync(path, mode) {
+    memfs.access(_r(path));
+  }
+
+  function realpathSync(path) {
+    return memfs.realpath(_r(path));
+  }
+
+  function openSync(path, flags) {
+    return memfs.open(_r(path), flags);
+  }
+
+  function readSync(fd, buffer, offset, length, position) {
+    return memfs.readFd(fd, buffer, offset, length, position);
+  }
+
+  function writeSync(fd, buffer, offset, length, position) {
+    return memfs.writeFd(fd, buffer, offset, length, position);
+  }
+
+  function closeSync(fd) {
+    memfs.close(fd);
+  }
+
+  function rmdirSync(path) {
+    memfs.rmdir(_r(path));
+  }
+
+  // ─── Async (callback) APIs ──────────────────────────────────────────
+
+  function wrapAsync(syncFn) {
+    return (...args) => {
+      const callback = args.pop();
       try {
-        resolve(syncFn(...args));
+        const result = syncFn(...args);
+        Promise.resolve().then(() => callback(null, result));
       } catch (err) {
-        reject(err);
+        Promise.resolve().then(() => callback(err));
       }
+    };
+  }
+
+  const readFile = wrapAsync(readFileSync);
+  const writeFile = wrapAsync(writeFileSync);
+  const readdir = wrapAsync(readdirSync);
+  const stat = wrapAsync(statSync);
+  const mkdir = wrapAsync(mkdirSync);
+  const unlink = wrapAsync(unlinkSync);
+  const rename = wrapAsync(renameSync);
+  const access = wrapAsync(accessSync);
+  const realpath = wrapAsync(realpathSync);
+  const open = wrapAsync(openSync);
+  const close = wrapAsync(closeSync);
+  const rmdir = wrapAsync(rmdirSync);
+
+  // ─── Promises API ───────────────────────────────────────────────────
+
+  function wrapPromise(syncFn) {
+    return (...args) => {
+      return new Promise((resolve, reject) => {
+        try {
+          resolve(syncFn(...args));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    };
+  }
+
+  const promises = {
+    readFile: wrapPromise(readFileSync),
+    writeFile: wrapPromise(writeFileSync),
+    readdir: wrapPromise(readdirSync),
+    stat: wrapPromise(statSync),
+    mkdir: wrapPromise(mkdirSync),
+    unlink: wrapPromise(unlinkSync),
+    rename: wrapPromise(renameSync),
+    access: wrapPromise(accessSync),
+    realpath: wrapPromise(realpathSync),
+    rmdir: wrapPromise(rmdirSync),
+  };
+
+  // ─── Streaming APIs ─────────────────────────────────────────────────
+
+  function createReadStream(path, options) {
+    const opts = parseOptions(options, { encoding: null, highWaterMark: 65536 });
+    const resolved = _r(path);
+    let started = false;
+    const stream = new Readable({
+      highWaterMark: opts.highWaterMark,
+      read() {
+        if (started) return;
+        started = true;
+        try {
+          const data = memfs.readFile(resolved);
+          this.push(opts.encoding ? fromBuffer(data, opts.encoding) : new Uint8Array(data));
+          this.push(null);
+        } catch (err) {
+          this.destroy(err);
+        }
+      },
     });
+    stream.path = path;
+    return stream;
+  }
+
+  function createWriteStream(path, options) {
+    const opts = parseOptions(options, { encoding: 'utf8' });
+    const resolved = _r(path);
+    const chunks = [];
+    const stream = new Writable({
+      write(chunk, encoding, callback) {
+        try {
+          if (typeof chunk === 'string') {
+            chunks.push(toBuffer(chunk, encoding));
+          } else {
+            chunks.push(new Uint8Array(chunk));
+          }
+          callback();
+        } catch (err) {
+          callback(err);
+        }
+      },
+      final(callback) {
+        try {
+          const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0);
+          const combined = new Uint8Array(totalLen);
+          let offset = 0;
+          for (const c of chunks) {
+            combined.set(c, offset);
+            offset += c.byteLength;
+          }
+          memfs.writeFile(resolved, combined);
+          callback();
+        } catch (err) {
+          callback(err);
+        }
+      },
+    });
+    stream.path = path;
+    return stream;
+  }
+
+  // ─── fs object ─────────────────────────────────────────────────────
+
+  return {
+    readFileSync,
+    writeFileSync,
+    readdirSync,
+    statSync,
+    mkdirSync,
+    unlinkSync,
+    renameSync,
+    existsSync,
+    accessSync,
+    realpathSync,
+    openSync,
+    readSync,
+    writeSync,
+    closeSync,
+    rmdirSync,
+
+    readFile,
+    writeFile,
+    readdir,
+    stat,
+    mkdir,
+    unlink,
+    rename,
+    access,
+    realpath,
+    open,
+    close,
+    rmdir,
+
+    createReadStream,
+    createWriteStream,
+
+    promises,
+
+    // Constants
+    constants: {
+      F_OK: 0,
+      R_OK: 4,
+      W_OK: 2,
+      X_OK: 1,
+    },
   };
 }
 
-const promises = {
-  readFile: wrapPromise(readFileSync),
-  writeFile: wrapPromise(writeFileSync),
-  readdir: wrapPromise(readdirSync),
-  stat: wrapPromise(statSync),
-  mkdir: wrapPromise(mkdirSync),
-  unlink: wrapPromise(unlinkSync),
-  rename: wrapPromise(renameSync),
-  access: wrapPromise(accessSync),
-  realpath: wrapPromise(realpathSync),
-  rmdir: wrapPromise(rmdirSync),
-};
+// ─── Default module export (backward compatible) ─────────────────────
+// Uses defaultMemfs singleton with cwd = '/' (no process bridge available
+// at import time). The runtime wires up process.cwd() later via createFsModule().
 
-// ─── Streaming APIs ─────────────────────────────────────────────────
-
-function createReadStream(path, options) {
-  const opts = parseOptions(options, { encoding: null, highWaterMark: 65536 });
-  let started = false;
-  const stream = new Readable({
-    highWaterMark: opts.highWaterMark,
-    read() {
-      if (started) return;
-      started = true;
-      try {
-        const data = defaultMemfs.readFile(path);
-        this.push(opts.encoding ? fromBuffer(data, opts.encoding) : new Uint8Array(data));
-        this.push(null);
-      } catch (err) {
-        this.destroy(err);
-      }
-    },
-  });
-  stream.path = path;
-  return stream;
-}
-
-function createWriteStream(path, options) {
-  const opts = parseOptions(options, { encoding: 'utf8' });
-  const chunks = [];
-  const stream = new Writable({
-    write(chunk, encoding, callback) {
-      try {
-        if (typeof chunk === 'string') {
-          chunks.push(toBuffer(chunk, encoding));
-        } else {
-          chunks.push(new Uint8Array(chunk));
-        }
-        callback();
-      } catch (err) {
-        callback(err);
-      }
-    },
-    final(callback) {
-      try {
-        const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0);
-        const combined = new Uint8Array(totalLen);
-        let offset = 0;
-        for (const c of chunks) {
-          combined.set(c, offset);
-          offset += c.byteLength;
-        }
-        defaultMemfs.writeFile(path, combined);
-        callback();
-      } catch (err) {
-        callback(err);
-      }
-    },
-  });
-  stream.path = path;
-  return stream;
-}
-
-// ─── fs object (default export) ─────────────────────────────────────
-
-const fs = {
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  statSync,
-  mkdirSync,
-  unlinkSync,
-  renameSync,
-  existsSync,
-  accessSync,
-  realpathSync,
-  openSync,
-  readSync,
-  writeSync,
-  closeSync,
-  rmdirSync,
-
-  readFile,
-  writeFile,
-  readdir,
-  stat,
-  mkdir,
-  unlink,
-  rename,
-  access,
-  realpath,
-  open,
-  close,
-  rmdir,
-
-  createReadStream,
-  createWriteStream,
-
-  promises,
-
-  // Constants
-  constants: {
-    F_OK: 0,
-    R_OK: 4,
-    W_OK: 2,
-    X_OK: 1,
-  },
-};
-
+const fs = createFsModule(defaultMemfs, () => '/');
 export default fs;
 export { fs };

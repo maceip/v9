@@ -17,27 +17,16 @@
  * - Path normalization clamps at root (C3)
  */
 
-import { defaultMemfs } from './memfs.js';
-import { runCommand, hasCommand } from './shell-commands.js';
+import { resolvePath, normalizePath as _normPath } from './memfs.js';
+import { runCommand, hasCommand, getMemfs } from './shell-commands.js';
 
 const MAX_INPUT_LENGTH = 1_000_000; // C7: prevent ReDoS on huge inputs
 
-// ─── Safe path normalization (C3: clamp at root) ────────────────────
-
-function _normPath(p) {
-  const parts = p.split('/').filter(Boolean);
-  const result = [];
-  for (const part of parts) {
-    if (part === '..') { if (result.length > 0) result.pop(); }
-    else if (part !== '.') result.push(part);
-  }
-  return '/' + result.join('/');
-}
+// ─── Safe path resolution (C3: clamp at root) ──────────────────────
 
 function _resolvePath(p) {
-  if (p.startsWith('/')) return _normPath(p);
   const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
-  return _normPath(cwd.replace(/\/$/, '') + '/' + p);
+  return resolvePath(p, cwd);
 }
 
 // ─── Tokenizer ───────────────────────────────────────────────────────
@@ -292,7 +281,7 @@ function expandGlob(pattern) {
   try { re = new RegExp(reStr); } catch { return []; }
 
   try {
-    const entries = defaultMemfs.readdir(dir);
+    const entries = getMemfs().readdir(dir);
     return entries.filter(name => re.test(name)).map(name => {
       if (lastSlash >= 0) return dir + '/' + name;
       return name;
@@ -346,7 +335,7 @@ function executePipeline(commands, options) {
     // Handle input redirect
     if (redirectIn && input === null) {
       try {
-        input = new TextDecoder().decode(defaultMemfs.readFile(_resolvePath(redirectIn)));
+        input = new TextDecoder().decode(getMemfs().readFile(_resolvePath(redirectIn)));
       } catch {
         return { stdout: '', stderr: `${cmd}: ${redirectIn}: No such file or directory\n`, exitCode: 1 };
       }
@@ -425,13 +414,13 @@ function writeRedirect(path, content, append) {
 
   if (append) {
     try {
-      const existing = new TextDecoder().decode(defaultMemfs.readFile(norm));
-      defaultMemfs.writeFile(norm, new TextEncoder().encode(existing + content));
+      const existing = new TextDecoder().decode(getMemfs().readFile(norm));
+      getMemfs().writeFile(norm, new TextEncoder().encode(existing + content));
     } catch {
-      defaultMemfs.writeFile(norm, new TextEncoder().encode(content));
+      getMemfs().writeFile(norm, new TextEncoder().encode(content));
     }
   } else {
-    defaultMemfs.writeFile(norm, new TextEncoder().encode(content));
+    getMemfs().writeFile(norm, new TextEncoder().encode(content));
   }
 }
 

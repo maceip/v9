@@ -394,9 +394,11 @@ export const pathBridge = {
       resolved = parts[i] + '/' + resolved;
       if (parts[i].startsWith('/')) break;
     }
-    // If no absolute anchor was found, prepend '/' (our cwd is always '/')
+    // If no absolute anchor was found, prepend cwd
     if (!resolved.startsWith('/')) {
-      resolved = '/' + resolved;
+      const cwd = (typeof process !== 'undefined' && typeof process.cwd === 'function')
+        ? process.cwd() : '/';
+      resolved = cwd.replace(/\/$/, '') + '/' + resolved;
     }
     return this.normalize(resolved);
   },
@@ -1073,7 +1075,7 @@ import constantsModule from './constants.js';
 import inspectorModule from './inspector.js';
 import nodePtyShim from './node-pty-shim.js';
 
-export function registerBrowserBuiltins(edgeInstance) {
+export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
   const builtins = {
     // ── Original modules ──
     'crypto': cryptoBridge,
@@ -1085,7 +1087,7 @@ export function registerBrowserBuiltins(edgeInstance) {
     'util': util,
     'buffer': { Buffer: bufferBridge, kMaxLength: 2 ** 31 - 1 },
     'process': processBridge,
-    'fs': fs,
+    'fs': overrides.fs || fs,
     'http': http,
     'https': https,
     'net': net,
