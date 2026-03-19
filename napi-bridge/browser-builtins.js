@@ -9,6 +9,9 @@
  * injected into EdgeJS's module resolution.
  */
 
+import { EventEmitter } from './eventemitter.js';
+import util from './util.js';
+
 /**
  * crypto — Web Crypto API bridge
  *
@@ -153,6 +156,11 @@ export const pathBridge = {
   },
 };
 
+// path.posix is an alias to pathBridge itself (we only support POSIX paths)
+pathBridge.posix = pathBridge;
+// path.win32 stub — not supported but some code references it
+pathBridge.win32 = pathBridge;
+
 /**
  * url — URL API bridge
  *
@@ -181,6 +189,39 @@ export const urlBridge = {
     if (search) result += search;
     if (hash) result += hash;
     return result;
+  },
+
+  fileURLToPath(url) {
+    let u;
+    if (typeof url === 'string') {
+      u = new URL(url);
+    } else if (url instanceof URL) {
+      u = url;
+    } else {
+      throw new TypeError('The "url" argument must be of type string or an instance of URL. Received ' + typeof url);
+    }
+    if (u.protocol !== 'file:') {
+      throw new TypeError('The URL must be of scheme file');
+    }
+    if (u.hostname !== '' && u.hostname !== 'localhost') {
+      throw new TypeError(`File URL host must be "localhost" or empty on the current platform`);
+    }
+    // Decode percent-encoded characters in the pathname
+    return decodeURIComponent(u.pathname);
+  },
+
+  pathToFileURL(path) {
+    if (typeof path !== 'string') {
+      throw new TypeError('The "path" argument must be of type string. Received ' + typeof path);
+    }
+    // Resolve to absolute if needed
+    let resolved = path;
+    if (!path.startsWith('/')) {
+      resolved = '/' + path;
+    }
+    // Encode special characters but preserve /
+    const encoded = resolved.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    return new URL('file://' + encoded);
   },
 };
 
@@ -282,9 +323,11 @@ export const bufferBridge = {
 export function registerBrowserBuiltins(edgeInstance) {
   const builtins = {
     'crypto': cryptoBridge,
+    'events': { EventEmitter, default: EventEmitter },
     'path': pathBridge,
     'path/posix': pathBridge,
     'url': urlBridge,
+    'util': util,
     'buffer': { Buffer: bufferBridge },
     'process': processBridge,
   };
