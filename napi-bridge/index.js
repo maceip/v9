@@ -2799,16 +2799,125 @@ export async function initEdgeJS(options = {}) {
     }
   }
   if (typeof EdgeJSModule !== 'function' && isNode) {
-    const { createRequire } = await import('node:module');
-    const require = createRequire(import.meta.url);
-    const modulePath = options.modulePath || '../build/edge';
-    const loaded = require(modulePath);
-    if (typeof loaded === 'function') {
-      EdgeJSModule = loaded;
+    try {
+      const { createRequire } = await import('node:module');
+      const require = createRequire(import.meta.url);
+      const modulePath = options.modulePath || '../build/edge';
+      const loaded = require(modulePath);
+      if (typeof loaded === 'function') {
+        EdgeJSModule = loaded;
+      }
+    } catch (_) {
+      // Module not found — will fall through to bridge-only mode.
     }
   }
+  // ── Bridge-only mode ────────────────────────────────────────────────
+  // When no Wasm module is available, return a lightweight runtime backed
+  // entirely by our JS bridge modules (MEMFS fs, shell shims, etc.).
   if (typeof EdgeJSModule !== 'function') {
-    throw new TypeError('Could not load EdgeJS module factory');
+    const fsMod = await import('./fs.js');
+    const bridgeFs = fsMod.default || fsMod.fs || fsMod;
+    const { processBridge } = await import('./browser-builtins.js');
+    const { defaultMemfs } = await import('./memfs.js');
+
+    // Pre-populate MEMFS from options.files
+    if (options.files) {
+      defaultMemfs.populate(options.files);
+    }
+
+    // Wire onStdout / onStderr callbacks into processBridge
+    if (options.onStdout) {
+      const origWrite = processBridge.stdout._write;
+      processBridge.stdout._write = (chunk, encoding, cb) => {
+        const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+        options.onStdout(str);
+        cb();
+      };
+    }
+    if (options.onStderr) {
+      const origWrite = processBridge.stderr._write;
+      processBridge.stderr._write = (chunk, encoding, cb) => {
+        const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+        options.onStderr(str);
+        cb();
+      };
+    }
+
+    // Apply env vars
+    if (options.env) {
+      for (const [k, v] of Object.entries(options.env)) {
+        processBridge.env[k] = v;
+      }
+    }
+
+    // Module registration
+    const _builtinOverrides = new Map();
+    function _registerBuiltinOverride(name, impl) {
+      _builtinOverrides.set(name, impl);
+    }
+
+    return {
+      _registerBuiltinOverride,
+      _getBuiltinOverride(name) { return _builtinOverrides.get(name); },
+      get _builtinOverrides() { return _builtinOverrides; },
+
+      eval(code) {
+        try {
+          return (0, eval)(code);
+        } catch (err) {
+          throw new Error(err.message || 'eval failed');
+        }
+      },
+
+      runFile(path) {
+        // In bridge-only mode, read and eval the file from MEMFS
+        try {
+          const src = bridgeFs.readFileSync(String(path), 'utf8');
+          (0, eval)(src);
+          return 0;
+        } catch {
+          return 1;
+        }
+      },
+
+      execute(scriptPath, opts = {}) {
+        try {
+          const src = bridgeFs.readFileSync(String(scriptPath), 'utf8');
+          const result = (0, eval)(src);
+          return { status: 0, result, error: null, stdout: [], stderr: [] };
+        } catch (err) {
+          return { status: 1, result: undefined, error: err.message, stdout: [], stderr: [err.message] };
+        }
+      },
+
+      fs: bridgeFs,
+
+      module: null,
+
+      pushStdin(data) {
+        processBridge.stdin.push(typeof data === 'string' ? data : String(data));
+      },
+
+      setTerminalSize(cols, rows) {
+        processBridge.stdout.columns = cols;
+        processBridge.stdout.rows = rows;
+        processBridge.stderr.columns = cols;
+        processBridge.stderr.rows = rows;
+        try { processBridge.emit('SIGWINCH'); } catch {}
+      },
+
+      diagnostics() {
+        return {
+          mode: 'bridge-only',
+          missingImports: {},
+          importCalls: {},
+          importErrors: {},
+          importTrace: [],
+          recentImportTrace: [],
+          executionCounter: 0,
+        };
+      },
+    };
   }
 
   const napiImports = bridge.getImportModule();

@@ -585,6 +585,8 @@ class Process extends EventEmitter {
       },
     });
     this.stdout.isTTY = false;
+    this.stdout.columns = 80;
+    this.stdout.rows = 24;
 
     // stderr — Writable stream that logs to console.error
     this.stderr = new Writable({
@@ -595,11 +597,14 @@ class Process extends EventEmitter {
       },
     });
     this.stderr.isTTY = false;
+    this.stderr.columns = 80;
+    this.stderr.rows = 24;
 
     // stdin — Readable stream (no data by default in browser)
     this.stdin = new Readable({
       read() {
-        // No data available in browser environment
+        // No data available in browser environment — data is pushed
+        // externally via runtime.pushStdin() from the terminal UI.
       },
     });
     this.stdin.isTTY = false;
