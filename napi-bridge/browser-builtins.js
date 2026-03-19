@@ -101,6 +101,10 @@ export const pathBridge = {
       resolved = parts[i] + '/' + resolved;
       if (parts[i].startsWith('/')) break;
     }
+    // If no absolute anchor was found, prepend '/' (our cwd is always '/')
+    if (!resolved.startsWith('/')) {
+      resolved = '/' + resolved;
+    }
     return this.normalize(resolved);
   },
 
