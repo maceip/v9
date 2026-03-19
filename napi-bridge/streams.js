@@ -568,16 +568,23 @@ function _finishMaybe(stream) {
           stream.emit('error', err);
           return;
         }
-        state.finished = true;
-        // Defer finish to allow listeners to be registered after end()
-        Promise.resolve().then(() => stream.emit('finish'));
+        _doFinish(stream);
       });
     } else {
-      state.finished = true;
-      // Defer finish to allow listeners to be registered after end()
-      Promise.resolve().then(() => stream.emit('finish'));
+      _doFinish(stream);
     }
   }
+}
+
+function _doFinish(stream) {
+  stream._writableState.finished = true;
+  // Duplex: ending the writable side also ends the readable side
+  // (unless _final already pushed null, e.g. Transform)
+  if (stream._readableState && !stream._readableState.ended) {
+    stream.push(null);
+  }
+  // Defer finish to allow listeners to be registered after end()
+  Promise.resolve().then(() => stream.emit('finish'));
 }
 
 // ─── Duplex ─────────────────────────────────────────────────────────
