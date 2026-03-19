@@ -3195,6 +3195,9 @@ export async function initEdgeJS(options = {}) {
   bridge.wasm = instance;
   bridge.memory = instance.HEAP8;
 
+  // Wire Wasm instance into processBridge for real memoryUsage() telemetry
+  _sharedProcessBridge._wasmInstance = instance;
+
   function invokeMain(args) {
     if (typeof instance._main !== 'function') {
       throw new Error('Edge main entry point not available');

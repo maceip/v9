@@ -681,6 +681,33 @@ class Process extends EventEmitter {
   umask() { return 0o022; }
   uptime() { return performance.now() / 1000; }
   memoryUsage() {
+    // Use real Wasm heap stats when available via _wasmInstance
+    const wasm = this._wasmInstance;
+    if (wasm && wasm.HEAP8 && wasm.HEAP8.buffer) {
+      const buf = wasm.HEAP8.buffer;
+      const heapTotal = buf.byteLength;
+      // _sbrk(0) returns current heap break if available
+      const heapUsed = typeof wasm._sbrk === 'function'
+        ? wasm._sbrk(0) : heapTotal;
+      return {
+        rss: heapTotal,
+        heapTotal,
+        heapUsed,
+        external: 0,
+        arrayBuffers: 0,
+      };
+    }
+    // Fallback: use performance.memory if available (Chrome)
+    if (typeof performance !== 'undefined' && performance.memory) {
+      const m = performance.memory;
+      return {
+        rss: m.totalJSHeapSize || 0,
+        heapTotal: m.totalJSHeapSize || 0,
+        heapUsed: m.usedJSHeapSize || 0,
+        external: 0,
+        arrayBuffers: 0,
+      };
+    }
     return {
       rss: 0,
       heapTotal: 0,

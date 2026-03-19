@@ -225,10 +225,11 @@ function parseSimpleCommand(tokens) {
 
 // ─── $VAR expansion (M8) ────────────────────────────────────────────
 
-function _expandVars(str) {
-  if (typeof process === 'undefined' || !process.env) return str;
+function _expandVars(str, env) {
+  const envObj = env || (typeof process !== 'undefined' ? process.env : null);
+  if (!envObj) return str;
   return str.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => {
-    return process.env[name] || '';
+    return envObj[name] || '';
   });
 }
 
@@ -326,11 +327,19 @@ export function executeCommandString(commandStr, options) {
 function executePipeline(commands, options) {
   let input = null;
 
+  // Build scoped env: start from options.env or process.env, overlay inline vars
+  const baseEnv = options.env || (typeof process !== 'undefined' ? process.env : {});
+
   for (let i = 0; i < commands.length; i++) {
     let { cmd, args, envVars, redirectOut, redirectAppend, redirectIn, mergeStderr } = commands[i];
 
-    // M8: Expand $VAR in cmd and unquoted args
-    cmd = _expandVars(cmd);
+    // Per-command scoped env: base env + inline env vars (e.g. FOO=bar cmd)
+    const scopedEnv = Object.keys(envVars).length > 0
+      ? { ...baseEnv, ...envVars }
+      : baseEnv;
+
+    // M8: Expand $VAR in cmd and unquoted args using scoped env
+    cmd = _expandVars(cmd, scopedEnv);
 
     // Handle input redirect
     if (redirectIn && input === null) {
@@ -344,7 +353,7 @@ function executePipeline(commands, options) {
     // Check for bash -c unwrapping
     const unwrapped = unwrapShellInvocation(cmd, args);
     if (unwrapped) {
-      const result = executeCommandString(unwrapped, options);
+      const result = executeCommandString(unwrapped, { ...options, env: scopedEnv });
       if (i < commands.length - 1) {
         input = result.stdout;
       } else {
@@ -360,33 +369,16 @@ function executePipeline(commands, options) {
     // Expand globs (H5: respects quoted flag) and $VAR in unquoted args
     const expandedArgs = expandGlobs(args.map(a => {
       if (a.quoted) return a;
-      return { value: _expandVars(a.value), quoted: false };
+      return { value: _expandVars(a.value, scopedEnv), quoted: false };
     }));
 
-    // Set env vars
-    const savedEnv = {};
-    if (typeof process !== 'undefined' && process.env) {
-      for (const [k, v] of Object.entries(envVars)) {
-        savedEnv[k] = process.env[k];
-        process.env[k] = v;
-      }
-    }
-
-    const cmdOptions = { ...options, _stdin: input };
+    const cmdOptions = { ...options, env: scopedEnv, _stdin: input };
     let result;
 
     if (hasCommand(cmd)) {
       result = runCommand(cmd, expandedArgs, cmdOptions);
     } else {
       result = { stdout: '', stderr: `${cmd}: command not found\n`, exitCode: 127 };
-    }
-
-    // Restore env vars
-    if (typeof process !== 'undefined' && process.env) {
-      for (const [k, v] of Object.entries(savedEnv)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
     }
 
     if (mergeStderr) {

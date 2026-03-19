@@ -23,11 +23,27 @@ export function getMemfs() {
   return _activeMemfs;
 }
 
+// _cwdOverride is set during scoped execution to avoid global process.cwd() mutation
+let _cwdOverride = null;
+
 function normalizePath(p) {
   if (typeof p !== 'string' || p.length === 0) return '/';
-  // Use canonical path resolution with cwd
-  const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
+  const cwd = _cwdOverride || (typeof process !== 'undefined' ? process.cwd() : '/');
   return resolvePath(p, cwd);
+}
+
+/**
+ * Execute a function with a scoped cwd override.
+ * Used by child_process dispatch to honor per-child cwd without mutating global state.
+ */
+export function withCwd(cwd, fn) {
+  const prev = _cwdOverride;
+  _cwdOverride = cwd;
+  try {
+    return fn();
+  } finally {
+    _cwdOverride = prev;
+  }
 }
 
 function readFileText(path) {
@@ -388,7 +404,8 @@ function echo(args) {
 // ─── pwd ─────────────────────────────────────────────────────────────
 
 function pwd() {
-  const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
+  // Uses _cwdOverride (set by withCwd during scoped execution) or process.cwd()
+  const cwd = _cwdOverride || (typeof process !== 'undefined' ? process.cwd() : '/');
   return { stdout: cwd + '\n', stderr: '', exitCode: 0 };
 }
 
@@ -685,8 +702,9 @@ function dirname(args) {
 
 // ─── env ─────────────────────────────────────────────────────────────
 
-function env() {
-  const entries = typeof process !== 'undefined' && process.env ? process.env : {};
+function env(args, options) {
+  const entries = (options && options.env) ||
+    (typeof process !== 'undefined' && process.env ? process.env : {});
   const lines = Object.entries(entries).map(([k, v]) => `${k}=${v}`);
   return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
 }
