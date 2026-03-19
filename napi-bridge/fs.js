@@ -303,5 +303,21 @@ export function createFsModule(memfs, getCwd) {
 // at import time). The runtime wires up process.cwd() later via createFsModule().
 
 const fs = createFsModule(defaultMemfs, () => '/');
+
+// ─── ESM named exports ──────────────────────────────────────────────
+// Required for browser import { readFileSync } from "node:fs" via import map.
+
+export const {
+  readFileSync, writeFileSync, readdirSync, statSync, mkdirSync,
+  unlinkSync, renameSync, existsSync, accessSync, realpathSync,
+  openSync, readSync, writeSync, closeSync, rmdirSync,
+  readFile, writeFile, readdir, stat, mkdir, unlink, rename,
+  access, realpath, open, close, rmdir,
+  createReadStream, createWriteStream,
+  constants,
+} = fs;
+
+export const promises = fs.promises;
+
 export default fs;
 export { fs };

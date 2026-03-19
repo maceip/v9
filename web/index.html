@@ -4,15 +4,51 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code — Browser</title>
-  <!-- M14: Content Security Policy -->
-  <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.anthropic.com https://*.workers.dev;">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #1a1b26; overflow: hidden; }
     #terminal { width: 100vw; height: 100vh; }
   </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm",
+      "node:module": "../napi-bridge/module-shim.js",
+      "node:fs": "../napi-bridge/fs.js",
+      "node:fs/promises": "../napi-bridge/fs-promises.js",
+      "node:path": "../napi-bridge/path-exports.js",
+      "node:path/posix": "../napi-bridge/path-exports.js",
+      "node:path/win32": "../napi-bridge/path-exports.js",
+      "node:os": "../napi-bridge/os.js",
+      "node:crypto": "../napi-bridge/crypto-exports.js",
+      "node:http": "../napi-bridge/http-exports.js",
+      "node:https": "../napi-bridge/https-exports.js",
+      "node:net": "../napi-bridge/net-exports.js",
+      "node:tls": "../napi-bridge/net-exports.js",
+      "node:dns": "../napi-bridge/net-exports.js",
+      "node:url": "../napi-bridge/url-exports.js",
+      "node:util": "../napi-bridge/util.js",
+      "node:events": "../napi-bridge/eventemitter.js",
+      "node:buffer": "../napi-bridge/buffer-exports.js",
+      "node:stream": "../napi-bridge/streams.js",
+      "node:stream/consumers": "../napi-bridge/stream-consumers.js",
+      "node:child_process": "../napi-bridge/child-process.js",
+      "node:process": "../napi-bridge/process-exports.js",
+      "node:readline": "../napi-bridge/readline.js",
+      "node:readline/promises": "../napi-bridge/readline.js",
+      "node:tty": "../napi-bridge/tty.js",
+      "node:zlib": "../napi-bridge/zlib.js",
+      "node:async_hooks": "../napi-bridge/async-hooks.js",
+      "node:timers/promises": "../napi-bridge/timers-promises.js",
+      "node:worker_threads": "../napi-bridge/worker-threads.js",
+      "node:assert": "../napi-bridge/assert.js",
+      "node:string_decoder": "../napi-bridge/string-decoder.js",
+      "node:constants": "../napi-bridge/constants.js",
+      "inspector": "../napi-bridge/inspector.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="terminal"></div>

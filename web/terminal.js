@@ -143,18 +143,24 @@ async function boot() {
     }
 
     // ── Load Claude Code bundle if provided ──────────────────────────
+    // ESM path: import() the bundle directly so the browser resolves
+    // node:* specifiers via the import map. This avoids fetch+MEMFS+require.
+    let cliModule = null;
     if (config.claudeCodeBundle) {
       try {
-        const resp = await fetch(config.claudeCodeBundle);
-        // C5: Check HTTP status before executing as code
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-        }
-        const bundleSrc = await resp.text();
-        runtime.fs.mkdirSync('/app', { recursive: true });
-        runtime.fs.writeFileSync('/app/claude-code.js', bundleSrc);
+        cliModule = await import(config.claudeCodeBundle);
       } catch (err) {
-        term.writeln('\x1b[33m[bundle] Failed to load: ' + _safe(err.message) + '\x1b[0m');
+        term.writeln('\x1b[33m[bundle] Failed to load as ESM: ' + _safe(err.message) + '\x1b[0m');
+        // Fallback: fetch source and write to MEMFS for CJS require path
+        try {
+          const resp = await fetch(config.claudeCodeBundle);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+          const bundleSrc = await resp.text();
+          runtime.fs.mkdirSync('/app', { recursive: true });
+          runtime.fs.writeFileSync('/app/claude-code.js', bundleSrc);
+        } catch (fetchErr) {
+          term.writeln('\x1b[33m[bundle] Fallback fetch failed: ' + _safe(fetchErr.message) + '\x1b[0m');
+        }
       }
     }
 
@@ -203,22 +209,35 @@ async function boot() {
       term.writeln('\x1b[32m✓ CORS proxy configured\x1b[0m');
     }
 
-    // If Claude Code bundle is loaded, run it
-    const hasBundle = (() => {
-      try { runtime.fs.statSync('/app/claude-code.js'); return true; } catch { return false; }
-    })();
-
-    if (hasBundle) {
-      term.writeln('\x1b[32m✓ Claude Code bundle loaded\x1b[0m');
+    // Run Claude Code — ESM path (cliModule) or CJS fallback (MEMFS)
+    if (cliModule) {
+      term.writeln('\x1b[32m✓ Claude Code loaded (ESM)\x1b[0m');
       term.writeln('');
       try {
-        runtime.require('/app/claude-code.js', '/app');
+        const main = cliModule.main || cliModule.default?.main || cliModule.default;
+        if (typeof main === 'function') {
+          main(runtime);
+        }
       } catch (err) {
         term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
       }
     } else {
-      term.writeln('');
-      term.writeln('\x1b[90mNo Claude Code bundle. Add ?bundle=<url> to URL\x1b[0m');
+      const hasBundle = (() => {
+        try { runtime.fs.statSync('/app/claude-code.js'); return true; } catch { return false; }
+      })();
+
+      if (hasBundle) {
+        term.writeln('\x1b[32m✓ Claude Code bundle loaded (CJS)\x1b[0m');
+        term.writeln('');
+        try {
+          runtime.require('/app/claude-code.js', '/app');
+        } catch (err) {
+          term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
+        }
+      } else {
+        term.writeln('');
+        term.writeln('\x1b[90mNo Claude Code bundle. Add ?bundle=<url> to URL\x1b[0m');
+      }
     }
   }
 
