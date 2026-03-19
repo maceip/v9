@@ -136,6 +136,44 @@ export function createFsModule(memfs, getCwd) {
     memfs.rmdir(_r(path));
   }
 
+  // lstat = stat (no symlinks in v1)
+  function lstatSync(path) {
+    return statSync(path);
+  }
+
+  function chmodSync(path, mode) {
+    // No-op in MEMFS (no real permissions), but don't throw
+    memfs.access(_r(path)); // throws ENOENT if missing
+  }
+
+  function copyFileSync(src, dest) {
+    const data = memfs.readFile(_r(src));
+    memfs.writeFile(_r(dest), new Uint8Array(data));
+  }
+
+  function rmSync(path, options) {
+    const opts = parseOptions(options, { recursive: false, force: false });
+    const resolved = _r(path);
+    try {
+      const s = memfs.stat(resolved);
+      if (s.isDirectory()) {
+        if (opts.recursive) {
+          const entries = memfs.readdir(resolved);
+          for (const name of entries) {
+            rmSync(resolved + '/' + name, opts);
+          }
+          memfs.rmdir(resolved);
+        } else {
+          memfs.rmdir(resolved);
+        }
+      } else {
+        memfs.unlink(resolved);
+      }
+    } catch (err) {
+      if (!opts.force || err.code !== 'ENOENT') throw err;
+    }
+  }
+
   // ─── Async (callback) APIs ──────────────────────────────────────────
 
   function wrapAsync(syncFn) {
@@ -162,6 +200,10 @@ export function createFsModule(memfs, getCwd) {
   const open = wrapAsync(openSync);
   const close = wrapAsync(closeSync);
   const rmdir = wrapAsync(rmdirSync);
+  const lstat = wrapAsync(lstatSync);
+  const chmod = wrapAsync(chmodSync);
+  const copyFile = wrapAsync(copyFileSync);
+  const rm = wrapAsync(rmSync);
 
   // ─── Promises API ───────────────────────────────────────────────────
 
@@ -188,6 +230,10 @@ export function createFsModule(memfs, getCwd) {
     access: wrapPromise(accessSync),
     realpath: wrapPromise(realpathSync),
     rmdir: wrapPromise(rmdirSync),
+    lstat: wrapPromise(lstatSync),
+    chmod: wrapPromise(chmodSync),
+    copyFile: wrapPromise(copyFileSync),
+    rm: wrapPromise(rmSync),
   };
 
   // ─── Streaming APIs ─────────────────────────────────────────────────
@@ -269,6 +315,10 @@ export function createFsModule(memfs, getCwd) {
     writeSync,
     closeSync,
     rmdirSync,
+    lstatSync,
+    chmodSync,
+    copyFileSync,
+    rmSync,
 
     readFile,
     writeFile,
@@ -282,6 +332,10 @@ export function createFsModule(memfs, getCwd) {
     open,
     close,
     rmdir,
+    lstat,
+    chmod,
+    copyFile,
+    rm,
 
     createReadStream,
     createWriteStream,
@@ -311,8 +365,10 @@ export const {
   readFileSync, writeFileSync, readdirSync, statSync, mkdirSync,
   unlinkSync, renameSync, existsSync, accessSync, realpathSync,
   openSync, readSync, writeSync, closeSync, rmdirSync,
+  lstatSync, chmodSync, copyFileSync, rmSync,
   readFile, writeFile, readdir, stat, mkdir, unlink, rename,
   access, realpath, open, close, rmdir,
+  lstat, chmod, copyFile, rm,
   createReadStream, createWriteStream,
   constants,
 } = fs;

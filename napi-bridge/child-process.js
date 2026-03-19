@@ -373,6 +373,15 @@ export function execFile(file, args, options, callback) {
   return exec(cmdStr, options, callback);
 }
 
+// ─── execFileSync ────────────────────────────────────────────────────
+
+export function execFileSync(file, args, options) {
+  args = args || [];
+  options = options || {};
+  const cmdStr = _buildShellCommand(file, args);
+  return execSync(cmdStr, options);
+}
+
 // ─── fork ────────────────────────────────────────────────────────────
 
 export function fork() {
@@ -423,6 +432,7 @@ export default {
   exec,
   execSync,
   execFile,
+  execFileSync,
   fork,
   spawnSync,
   ChildProcess,
