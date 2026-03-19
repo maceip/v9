@@ -2,7 +2,7 @@
   "name": "@aspect/v9-edgejs-browser",
   "version": "0.1.0",
   "private": true,
-  "description": "EdgeJS browser runtime \u2014 Node.js in WebAssembly via Emscripten",
+  "description": "EdgeJS browser runtime — Node.js in WebAssembly via Emscripten",
   "type": "module",
   "main": "napi-bridge/index.js",
   "exports": {
@@ -45,5 +45,9 @@
   },
   "devDependencies": {
     "playwright-core": "^1.58.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "esbuild": "^0.27.4"
   }
 }

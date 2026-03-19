@@ -2811,99 +2811,199 @@ export async function initEdgeJS(options = {}) {
       // Module not found — will fall through to bridge-only mode.
     }
   }
+
+  // ── Shared imports (used by both bridge-only and Wasm paths) ───────
+  const _sharedFsMod = await import('./fs.js');
+  const _sharedBridgeFs = _sharedFsMod.default || _sharedFsMod.fs || _sharedFsMod;
+  const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
+  const { defaultMemfs: _sharedMemfs } = await import('./memfs.js');
+
+  // Pre-populate MEMFS from options.files
+  if (options.files) {
+    _sharedMemfs.populate(options.files);
+  }
+
+  // Wire onStdout / onStderr callbacks into processBridge
+  if (options.onStdout) {
+    _sharedProcessBridge.stdout._write = (chunk, encoding, cb) => {
+      const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+      options.onStdout(str);
+      cb();
+    };
+  }
+  if (options.onStderr) {
+    _sharedProcessBridge.stderr._write = (chunk, encoding, cb) => {
+      const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+      options.onStderr(str);
+      cb();
+    };
+  }
+
+  // Apply env vars
+  if (options.env) {
+    for (const [k, v] of Object.entries(options.env)) {
+      _sharedProcessBridge.env[k] = v;
+    }
+  }
+
+  // ── Shared module registration + MEMFS require() ──────────────────
+  const _builtinOverrides = new Map();
+
+  function _registerBuiltinOverride(name, impl) {
+    _builtinOverrides.set(name, impl);
+  }
+
+  const _moduleCache = new Map();
+
+  function _normPath(p) {
+    const parts = p.split('/').filter(Boolean);
+    const result = [];
+    for (const part of parts) {
+      if (part === '..') result.pop();
+      else if (part !== '.') result.push(part);
+    }
+    return '/' + result.join('/');
+  }
+
+  function _resolveModule(name, fromDir) {
+    const builtin = _builtinOverrides.get(name);
+    if (builtin) return { type: 'builtin', exports: builtin };
+    if (name.startsWith('node:')) {
+      const b2 = _builtinOverrides.get(name.slice(5));
+      if (b2) return { type: 'builtin', exports: b2 };
+    }
+    if (name.startsWith('./') || name.startsWith('../') || name.startsWith('/')) {
+      const base = name.startsWith('/') ? name : fromDir + '/' + name;
+      return _tryResolveFile(_normPath(base));
+    }
+    // node_modules lookup — walk up from fromDir
+    let dir = fromDir;
+    while (dir.length > 0) {
+      const candidate = _normPath(dir + '/node_modules/' + name);
+      const r = _tryResolveFile(candidate);
+      if (r) return r;
+      try {
+        const pkgSrc = _sharedBridgeFs.readFileSync(candidate + '/package.json', 'utf8');
+        const pkg = JSON.parse(pkgSrc);
+        const main = pkg.main || pkg.module || 'index.js';
+        const mr = _tryResolveFile(_normPath(candidate + '/' + main));
+        if (mr) return mr;
+      } catch { /* no package.json */ }
+      const idx = dir.lastIndexOf('/');
+      if (idx <= 0) break;
+      dir = dir.substring(0, idx);
+    }
+    return null;
+  }
+
+  function _tryResolveFile(absPath) {
+    if (_fstat(absPath)) return { type: 'file', path: absPath };
+    if (_fstat(absPath + '.js')) return { type: 'file', path: absPath + '.js' };
+    if (_fstat(absPath + '.json')) return { type: 'file', path: absPath + '.json' };
+    if (_fstat(absPath + '.mjs')) return { type: 'file', path: absPath + '.mjs' };
+    if (_fstat(absPath + '/index.js')) return { type: 'file', path: absPath + '/index.js' };
+    if (_fstat(absPath + '/index.json')) return { type: 'file', path: absPath + '/index.json' };
+    try {
+      const pkgSrc = _sharedBridgeFs.readFileSync(absPath + '/package.json', 'utf8');
+      const pkg = JSON.parse(pkgSrc);
+      const main = pkg.main || pkg.module || 'index.js';
+      const mp = _normPath(absPath + '/' + main);
+      if (_fstat(mp)) return { type: 'file', path: mp };
+      if (_fstat(mp + '.js')) return { type: 'file', path: mp + '.js' };
+    } catch { /* no package.json */ }
+    return null;
+  }
+
+  function _fstat(p) {
+    try { const s = _sharedBridgeFs.statSync(p); return s.isFile(); } catch { return false; }
+  }
+
+  function _memfsRequire(name, fromDir) {
+    fromDir = fromDir || _sharedProcessBridge.cwd();
+    const resolved = _resolveModule(name, fromDir);
+    if (!resolved) throw new Error(`Cannot find module '${name}' from '${fromDir}'`);
+    if (resolved.type === 'builtin') return resolved.exports;
+
+    const filePath = resolved.path;
+    if (_moduleCache.has(filePath)) return _moduleCache.get(filePath).exports;
+
+    const source = _sharedBridgeFs.readFileSync(filePath, 'utf8');
+    const dirName = filePath.substring(0, filePath.lastIndexOf('/')) || '/';
+
+    if (filePath.endsWith('.json')) {
+      const parsed = JSON.parse(source);
+      _moduleCache.set(filePath, { exports: parsed });
+      return parsed;
+    }
+
+    const moduleObj = { exports: {}, id: filePath, filename: filePath, loaded: false };
+    _moduleCache.set(filePath, moduleObj);
+
+    const localRequire = (dep) => _memfsRequire(dep, dirName);
+    localRequire.resolve = (dep) => {
+      const r = _resolveModule(dep, dirName);
+      if (!r || r.type === 'builtin') return dep;
+      return r.path;
+    };
+
+    try {
+      const wrapped = new Function(
+        'exports', 'require', 'module', '__filename', '__dirname',
+        source
+      );
+      wrapped(moduleObj.exports, localRequire, moduleObj, filePath, dirName);
+      moduleObj.loaded = true;
+    } catch (err) {
+      _moduleCache.delete(filePath);
+      throw err;
+    }
+    return moduleObj.exports;
+  }
+
   // ── Bridge-only mode ────────────────────────────────────────────────
   // When no Wasm module is available, return a lightweight runtime backed
   // entirely by our JS bridge modules (MEMFS fs, shell shims, etc.).
   if (typeof EdgeJSModule !== 'function') {
-    const fsMod = await import('./fs.js');
-    const bridgeFs = fsMod.default || fsMod.fs || fsMod;
-    const { processBridge } = await import('./browser-builtins.js');
-    const { defaultMemfs } = await import('./memfs.js');
-
-    // Pre-populate MEMFS from options.files
-    if (options.files) {
-      defaultMemfs.populate(options.files);
-    }
-
-    // Wire onStdout / onStderr callbacks into processBridge
-    if (options.onStdout) {
-      const origWrite = processBridge.stdout._write;
-      processBridge.stdout._write = (chunk, encoding, cb) => {
-        const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        options.onStdout(str);
-        cb();
-      };
-    }
-    if (options.onStderr) {
-      const origWrite = processBridge.stderr._write;
-      processBridge.stderr._write = (chunk, encoding, cb) => {
-        const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        options.onStderr(str);
-        cb();
-      };
-    }
-
-    // Apply env vars
-    if (options.env) {
-      for (const [k, v] of Object.entries(options.env)) {
-        processBridge.env[k] = v;
-      }
-    }
-
-    // Module registration
-    const _builtinOverrides = new Map();
-    function _registerBuiltinOverride(name, impl) {
-      _builtinOverrides.set(name, impl);
-    }
-
     return {
       _registerBuiltinOverride,
       _getBuiltinOverride(name) { return _builtinOverrides.get(name); },
       get _builtinOverrides() { return _builtinOverrides; },
 
       eval(code) {
-        try {
-          return (0, eval)(code);
-        } catch (err) {
-          throw new Error(err.message || 'eval failed');
-        }
+        try { return (0, eval)(code); }
+        catch (err) { throw new Error(err.message || 'eval failed'); }
       },
 
       runFile(path) {
-        // In bridge-only mode, read and eval the file from MEMFS
         try {
-          const src = bridgeFs.readFileSync(String(path), 'utf8');
-          (0, eval)(src);
+          _memfsRequire(String(path), _sharedProcessBridge.cwd());
           return 0;
-        } catch {
-          return 1;
-        }
+        } catch { return 1; }
       },
 
       execute(scriptPath, opts = {}) {
         try {
-          const src = bridgeFs.readFileSync(String(scriptPath), 'utf8');
-          const result = (0, eval)(src);
-          return { status: 0, result, error: null, stdout: [], stderr: [] };
+          _memfsRequire(String(scriptPath), _sharedProcessBridge.cwd());
+          return { status: 0, result: undefined, error: null, stdout: [], stderr: [] };
         } catch (err) {
           return { status: 1, result: undefined, error: err.message, stdout: [], stderr: [err.message] };
         }
       },
 
-      fs: bridgeFs,
-
+      fs: _sharedBridgeFs,
+      require: _memfsRequire,
       module: null,
 
       pushStdin(data) {
-        processBridge.stdin.push(typeof data === 'string' ? data : String(data));
+        _sharedProcessBridge.stdin.push(typeof data === 'string' ? data : String(data));
       },
 
       setTerminalSize(cols, rows) {
-        processBridge.stdout.columns = cols;
-        processBridge.stdout.rows = rows;
-        processBridge.stderr.columns = cols;
-        processBridge.stderr.rows = rows;
-        try { processBridge.emit('SIGWINCH'); } catch {}
+        _sharedProcessBridge.stdout.columns = cols;
+        _sharedProcessBridge.stdout.rows = rows;
+        _sharedProcessBridge.stderr.columns = cols;
+        _sharedProcessBridge.stderr.rows = rows;
+        try { _sharedProcessBridge.emit('SIGWINCH'); } catch {}
       },
 
       diagnostics() {
@@ -3359,29 +3459,6 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
     };
   }
 
-  // ── Module registration system ──────────────────────────────────────
-  // JS-side module map: _registerBuiltinOverride stores overrides that
-  // intercept require() calls from the Wasm runtime.
-  const _builtinOverrides = new Map();
-
-  function _registerBuiltinOverride(name, impl) {
-    _builtinOverrides.set(name, impl);
-  }
-
-  // Pre-populate MEMFS from options.files if provided
-  const fsMod = await import('./fs.js');
-  const bridgeFs = fsMod.default || fsMod.fs || fsMod;
-  const { processBridge } = await import('./browser-builtins.js');
-
-  if (options.files) {
-    try {
-      const { defaultMemfs } = await import('./memfs.js');
-      defaultMemfs.populate(options.files);
-    } catch (_) {
-      // MEMFS not available — skip
-    }
-  }
-
   return {
     /** Register a browser-side module override for the given built-in name. */
     _registerBuiltinOverride,
@@ -3433,21 +3510,24 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
     },
 
     /** Access the virtual filesystem (Node.js-compatible API backed by MEMFS) */
-    fs: bridgeFs,
+    fs: _sharedBridgeFs,
 
     /** Push data into process.stdin (for terminal keyboard input) */
     pushStdin(data) {
-      processBridge.stdin.push(typeof data === 'string' ? data : String(data));
+      _sharedProcessBridge.stdin.push(typeof data === 'string' ? data : String(data));
     },
 
     /** Update terminal dimensions and emit SIGWINCH */
     setTerminalSize(cols, rows) {
-      processBridge.stdout.columns = cols;
-      processBridge.stdout.rows = rows;
-      processBridge.stderr.columns = cols;
-      processBridge.stderr.rows = rows;
-      try { processBridge.emit('SIGWINCH'); } catch {}
+      _sharedProcessBridge.stdout.columns = cols;
+      _sharedProcessBridge.stdout.rows = rows;
+      _sharedProcessBridge.stderr.columns = cols;
+      _sharedProcessBridge.stderr.rows = rows;
+      try { _sharedProcessBridge.emit('SIGWINCH'); } catch {}
     },
+
+    /** CommonJS require() backed by MEMFS with node_modules resolution */
+    require: _memfsRequire,
 
     /** Raw Emscripten module (for advanced use) */
     module: instance,

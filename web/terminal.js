@@ -1,20 +1,23 @@
 /**
  * Terminal UI — xterm.js integration with EdgeJS runtime.
  *
- * Wires:
- *   xterm.js keyboard → runtime.pushStdin()
- *   runtime onStdout/onStderr → xterm.js write()
- *   window resize → runtime.setTerminalSize()
+ * Full conversation loop:
+ *   1. User types in xterm.js
+ *   2. Keyboard data → runtime.pushStdin(data)
+ *   3. Claude Code reads stdin, constructs API request
+ *   4. https.request() → fetch() proxy → Anthropic API
+ *   5. Streaming SSE response → IncomingMessage Readable
+ *   6. Claude Code processes response chunks
+ *   7. If tool_use: execute tool (file read/write via fs, bash via child_process)
+ *   8. Tool result → next API call
+ *   9. Final response → process.stdout → xterm.js
+ *  10. Loop back to 1
  *
- * SDK bundling strategy (esbuild):
- *   esbuild --bundle node_modules/@anthropic-ai/sdk/index.js \
- *     --platform=browser \
- *     --format=esm \
- *     --external:crypto \
- *     --outfile=dist/anthropic-sdk-bundle.js
+ * SDK bundling (run once):
+ *   sh scripts/bundle-sdk.sh
  *
- * The bundled SDK is then registered as a builtin override:
- *   runtime._registerBuiltinOverride('@anthropic-ai/sdk', bundledSDK);
+ * CORS proxy (deploy once):
+ *   npx wrangler deploy web/cors-proxy-worker.js --name edgejs-cors-proxy
  */
 
 // ─── Dynamic imports for xterm.js (loaded from CDN or node_modules) ──
@@ -22,7 +25,6 @@
 let Terminal, FitAddon, WebLinksAddon;
 
 async function loadXterm() {
-  // Try ESM CDN imports first, fall back to global
   try {
     const xtermMod = await import('https://cdn.jsdelivr.net/npm/xterm@5.3.0/+esm');
     Terminal = xtermMod.Terminal;
@@ -47,6 +49,18 @@ async function loadXterm() {
   } catch {
     WebLinksAddon = null;
   }
+}
+
+// ─── Configuration ───────────────────────────────────────────────────
+
+function getConfig() {
+  const params = new URLSearchParams(globalThis.location?.search || '');
+  return {
+    apiKey: params.get('key') || '',
+    proxyUrl: params.get('proxy') || '',
+    // If no Claude Code bundle, run in SDK-direct mode
+    claudeCodeBundle: params.get('bundle') || '',
+  };
 }
 
 // ─── Runtime initialization ──────────────────────────────────────────
@@ -83,7 +97,9 @@ async function boot() {
 
   // ── Load EdgeJS runtime ────────────────────────────────────────────
 
+  const config = getConfig();
   let runtime;
+
   try {
     const { initEdgeJS } = await import('../napi-bridge/index.js');
 
@@ -95,6 +111,7 @@ async function boot() {
         COLORTERM: 'truecolor',
         COLUMNS: String(term.cols),
         LINES: String(term.rows),
+        ...(config.apiKey ? { ANTHROPIC_API_KEY: config.apiKey } : {}),
       },
     });
 
@@ -102,6 +119,29 @@ async function boot() {
     if (typeof runtime.setTerminalSize === 'function') {
       runtime.setTerminalSize(term.cols, term.rows);
     }
+
+    // ── Register the bundled Anthropic SDK ────────────────────────────
+    try {
+      const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
+      runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
+      runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
+    } catch (err) {
+      term.writeln('\x1b[33m[sdk] Anthropic SDK bundle not found: ' + err.message + '\x1b[0m');
+      term.writeln('\x1b[90m  Run: sh scripts/bundle-sdk.sh\x1b[0m');
+    }
+
+    // ── Load Claude Code bundle if provided ──────────────────────────
+    if (config.claudeCodeBundle) {
+      try {
+        const resp = await fetch(config.claudeCodeBundle);
+        const bundleSrc = await resp.text();
+        runtime.fs.mkdirSync('/app', { recursive: true });
+        runtime.fs.writeFileSync('/app/claude-code.js', bundleSrc);
+      } catch (err) {
+        term.writeln('\x1b[33m[bundle] Failed to load Claude Code bundle: ' + err.message + '\x1b[0m');
+      }
+    }
+
   } catch (err) {
     term.writeln('\x1b[33m[edgejs] Runtime not available: ' + err.message + '\x1b[0m');
     term.writeln('\x1b[90mTerminal UI loaded — runtime will connect when Wasm is built.\x1b[0m');
@@ -118,11 +158,9 @@ async function boot() {
 
   // ── Window resize → terminal size ──────────────────────────────────
 
-  const handleResize = () => {
+  window.addEventListener('resize', () => {
     if (fitAddon) fitAddon.fit();
-  };
-
-  window.addEventListener('resize', handleResize);
+  });
 
   term.onResize(({ cols, rows }) => {
     if (runtime && typeof runtime.setTerminalSize === 'function') {
@@ -139,6 +177,37 @@ async function boot() {
 
   if (runtime) {
     term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
+
+    if (config.apiKey) {
+      term.writeln('\x1b[32m✓ API key configured\x1b[0m');
+    } else {
+      term.writeln('\x1b[33m⚠ No API key — add ?key=sk-ant-... to URL\x1b[0m');
+    }
+
+    if (config.proxyUrl) {
+      term.writeln(`\x1b[32m✓ CORS proxy: ${config.proxyUrl}\x1b[0m`);
+    }
+
+    // If Claude Code bundle is loaded, run it
+    const hasBundle = (() => {
+      try { runtime.fs.statSync('/app/claude-code.js'); return true; } catch { return false; }
+    })();
+
+    if (hasBundle) {
+      term.writeln('\x1b[32m✓ Claude Code bundle loaded\x1b[0m');
+      term.writeln('');
+      // Run Claude Code entry point
+      try {
+        runtime.require('/app/claude-code.js', '/app');
+      } catch (err) {
+        term.writeln('\x1b[31m✗ Claude Code failed to start: ' + err.message + '\x1b[0m');
+      }
+    } else {
+      term.writeln('');
+      term.writeln('\x1b[90mNo Claude Code bundle loaded.\x1b[0m');
+      term.writeln('\x1b[90mTo load: add ?bundle=<url-to-bundle.js> to URL\x1b[0m');
+      term.writeln('');
+    }
   }
 
   // Expose for debugging
