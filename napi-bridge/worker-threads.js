@@ -33,14 +33,8 @@ export class Worker extends EventEmitter {
   getHeapSnapshot() { return Promise.reject(new Error('Not supported')); }
 }
 
-// Use browser-native MessageChannel/MessagePort if available
-export const MessageChannel = globalThis.MessageChannel || class MessageChannel {
-  constructor() {
-    this.port1 = new MessagePort();
-    this.port2 = new MessagePort();
-  }
-};
-
+// Use browser-native MessagePort/MessageChannel if available.
+// MessagePort must be defined before MessageChannel to avoid TDZ in fallback.
 export const MessagePort = globalThis.MessagePort || class MessagePort extends EventEmitter {
   constructor() {
     super();
@@ -51,6 +45,13 @@ export const MessagePort = globalThis.MessagePort || class MessagePort extends E
   close() {}
   ref() { return this; }
   unref() { return this; }
+};
+
+export const MessageChannel = globalThis.MessageChannel || class MessageChannel {
+  constructor() {
+    this.port1 = new MessagePort();
+    this.port2 = new MessagePort();
+  }
 };
 
 export const BroadcastChannel = globalThis.BroadcastChannel || class BroadcastChannel extends EventEmitter {

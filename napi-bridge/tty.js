@@ -25,6 +25,21 @@ export class ReadStream extends Readable {
   }
 }
 
+// Shared size state — updated by setTerminalSize() in initEdgeJS
+let _termCols = 80;
+let _termRows = 24;
+const _writeStreams = new Set();
+
+export function _updateTerminalSize(cols, rows) {
+  _termCols = cols;
+  _termRows = rows;
+  for (const ws of _writeStreams) {
+    ws.columns = cols;
+    ws.rows = rows;
+    ws.emit('resize');
+  }
+}
+
 export class WriteStream extends Writable {
   constructor(fd) {
     super({
@@ -37,8 +52,9 @@ export class WriteStream extends Writable {
     });
     this.fd = fd;
     this.isTTY = true;
-    this.columns = 80;
-    this.rows = 24;
+    this.columns = _termCols;
+    this.rows = _termRows;
+    _writeStreams.add(this);
   }
 
   getColorDepth() { return 24; }
@@ -58,4 +74,4 @@ export class WriteStream extends Writable {
   moveCursor() {}
 }
 
-export default { isatty, ReadStream, WriteStream };
+export default { isatty, ReadStream, WriteStream, _updateTerminalSize };

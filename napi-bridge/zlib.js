@@ -21,12 +21,12 @@ export function gunzipSync(buf) {
 
 export function deflateSync(buf, options) {
   const input = _toUint8Array(buf);
-  return fflate.deflateSync(input, options || {});
+  return fflate.zlibSync(input, options || {});
 }
 
 export function inflateSync(buf) {
   const input = _toUint8Array(buf);
-  return fflate.inflateSync(input);
+  return fflate.unzlibSync(input);
 }
 
 export function deflateRawSync(buf, options) {
@@ -97,11 +97,17 @@ export function inflate(buf, options, callback) {
 // ─── Stream APIs ────────────────────────────────────────────────────
 
 export function createGzip(options) {
+  // Accumulate all chunks, compress as one stream in flush
+  const chunks = [];
   return new Transform({
     transform(chunk, encoding, callback) {
+      chunks.push(_toUint8Array(chunk));
+      callback();
+    },
+    flush(callback) {
       try {
-        const input = _toUint8Array(chunk);
-        callback(null, fflate.gzipSync(input, options || {}));
+        const combined = _concatUint8Arrays(chunks);
+        callback(null, fflate.gzipSync(combined, options || {}));
       } catch (err) { callback(err); }
     },
   });
@@ -124,11 +130,17 @@ export function createGunzip() {
 }
 
 export function createDeflate(options) {
+  // Accumulate all chunks, compress as one zlib stream in flush
+  const chunks = [];
   return new Transform({
     transform(chunk, encoding, callback) {
+      chunks.push(_toUint8Array(chunk));
+      callback();
+    },
+    flush(callback) {
       try {
-        const input = _toUint8Array(chunk);
-        callback(null, fflate.deflateSync(input, options || {}));
+        const combined = _concatUint8Arrays(chunks);
+        callback(null, fflate.zlibSync(combined, options || {}));
       } catch (err) { callback(err); }
     },
   });
@@ -144,14 +156,42 @@ export function createInflate() {
     flush(callback) {
       try {
         const combined = _concatUint8Arrays(chunks);
-        callback(null, fflate.inflateSync(combined));
+        callback(null, fflate.unzlibSync(combined));
       } catch (err) { callback(err); }
     },
   });
 }
 
-export function createDeflateRaw(options) { return createDeflate(options); }
-export function createInflateRaw() { return createInflate(); }
+export function createDeflateRaw(options) {
+  const chunks = [];
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      chunks.push(_toUint8Array(chunk));
+      callback();
+    },
+    flush(callback) {
+      try {
+        const combined = _concatUint8Arrays(chunks);
+        callback(null, fflate.deflateSync(combined, options || {}));
+      } catch (err) { callback(err); }
+    },
+  });
+}
+export function createInflateRaw() {
+  const chunks = [];
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      chunks.push(_toUint8Array(chunk));
+      callback();
+    },
+    flush(callback) {
+      try {
+        const combined = _concatUint8Arrays(chunks);
+        callback(null, fflate.inflateSync(combined));
+      } catch (err) { callback(err); }
+    },
+  });
+}
 
 export function createBrotliCompress() {
   throw new Error('Brotli is not supported in browser environment');

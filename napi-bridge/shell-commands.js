@@ -862,56 +862,181 @@ function rg(args, options) {
   const results = [];
   let matchCount = 0;
 
-  function shouldIncludeFile(filePath) {
+  // Parse .gitignore patterns from a given directory
+  const _gitignoreCache = new Map();
+  function _loadGitignore(dir) {
+    if (_gitignoreCache.has(dir)) return _gitignoreCache.get(dir);
+    let patterns = [];
+    try {
+      const content = readFileText(dir + '/.gitignore');
+      patterns = content.split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('#'));
+    } catch { /* no .gitignore */ }
+    _gitignoreCache.set(dir, patterns);
+    return patterns;
+  }
+
+  function _isGitignored(filePath, searchRoot) {
+    if (noIgnore) return false;
+    // Check .gitignore in each ancestor directory up to searchRoot
+    const parts = filePath.split('/');
+    for (let depth = 1; depth < parts.length; depth++) {
+      const dir = parts.slice(0, depth).join('/') || '/';
+      if (dir.length < searchRoot.length) continue;
+      const patterns = _loadGitignore(dir);
+      const relPath = filePath.slice(dir.length + 1);
+      const fileName = parts[parts.length - 1];
+      for (const pat of patterns) {
+        // Convert gitignore pattern to regex
+        const negated = pat.startsWith('!');
+        const raw = negated ? pat.slice(1) : pat;
+        const reStr = raw
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .replace(/\*\*/g, '<<GLOBSTAR>>')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '[^/]')
+          .replace(/<<GLOBSTAR>>/g, '.*');
+        const reObj = new RegExp(
+          raw.includes('/') ? ('^' + reStr + '(/|$)') : ('(^|/)' + reStr + '(/|$)')
+        );
+        if (reObj.test(relPath) || reObj.test(fileName)) {
+          if (negated) return false; // un-ignore
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function _globToRegex(g) {
+    // Convert glob pattern, supporting ** for directory crossing
+    const reStr = g
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*\*/g, '<<GLOBSTAR>>')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]')
+      .replace(/<<GLOBSTAR>>/g, '.*');
+    return new RegExp('^' + reStr + '$');
+  }
+
+  function shouldIncludeFile(filePath, searchRoot) {
     if (typeFilters.length > 0) {
       const ext = filePath.substring(filePath.lastIndexOf('.'));
       if (!typeFilters.includes(ext)) return false;
     }
     if (globFilters.length > 0) {
       const name = filePath.split('/').pop();
+      // Match against both filename and relative path
+      const relPath = searchRoot ? filePath.slice(searchRoot.length + 1) : name;
       for (const g of globFilters) {
         if (g.startsWith('!')) {
-          const negPattern = g.slice(1);
-          const negRe = new RegExp('^' + negPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
-          if (negRe.test(name)) return false;
+          const negRe = _globToRegex(g.slice(1));
+          if (negRe.test(name) || negRe.test(relPath)) return false;
         } else {
-          const posRe = new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
-          if (!posRe.test(name)) return false;
+          const posRe = _globToRegex(g);
+          if (!posRe.test(name) && !posRe.test(relPath)) return false;
         }
       }
     }
+    // Check .gitignore
+    if (searchRoot && _isGitignored(filePath, searchRoot)) return false;
     return true;
   }
 
-  function searchFile(filePath, displayPath) {
+  function searchFile(filePath, displayPath, searchRoot) {
     if (matchCount >= maxCount) return;
-    if (!shouldIncludeFile(filePath)) return;
+    if (!shouldIncludeFile(filePath, searchRoot)) return;
     let text;
     try { text = readFileText(filePath); } catch { return; }
     const lines = text.split('\n');
     let fileCount = 0;
     const fileMatches = [];
+    // Track which lines to output (for context line support)
+    const matchedLines = new Set();    // lines that matched the pattern
+    const contextLines = new Set();    // context lines to display
 
+    // First pass: find all matching lines
     for (let i = 0; i < lines.length; i++) {
-      if (matchCount >= maxCount) break;
+      if (matchCount + fileCount >= maxCount) break;
       const match = re.test(lines[i]);
       if (match !== invertMatch) {
         fileCount++;
-        matchCount++;
-        if (jsonOutput) {
+        matchedLines.add(i);
+        // Mark context lines
+        for (let b = Math.max(0, i - contextBefore); b < i; b++) contextLines.add(b);
+        for (let a = i + 1; a <= Math.min(lines.length - 1, i + contextAfter); a++) contextLines.add(a);
+      }
+    }
+
+    matchCount += fileCount;
+
+    // Second pass: build output with context
+    if (!countOnly && !listFiles && fileCount > 0) {
+      const outputLines = new Set([...matchedLines, ...contextLines]);
+      const sortedLines = [...outputLines].sort((a, b) => a - b);
+      let prevLine = -2; // track for separator insertion
+      let absOffset = 0; // track byte offsets for JSON
+      // Precompute byte offsets per line for JSON output
+      const lineOffsets = [];
+      if (jsonOutput) {
+        let off = 0;
+        for (let i = 0; i < lines.length; i++) {
+          lineOffsets.push(off);
+          off += lines[i].length + 1; // +1 for newline
+        }
+      }
+
+      for (const i of sortedLines) {
+        // Insert separator between non-contiguous context groups
+        if (prevLine >= 0 && i > prevLine + 1) {
+          if (jsonOutput) {
+            // no separator in JSON mode per ripgrep spec
+          } else {
+            fileMatches.push('--');
+          }
+        }
+        prevLine = i;
+
+        const isMatch = matchedLines.has(i);
+        if (jsonOutput && isMatch) {
+          // Compute correct submatch offsets
+          const submatches = [];
+          const reG = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+          let m;
+          while ((m = reG.exec(lines[i])) !== null) {
+            submatches.push({ match: { text: m[0] }, start: m.index, end: m.index + m[0].length });
+            if (!reG.global) break;
+          }
+          if (submatches.length === 0) {
+            // Fallback if regex didn't match (shouldn't happen)
+            submatches.push({ match: { text: '' }, start: 0, end: 0 });
+          }
           fileMatches.push(JSON.stringify({
             type: 'match',
             data: {
               path: { text: displayPath },
               lines: { text: lines[i] + '\n' },
               line_number: i + 1,
-              absolute_offset: 0,
-              submatches: [{ match: { text: lines[i].match(re)?.[0] || '' }, start: 0, end: lines[i].length }],
+              absolute_offset: lineOffsets[i],
+              submatches,
             },
           }));
-        } else if (!countOnly && !listFiles) {
+        } else if (jsonOutput && !isMatch) {
+          fileMatches.push(JSON.stringify({
+            type: 'context',
+            data: {
+              path: { text: displayPath },
+              lines: { text: lines[i] + '\n' },
+              line_number: i + 1,
+              absolute_offset: lineOffsets[i],
+              submatches: [],
+            },
+          }));
+        } else {
           const prefix = (paths.length > 1 || withFilename) && !noFilename ? displayPath + ':' : '';
-          const ln = lineNumbers ? `${i + 1}:` : '';
+          const sep = isMatch ? ':' : '-';
+          const ln = lineNumbers ? `${i + 1}${sep}` : '';
           fileMatches.push(`${prefix}${ln}${lines[i]}`);
         }
       }
@@ -927,10 +1052,10 @@ function rg(args, options) {
     if (isDir(resolved)) {
       walkDir(resolved, (filePath) => {
         if (!hidden && filePath.split('/').some(s => s.startsWith('.') && s !== '.' && s !== '..')) return;
-        searchFile(filePath, filePath);
+        searchFile(filePath, filePath, resolved);
       });
     } else {
-      searchFile(resolved, p);
+      searchFile(resolved, p, normalizePath('.'));
     }
   }
 

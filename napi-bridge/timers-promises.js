@@ -63,7 +63,7 @@ export default { setTimeout, setImmediate, setInterval, scheduler };
 export const timersModule = {
   setTimeout: globalThis.setTimeout.bind(globalThis),
   setInterval: globalThis.setInterval.bind(globalThis),
-  setImmediate: globalThis.setTimeout.bind(globalThis, undefined, 0),
+  setImmediate: (callback, ...args) => globalThis.setTimeout(callback, 0, ...args),
   clearTimeout: globalThis.clearTimeout.bind(globalThis),
   clearInterval: globalThis.clearInterval.bind(globalThis),
   clearImmediate: globalThis.clearTimeout.bind(globalThis),

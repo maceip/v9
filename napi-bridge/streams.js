@@ -10,6 +10,49 @@
 
 import { EventEmitter } from './eventemitter.js';
 
+// ─── Deque — O(1) push/shift replacement for hot-path buffers ───────
+// Array.shift() is O(n); this ring buffer gives O(1) amortized for
+// the push/shift pattern used by both Readable and Writable buffers.
+
+class Deque {
+  constructor() {
+    this._items = new Array(16);
+    this._head = 0;
+    this._tail = 0;
+    this._size = 0;
+  }
+
+  get length() { return this._size; }
+
+  push(item) {
+    if (this._size === this._items.length) this._grow();
+    this._items[this._tail] = item;
+    this._tail = (this._tail + 1) & (this._items.length - 1);
+    this._size++;
+  }
+
+  shift() {
+    if (this._size === 0) return undefined;
+    const item = this._items[this._head];
+    this._items[this._head] = undefined; // release ref
+    this._head = (this._head + 1) & (this._items.length - 1);
+    this._size--;
+    return item;
+  }
+
+  _grow() {
+    const old = this._items;
+    const cap = old.length;
+    const next = new Array(cap * 2);
+    for (let i = 0; i < this._size; i++) {
+      next[i] = old[(this._head + i) & (cap - 1)];
+    }
+    this._items = next;
+    this._head = 0;
+    this._tail = this._size;
+  }
+}
+
 // ─── Readable ───────────────────────────────────────────────────────
 
 export class Readable extends EventEmitter {
@@ -17,7 +60,7 @@ export class Readable extends EventEmitter {
     super();
     this._readableState = {
       highWaterMark: opts.highWaterMark !== undefined ? opts.highWaterMark : 16384,
-      buffer: [],
+      buffer: new Deque(),
       length: 0,           // total bytes buffered
       flowing: null,        // null = initial, true = flowing, false = paused
       ended: false,         // push(null) received
@@ -360,7 +403,7 @@ export class Writable extends EventEmitter {
       highWaterMark: opts.highWaterMark !== undefined ? opts.highWaterMark : 16384,
       length: 0,           // bytes buffered
       writing: false,       // currently in _write
-      buffer: [],           // queued writes
+      buffer: new Deque(),  // queued writes — O(1) shift via ring buffer
       ended: false,         // end() called
       finished: false,      // 'finish' emitted
       destroyed: false,
@@ -601,7 +644,7 @@ export class Duplex extends Readable {
         : (opts.highWaterMark !== undefined ? opts.highWaterMark : 16384),
       length: 0,
       writing: false,
-      buffer: [],
+      buffer: new Deque(),
       ended: false,
       finished: false,
       destroyed: false,

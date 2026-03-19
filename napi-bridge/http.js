@@ -11,6 +11,21 @@ import { Readable, Writable } from './streams.js';
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
 
+// Detect streaming upload support (Chromium 105+: ReadableStream body + duplex: 'half')
+let _supportsStreamingUpload = null;
+function _canStreamUpload() {
+  if (_supportsStreamingUpload !== null) return _supportsStreamingUpload;
+  try {
+    // Feature-detect: Request constructor accepts ReadableStream body + duplex
+    _supportsStreamingUpload = typeof ReadableStream === 'function'
+      && typeof Request === 'function'
+      && (() => { new Request('http://x', { body: new ReadableStream(), method: 'POST', duplex: 'half' }); return true; })();
+  } catch {
+    _supportsStreamingUpload = false;
+  }
+  return _supportsStreamingUpload;
+}
+
 // ─── Proxy-aware fetch for Node.js ──────────────────────────────────
 // Node.js fetch() doesn't auto-use HTTP_PROXY env vars.
 // When running in Node.js with a proxy, use native http/https + CONNECT tunnel.
@@ -228,8 +243,12 @@ class IncomingMessage extends Readable {
         this.push(null);
         return;
       }
+      // Avoid copying if value is already a Uint8Array (the common case for
+      // fetch() ReadableStream chunks). Only wrap if it's an ArrayBuffer or
+      // a different typed array view.
+      const chunk = (value instanceof Uint8Array) ? value : new Uint8Array(value);
       // Respect backpressure: if push() returns false, stop until next _read()
-      const ok = this.push(new Uint8Array(value));
+      const ok = this.push(chunk);
       if (ok) {
         this._pumpReader();
       } else {
@@ -288,7 +307,7 @@ class ClientRequest extends Writable {
     if (typeof chunk === 'string') {
       this._bodyChunks.push(_encoder.encode(chunk));
     } else if (chunk) {
-      this._bodyChunks.push(new Uint8Array(chunk));
+      this._bodyChunks.push((chunk instanceof Uint8Array) ? chunk : new Uint8Array(chunk));
     }
     callback();
   }
@@ -318,7 +337,7 @@ class ClientRequest extends Writable {
     if (typeof chunk === 'string') {
       this._bodyChunks.push(_encoder.encode(chunk));
     } else if (chunk) {
-      this._bodyChunks.push(new Uint8Array(chunk));
+      this._bodyChunks.push((chunk instanceof Uint8Array) ? chunk : new Uint8Array(chunk));
     }
     if (callback) callback();
     return true;
@@ -362,15 +381,22 @@ class ClientRequest extends Writable {
     // Build body
     let body = null;
     const method = (opts.method || 'GET').toUpperCase();
+    const fetchExtra = {}; // extra fetch options (e.g., duplex)
     if (this._bodyChunks.length > 0 && method !== 'GET' && method !== 'HEAD') {
-      const totalLen = this._bodyChunks.reduce((s, c) => s + c.byteLength, 0);
-      const combined = new Uint8Array(totalLen);
-      let offset = 0;
-      for (const c of this._bodyChunks) {
-        combined.set(c, offset);
-        offset += c.byteLength;
+      if (this._bodyChunks.length === 1) {
+        // Single chunk — zero-copy, pass directly
+        body = this._bodyChunks[0];
+      } else {
+        // Multiple chunks — concatenate into one buffer
+        const totalLen = this._bodyChunks.reduce((s, c) => s + c.byteLength, 0);
+        const combined = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const c of this._bodyChunks) {
+          combined.set(c, offset);
+          offset += c.byteLength;
+        }
+        body = combined;
       }
-      body = combined;
     }
 
     // Build headers (exclude content-length — fetch handles it)
@@ -390,6 +416,7 @@ class ClientRequest extends Writable {
       headers,
       signal: this._abortController.signal,
       redirect: 'follow',
+      ...fetchExtra,
     };
     if (body) fetchOpts.body = body;
 

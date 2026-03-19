@@ -137,11 +137,41 @@ export function createInterface(options) {
   return new Interface(options);
 }
 
-export function clearLine() {}
-export function clearScreenDown() {}
-export function cursorTo() {}
-export function moveCursor() {}
-export function emitKeypressEvents() {}
+export function clearLine(stream, dir, callback) {
+  if (callback) callback();
+}
+export function clearScreenDown(stream, callback) {
+  if (callback) callback();
+}
+export function cursorTo(stream, x, y, callback) {
+  if (typeof y === 'function') { callback = y; }
+  if (callback) callback();
+}
+export function moveCursor(stream, dx, dy, callback) {
+  if (callback) callback();
+}
+
+export function emitKeypressEvents(stream, iface) {
+  if (stream._keypressDecoder) return; // already wired
+  stream._keypressDecoder = true;
+  stream.on('data', (data) => {
+    const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    for (const ch of str) {
+      const key = {
+        sequence: ch,
+        name: ch === '\r' ? 'return' : ch === '\n' ? 'return' : ch === '\t' ? 'tab' : ch === '\x7f' ? 'backspace' : ch === '\x1b' ? 'escape' : undefined,
+        ctrl: false,
+        meta: false,
+        shift: false,
+      };
+      if (ch.charCodeAt(0) < 32 && ch !== '\r' && ch !== '\n' && ch !== '\t' && ch !== '\x1b') {
+        key.ctrl = true;
+        key.name = String.fromCharCode(ch.charCodeAt(0) + 96);
+      }
+      stream.emit('keypress', ch, key);
+    }
+  });
+}
 
 // readline/promises API
 export const promises = {

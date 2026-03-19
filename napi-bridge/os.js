@@ -25,7 +25,13 @@ export function hostname() { return 'browser'; }
 
 export function type() { return 'Linux'; }
 export function release() { return '6.0.0-edgejs'; }
-export function platform() { return 'linux'; }
+export function platform() {
+  // Match process.platform from browser-builtins for consistency
+  if (typeof globalThis.process !== 'undefined' && globalThis.process.platform) {
+    return globalThis.process.platform;
+  }
+  return 'linux';
+}
 export function arch() {
   return typeof navigator !== 'undefined' && navigator.userAgent?.includes('arm') ? 'arm64' : 'x64';
 }

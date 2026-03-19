@@ -2823,20 +2823,34 @@ export async function initEdgeJS(options = {}) {
     _sharedMemfs.populate(options.files);
   }
 
-  // Wire onStdout / onStderr callbacks into processBridge
-  if (options.onStdout) {
-    _sharedProcessBridge.stdout._write = (chunk, encoding, cb) => {
-      const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-      options.onStdout(str);
+  // Wire onStdout / onStderr callbacks into processBridge.
+  // Optimization: reuse a single TextDecoder and batch writes per microtask
+  // to reduce term.write() call overhead for high-frequency token streaming.
+  const _stdDecoder = new TextDecoder('utf-8');
+
+  function _makeBatchedWriter(callback) {
+    let pending = '';
+    let scheduled = false;
+    return (chunk, encoding, cb) => {
+      pending += typeof chunk === 'string' ? chunk : _stdDecoder.decode(chunk);
+      if (!scheduled) {
+        scheduled = true;
+        Promise.resolve().then(() => {
+          const out = pending;
+          pending = '';
+          scheduled = false;
+          callback(out);
+        });
+      }
       cb();
     };
   }
+
+  if (options.onStdout) {
+    _sharedProcessBridge.stdout._write = _makeBatchedWriter(options.onStdout);
+  }
   if (options.onStderr) {
-    _sharedProcessBridge.stderr._write = (chunk, encoding, cb) => {
-      const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-      options.onStderr(str);
-      cb();
-    };
+    _sharedProcessBridge.stderr._write = _makeBatchedWriter(options.onStderr);
   }
 
   // Apply env vars
@@ -2975,6 +2989,13 @@ export async function initEdgeJS(options = {}) {
     return r.path;
   };
 
+  // ── Auto-register browser builtins at boot ─────────────────────────
+  // Guarantee all browser-native overrides are installed before any user
+  // code runs, rather than relying on ad hoc registration in web/terminal.js.
+  const { registerBrowserBuiltins: _autoRegister } = await import('./browser-builtins.js');
+  const _runtimeShell = { _registerBuiltinOverride, _memfsRequire };
+  _autoRegister(_runtimeShell);
+
   // ── Bridge-only mode ────────────────────────────────────────────────
   // When no Wasm module is available, return a lightweight runtime backed
   // entirely by our JS bridge modules (MEMFS fs, shell shims, etc.).
@@ -3102,6 +3123,19 @@ export async function initEdgeJS(options = {}) {
       }
 
       const wasmUrl = options.wasmUrl || './edgejs.wasm';
+      // Prefer instantiateStreaming for faster startup — compiles while
+      // downloading instead of waiting for the full arrayBuffer first.
+      // Falls back to arrayBuffer path when MIME type is wrong (non-wasm).
+      if (typeof WebAssembly.instantiateStreaming === 'function') {
+        return WebAssembly.instantiateStreaming(fetch(wasmUrl), imports)
+          .catch(() =>
+            // Fallback: server may not serve application/wasm MIME type
+            fetch(wasmUrl)
+              .then((res) => res.arrayBuffer())
+              .then((buf) => WebAssembly.instantiate(buf, imports))
+          )
+          .then(onInstantiated);
+      }
       return fetch(wasmUrl)
         .then((res) => res.arrayBuffer())
         .then((buf) => WebAssembly.instantiate(buf, imports))
