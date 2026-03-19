@@ -1160,6 +1160,8 @@ import stringDecoderModule from './string-decoder.js';
 import constantsModule from './constants.js';
 import inspectorModule from './inspector.js';
 import nodePtyShim from './node-pty-shim.js';
+import diagnosticsChannelModule from './diagnostics-channel.js';
+import undiciStub from './undici-stub.js';
 
 export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
   // Build fs module with promises sub-object for node:fs/promises
@@ -1207,6 +1209,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'constants': constantsModule,
     'inspector': inspectorModule,
     'inspector/promises': inspectorModule,
+    'diagnostics_channel': diagnosticsChannelModule,
 
     // ── Missing builtins (stubs for modules not yet fully implemented) ──
     'punycode': { encode: (s) => s, decode: (s) => s, toASCII: (s) => s, toUnicode: (s) => s, ucs2: { decode: (s) => [...s].map(c => c.codePointAt(0)), encode: (a) => String.fromCodePoint(...a) }, version: '2.3.1' },
@@ -1242,6 +1245,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'diagnostics_channel': (() => { try { const m = import.meta; /* dynamic import won't work here */ } catch {} class Ch { constructor(n) { this.name=n; this._subscribers=[]; this._parentWrap=undefined; } get hasSubscribers() { return this._subscribers.length>0; } subscribe(fn) { this._subscribers.push(fn); } unsubscribe(fn) { this._subscribers=this._subscribers.filter(s=>s!==fn); } publish(m) { for(const fn of this._subscribers) fn(m,this.name); } bindStore(){} unbindStore(){} runStores(d,fn,...a){return fn(...a);} } const chs=new Map(); const ch=(n)=>{if(!chs.has(n))chs.set(n,new Ch(n));return chs.get(n);}; return { Channel:Ch, channel:ch, hasSubscribers:(n)=>chs.has(n)&&chs.get(n).hasSubscribers, subscribe:(n,fn)=>ch(n).subscribe(fn), unsubscribe:(n,fn)=>ch(n).unsubscribe(fn), tracingChannel:(n)=>({start:ch(n+':start'),end:ch(n+':end'),asyncStart:ch(n+':asyncStart'),asyncEnd:ch(n+':asyncEnd'),error:ch(n+':error'),hasSubscribers:false,subscribe(){},unsubscribe(){},traceSync(fn,c,t,...a){return fn.apply(t,a);},tracePromise(fn,c,t,...a){return fn.apply(t,a);},traceCallback(fn){return fn;}}), TracingChannel:class{constructor(){} subscribe(){} unsubscribe(){}} }; })(),
 
     // ── Third-party shims ──
+    'undici': undiciStub,
     'node-pty': nodePtyShim,
   };
 
@@ -1252,6 +1256,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
       // Also register with node: prefix for ESM-style imports
       if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
           name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder' ||
+          name === 'diagnostics_channel' ||
           name === 'readline/promises' || name === 'timers/promises' || name === 'stream/consumers' ||
           name === 'inspector/promises' || name === 'assert/strict' || name === 'path/posix' ||
           name === 'fs/promises') {

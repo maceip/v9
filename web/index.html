@@ -14,271 +14,49 @@
   {
     "imports": {
       "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm",
-
-      "fs": "../napi-bridge/fs-exports.js",
-      "node:fs": "../napi-bridge/fs-exports.js",
-      "fs/promises": "../napi-bridge/fs-promises.js",
+      "node:module": "../napi-bridge/module-shim.js",
+      "node:fs": "../napi-bridge/fs.js",
       "node:fs/promises": "../napi-bridge/fs-promises.js",
-
-      "path": "../napi-bridge/path-exports.js",
       "node:path": "../napi-bridge/path-exports.js",
       "node:path/posix": "../napi-bridge/path-exports.js",
       "node:path/win32": "../napi-bridge/path-exports.js",
-
-      "os": "../napi-bridge/os-exports.js",
-      "node:os": "../napi-bridge/os-exports.js",
-
-      "crypto": "../napi-bridge/crypto-exports.js",
+      "node:os": "../napi-bridge/os.js",
       "node:crypto": "../napi-bridge/crypto-exports.js",
-
-      "http": "../napi-bridge/http-exports.js",
       "node:http": "../napi-bridge/http-exports.js",
-      "https": "../napi-bridge/https-exports.js",
       "node:https": "../napi-bridge/https-exports.js",
-      "http2": "../napi-bridge/http2-exports.js",
-      "node:http2": "../napi-bridge/http2-exports.js",
-
-      "net": "../napi-bridge/net-exports.js",
       "node:net": "../napi-bridge/net-exports.js",
-      "tls": "../napi-bridge/tls-exports.js",
-      "node:tls": "../napi-bridge/tls-exports.js",
-      "dns": "../napi-bridge/dns-exports.js",
-      "node:dns": "../napi-bridge/dns-exports.js",
-      "dns/promises": "../napi-bridge/dns-exports.js",
-      "node:dns/promises": "../napi-bridge/dns-exports.js",
-
-      "url": "../napi-bridge/url-exports.js",
+      "node:tls": "../napi-bridge/net-exports.js",
+      "node:dns": "../napi-bridge/net-exports.js",
       "node:url": "../napi-bridge/url-exports.js",
-
-      "util": "../napi-bridge/util-exports.js",
-      "node:util": "../napi-bridge/util-exports.js",
-
-      "events": "../napi-bridge/events-exports.js",
-      "node:events": "../napi-bridge/events-exports.js",
-
-      "buffer": "../napi-bridge/buffer-exports.js",
+      "node:util": "../napi-bridge/util.js",
+      "node:events": "../napi-bridge/eventemitter.js",
       "node:buffer": "../napi-bridge/buffer-exports.js",
-
-      "stream": "../napi-bridge/stream-exports.js",
-      "node:stream": "../napi-bridge/stream-exports.js",
-      "stream/consumers": "../napi-bridge/stream-consumers.js",
+      "node:stream": "../napi-bridge/streams.js",
       "node:stream/consumers": "../napi-bridge/stream-consumers.js",
-      "stream/promises": "../napi-bridge/stream-exports.js",
-      "node:stream/promises": "../napi-bridge/stream-exports.js",
-
-      "child_process": "../napi-bridge/child_process-exports.js",
-      "node:child_process": "../napi-bridge/child_process-exports.js",
-
-      "process": "../napi-bridge/process-exports.js",
+      "node:child_process": "../napi-bridge/child-process.js",
       "node:process": "../napi-bridge/process-exports.js",
-
-      "readline": "../napi-bridge/readline-exports.js",
-      "node:readline": "../napi-bridge/readline-exports.js",
-      "node:readline/promises": "../napi-bridge/readline-exports.js",
-
-      "tty": "../napi-bridge/tty-exports.js",
-      "node:tty": "../napi-bridge/tty-exports.js",
-
-      "zlib": "../napi-bridge/zlib-exports.js",
-      "node:zlib": "../napi-bridge/zlib-exports.js",
-
-      "assert": "../napi-bridge/assert-exports.js",
-      "node:assert": "../napi-bridge/assert-exports.js",
-
-      "module": "../napi-bridge/module-exports.js",
-      "node:module": "../napi-bridge/module-exports.js",
-
-      "string_decoder": "../napi-bridge/string_decoder-exports.js",
-      "node:string_decoder": "../napi-bridge/string_decoder-exports.js",
-
-      "constants": "../napi-bridge/constants-exports.js",
-      "node:constants": "../napi-bridge/constants-exports.js",
-
-      "worker_threads": "../napi-bridge/worker_threads-exports.js",
-      "node:worker_threads": "../napi-bridge/worker_threads-exports.js",
-
-      "async_hooks": "../napi-bridge/async_hooks-exports.js",
-      "node:async_hooks": "../napi-bridge/async_hooks-exports.js",
-
-      "timers": "../napi-bridge/timers-exports.js",
-      "node:timers": "../napi-bridge/timers-exports.js",
-      "timers/promises": "../napi-bridge/timers-promises.js",
+      "node:readline": "../napi-bridge/readline.js",
+      "node:readline/promises": "../napi-bridge/readline.js",
+      "node:tty": "../napi-bridge/tty.js",
+      "node:zlib": "../napi-bridge/zlib.js",
+      "node:async_hooks": "../napi-bridge/async-hooks.js",
       "node:timers/promises": "../napi-bridge/timers-promises.js",
-
-      "v8": "../napi-bridge/v8-exports.js",
-      "node:v8": "../napi-bridge/v8-exports.js",
-
-      "inspector": "../napi-bridge/inspector.js",
-      "node:inspector": "../napi-bridge/inspector.js",
-
-      "react-devtools-core": "../napi-bridge/inspector.js",
-      "@google/gemini-cli-devtools": "../napi-bridge/inspector.js",
-      "node-pty": "../napi-bridge/node-pty-shim.js",
-
-      "querystring": "../napi-bridge/querystring-exports.js",
-      "node:querystring": "../napi-bridge/querystring-exports.js",
-
-      "perf_hooks": "../napi-bridge/inspector.js",
-      "node:perf_hooks": "../napi-bridge/inspector.js",
-
-      "diagnostics_channel": "../napi-bridge/inspector.js",
-      "node:diagnostics_channel": "../napi-bridge/inspector.js",
-
-      "perf_hooks": "../napi-bridge/perf-hooks-exports.js",
-      "node:perf_hooks": "../napi-bridge/perf-hooks-exports.js",
-
-      "stream/promises": "../napi-bridge/stream-exports.js",
-      "node:stream/promises": "../napi-bridge/stream-exports.js",
-
-      "diagnostics_channel": "../napi-bridge/diagnostics-channel-exports.js",
-      "node:diagnostics_channel": "../napi-bridge/diagnostics-channel-exports.js"
+      "node:worker_threads": "../napi-bridge/worker-threads.js",
+      "node:assert": "../napi-bridge/assert.js",
+      "node:string_decoder": "../napi-bridge/string-decoder.js",
+      "node:constants": "../napi-bridge/constants.js",
+      "node:diagnostics_channel": "../napi-bridge/diagnostics-channel.js",
+      "diagnostics_channel": "../napi-bridge/diagnostics-channel.js",
+      "undici": "../napi-bridge/undici-stub.js",
+      "http2": "../napi-bridge/net-exports.js",
+      "http2-wrapper": "../napi-bridge/net-exports.js",
+      "inspector": "../napi-bridge/inspector.js"
     }
   }
   </script>
 </head>
 <body>
   <div id="terminal"></div>
-  <script>
-    // Intercept XHR and fetch to proxy Anthropic API calls through CORS proxy
-    const PROXY_URL = 'https://cors.stare.network';
-    const PROXY_DOMAINS = ['api.anthropic.com', 'platform.claude.com'];
-
-    const DOMAIN_PREFIX = { 'api.anthropic.com': '/anthropic', 'platform.claude.com': '/anthropic-platform', 'api.openai.com': '/openai', 'generativelanguage.googleapis.com': '/google' };
-
-    // Patch XMLHttpRequest
-    const _OrigXHR = globalThis.XMLHttpRequest;
-    globalThis.XMLHttpRequest = class extends _OrigXHR {
-      open(method, url, ...rest) {
-        try {
-          const u = new URL(url, location.href);
-          const prefix = DOMAIN_PREFIX[u.hostname];
-          if (prefix) {
-            url = PROXY_URL + prefix + u.pathname + u.search;
-          }
-        } catch {}
-        return super.open(method, url, ...rest);
-      }
-      setRequestHeader(name, value) {
-        if (['user-agent', 'host', 'content-length', 'connection'].includes(name.toLowerCase())) return;
-        return super.setRequestHeader(name, value);
-      }
-    };
-
-    // Patch fetch
-    const _origFetch = globalThis.fetch;
-    globalThis.fetch = function(input, init) {
-      let url = typeof input === 'string' ? input : input?.url || String(input);
-      try {
-        const u = new URL(url, location.href);
-        const prefix = DOMAIN_PREFIX[u.hostname];
-        if (prefix) {
-          url = PROXY_URL + prefix + u.pathname + u.search;
-          if (typeof input === 'string') input = url;
-          else if (input instanceof Request) input = new Request(url, input);
-        }
-      } catch {}
-      return _origFetch.call(globalThis, input, init);
-    };
-
-    // Polyfill setImmediate (Node.js has it, browsers don't — Ink needs it)
-    if (typeof globalThis.setImmediate === 'undefined') {
-      globalThis.setImmediate = (fn, ...args) => globalThis.setTimeout(fn, 0, ...args);
-      globalThis.clearImmediate = (id) => globalThis.clearTimeout(id);
-    }
-
-    // Save original console methods before anything patches them
-    globalThis._origConsoleLog = console.log.bind(console);
-    globalThis._origConsoleError = console.error.bind(console);
-    globalThis._origConsoleWarn = console.warn.bind(console);
-
-    // Ensure console.Console exists (Node.js has it, browsers don't)
-    if (!globalThis.console.Console) {
-      globalThis.console.Console = class Console {
-        constructor(opts) {
-          const out = opts?.stdout || { write: (s) => console.log(s) };
-          const err = opts?.stderr || { write: (s) => console.error(s) };
-          Object.assign(this, { log: (...a) => out.write(a.join(' ')+'\n'), error: (...a) => err.write(a.join(' ')+'\n'), warn: (...a) => err.write(a.join(' ')+'\n'), info: (...a) => out.write(a.join(' ')+'\n'), debug: (...a) => out.write(a.join(' ')+'\n'), trace: (...a) => out.write(a.join(' ')+'\n'), dir: (...a) => out.write(a.join(' ')+'\n'), time: ()=>{}, timeEnd: ()=>{}, timeLog: ()=>{}, assert: ()=>{}, count: ()=>{}, countReset: ()=>{}, group: ()=>{}, groupEnd: ()=>{}, table: (...a) => out.write(a.join(' ')+'\n'), clear: ()=>{} });
-        }
-      };
-    }
-
-    // Capture unhandled rejections for debugging
-    globalThis._rejections = [];
-    window.addEventListener('unhandledrejection', (e) => {
-      globalThis._rejections.push({
-        message: e.reason?.message || String(e.reason),
-        stack: e.reason?.stack?.split('\n').slice(0, 5).join('\n') || '',
-        code: e.reason?.code || ''
-      });
-    });
-
-    // Patch setTimeout/setInterval to return objects with unref()/ref() like Node.js
-    const _origSetTimeout = globalThis.setTimeout;
-    const _origSetInterval = globalThis.setInterval;
-    globalThis.setTimeout = function(fn, ms, ...args) {
-      const id = _origSetTimeout.call(globalThis, fn, ms, ...args);
-      return { [Symbol.toPrimitive]() { return id; }, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, refresh() { return this; }, _id: id };
-    };
-    globalThis.setInterval = function(fn, ms, ...args) {
-      const id = _origSetInterval.call(globalThis, fn, ms, ...args);
-      return { [Symbol.toPrimitive]() { return id; }, unref() { return this; }, ref() { return this; }, hasRef() { return true; }, refresh() { return this; }, _id: id };
-    };
-    // Patch clearTimeout/clearInterval to accept our wrapped objects
-    const _origClearTimeout = globalThis.clearTimeout;
-    const _origClearInterval = globalThis.clearInterval;
-    globalThis.clearTimeout = function(t) { return _origClearTimeout(t?._id ?? t); };
-    globalThis.clearInterval = function(t) { return _origClearInterval(t?._id ?? t); };
-
-    // Set global process before any ESM modules load
-    if (typeof globalThis.process === 'undefined') {
-      const _apiKey = sessionStorage.getItem('anthropic_api_key') || '';
-      globalThis.process = {
-        env: { ..._apiKey ? { ANTHROPIC_API_KEY: _apiKey } : {}, HOME: '/home/user', TERM: 'xterm-256color', COLORTERM: 'truecolor', SHELL: '/bin/bash', USER: 'user', LANG: 'en_US.UTF-8', PATH: '/usr/local/bin:/usr/bin:/bin', ANTHROPIC_BASE_URL: 'http://localhost:8081' },
-        argv: ['node', '/app/claude-code.js'], argv0: 'node', execArgv: [], execPath: '/usr/local/bin/node',
-        cwd: () => '/', chdir: () => {},
-        platform: 'linux', arch: 'x64', version: 'v20.0.0-browser',
-        versions: { node: '20.0.0' }, pid: 1, ppid: 0,
-        stdin: { isTTY: true, on: ()=>globalThis.process.stdin, once: ()=>globalThis.process.stdin, read: ()=>null, resume: ()=>globalThis.process.stdin, pause: ()=>globalThis.process.stdin, setEncoding: ()=>globalThis.process.stdin, setRawMode: (m)=>{globalThis.process.stdin.isRaw=m;return globalThis.process.stdin;}, isRaw: false, readable: true, fd: 0, ref: ()=>globalThis.process.stdin, unref: ()=>globalThis.process.stdin, removeListener: ()=>globalThis.process.stdin, removeAllListeners: ()=>globalThis.process.stdin, listeners: ()=>[], listenerCount: ()=>0, emit: ()=>false, addListener: ()=>globalThis.process.stdin, prependListener: ()=>globalThis.process.stdin },
-        stdout: { isTTY: true, columns: 80, rows: 24, write: (s)=>{const str=typeof s==='string'?s:new TextDecoder().decode(s);if(globalThis._xtermWrite)globalThis._xtermWrite(str);else globalThis._origConsoleLog?.(str);return true;}, on: ()=>globalThis.process.stdout, once: ()=>globalThis.process.stdout, emit: ()=>false, end: ()=>{}, writable: true, fd: 1, getColorDepth: ()=>24, hasColors: ()=>true },
-        stderr: { isTTY: true, write: (s)=>{const str=typeof s==='string'?s:new TextDecoder().decode(s);if(globalThis._xtermWrite)globalThis._xtermWrite(str);else globalThis._origConsoleError?.(str);return true;}, on: ()=>globalThis.process.stderr, once: ()=>globalThis.process.stderr, emit: ()=>false, end: ()=>{}, writable: true, fd: 2, getColorDepth: ()=>24, hasColors: ()=>true }, exit: () => {}, nextTick: (fn, ...a) => queueMicrotask(() => fn(...a)),
-        hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
-        on: () => globalThis.process, off: () => globalThis.process,
-        once: () => globalThis.process, emit: () => false,
-        removeListener: () => globalThis.process, addListener: () => globalThis.process,
-        removeAllListeners: () => globalThis.process, setMaxListeners: () => globalThis.process,
-        getMaxListeners: () => 10, rawListeners: () => [], prependListener: () => globalThis.process,
-        prependOnceListener: () => globalThis.process, eventNames: () => [],
-        listeners: () => [], listenerCount: () => 0,
-        emitWarning: (msg) => console.warn(msg),
-        binding: () => ({}), umask: () => 0o22,
-        features: {}, release: { name: 'node' },
-        config: { variables: {} }, memoryUsage: () => ({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0, arrayBuffers: 0 }),
-        cpuUsage: () => ({ user: 0, system: 0 }),
-        uptime: () => performance.now() / 1000,
-        title: 'browser',
-      };
-      globalThis.global = globalThis;
-    }
-    // Set global Buffer — will be replaced by real one from browser-builtins.js on import
-    if (typeof globalThis.Buffer === 'undefined') {
-      globalThis.Buffer = class Buffer extends Uint8Array {
-        static from(v, enc) { return typeof v === 'string' ? new TextEncoder().encode(v) : new Uint8Array(v); }
-        static alloc(n) { return new Uint8Array(n); }
-        static allocUnsafe(n) { return new Uint8Array(n); }
-        static allocUnsafeSlow(n) { return new Uint8Array(n); }
-        static isBuffer(o) { return o instanceof Uint8Array; }
-        static isEncoding(enc) { return ['utf8','utf-8','hex','base64','ascii','latin1','binary','base64url','ucs2','ucs-2','utf16le','utf-16le'].includes(String(enc).toLowerCase()); }
-        static byteLength(str, enc) { return typeof str === 'string' ? new TextEncoder().encode(str).length : str.length; }
-        static concat(list, len) { const t = len ?? list.reduce((s,b) => s+b.length, 0); const r = new Uint8Array(t); let o = 0; for (const b of list) { r.set(b, o); o += b.length; } return r; }
-        static compare(a, b) { for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return a.length - b.length; }
-        toString(enc) { return new TextDecoder().decode(this); }
-        write(str, off, len, enc) { const b = new TextEncoder().encode(str); this.set(b.subarray(0, len || b.length), off || 0); return Math.min(b.length, len || b.length); }
-        copy(target, tOff, sOff, sEnd) { const s = this.subarray(sOff||0, sEnd); target.set(s, tOff||0); return s.length; }
-        slice(s, e) { return this.subarray(s, e); }
-        toJSON() { return { type: 'Buffer', data: Array.from(this) }; }
-      };
-    }
-  </script>
   <script type="module" src="terminal.js"></script>
 </body>
 </html>
