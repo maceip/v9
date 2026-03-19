@@ -1103,24 +1103,32 @@ import inspectorModule from './inspector.js';
 import nodePtyShim from './node-pty-shim.js';
 
 export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
+  // Build fs module with promises sub-object for node:fs/promises
+  const fsModule = overrides.fs || fs;
+  const fsPromises = fsModule.promises || {};
+
   const builtins = {
     // ── Original modules ──
-    'crypto': cryptoBridge,
+    // Each module exposes named exports AND a `default` for ESM interop.
+    // `const { createHash } = require('crypto')` and
+    // `import { createHash } from 'node:crypto'` both work.
+    'crypto': { ...cryptoBridge, default: cryptoBridge },
     'events': { EventEmitter, default: EventEmitter },
-    'stream': { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished } },
-    'path': pathBridge,
-    'path/posix': pathBridge,
-    'url': urlBridge,
-    'util': util,
-    'buffer': { Buffer: bufferBridge, kMaxLength: 2 ** 31 - 1 },
+    'stream': { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished } },
+    'path': { ...pathBridge, default: pathBridge },
+    'path/posix': { ...pathBridge, default: pathBridge },
+    'url': { ...urlBridge, default: urlBridge },
+    'util': { ...util, default: util },
+    'buffer': { Buffer: bufferBridge, kMaxLength: 2 ** 31 - 1, default: { Buffer: bufferBridge, kMaxLength: 2 ** 31 - 1 } },
     'process': processBridge,
-    'fs': overrides.fs || fs,
-    'http': http,
-    'https': https,
-    'net': net,
-    'tls': tls,
-    'dns': dns,
-    'child_process': childProcess,
+    'fs': { ...fsModule, default: fsModule },
+    'fs/promises': { ...fsPromises, default: fsPromises },
+    'http': { ...http, default: http },
+    'https': { ...https, default: https },
+    'net': { ...net, default: net },
+    'tls': { ...tls, default: tls },
+    'dns': { ...dns, default: dns },
+    'child_process': { ...childProcess, default: childProcess },
 
     // ── Phase 7: New modules ──
     'os': osModule,
@@ -1153,7 +1161,8 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
       if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
           name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder' ||
           name === 'readline/promises' || name === 'timers/promises' || name === 'stream/consumers' ||
-          name === 'inspector/promises' || name === 'assert/strict' || name === 'path/posix') {
+          name === 'inspector/promises' || name === 'assert/strict' || name === 'path/posix' ||
+          name === 'fs/promises') {
         edgeInstance._registerBuiltinOverride('node:' + name, impl);
       }
     }

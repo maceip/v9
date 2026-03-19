@@ -296,12 +296,174 @@ function colorize(str, color, enabled) {
 // Attach inspect.custom symbol
 inspect.custom = Symbol.for('nodejs.util.inspect.custom');
 
+/**
+ * isDeepStrictEqual — deep equality comparison.
+ *
+ * Handles: primitives, objects, arrays, Maps, Sets, Dates, RegExps,
+ * TypedArrays, Errors. Compares by value, not identity.
+ */
+export function isDeepStrictEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return false;
+  if (typeof a !== 'object') return false;
+
+  // Date
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  // RegExp
+  if (a instanceof RegExp && b instanceof RegExp) return a.source === b.source && a.flags === b.flags;
+  // ArrayBuffer / TypedArray
+  if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
+    if (a.byteLength !== b.byteLength) return false;
+    const va = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const vb = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    for (let i = 0; i < va.length; i++) { if (va[i] !== vb[i]) return false; }
+    return true;
+  }
+  // Map
+  if (a instanceof Map && b instanceof Map) {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) {
+      if (!b.has(k) || !isDeepStrictEqual(v, b.get(k))) return false;
+    }
+    return true;
+  }
+  // Set
+  if (a instanceof Set && b instanceof Set) {
+    if (a.size !== b.size) return false;
+    for (const v of a) { if (!b.has(v)) return false; }
+    return true;
+  }
+  // Array
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!isDeepStrictEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  // Plain objects
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!isDeepStrictEqual(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * format — Node.js-compatible string formatting.
+ *
+ * Supports %s, %d, %i, %f, %j, %o, %O, %%
+ */
+export function format(fmt, ...args) {
+  if (typeof fmt !== 'string') {
+    return [fmt, ...args].map(a => typeof a === 'string' ? a : inspect(a)).join(' ');
+  }
+  let i = 0;
+  let str = fmt.replace(/%([sdifjoO%])/g, (match, type) => {
+    if (type === '%') return '%';
+    if (i >= args.length) return match;
+    const arg = args[i++];
+    switch (type) {
+      case 's': return String(arg);
+      case 'd': return Number(arg).toString();
+      case 'i': return parseInt(arg, 10).toString();
+      case 'f': return parseFloat(arg).toString();
+      case 'j': try { return JSON.stringify(arg); } catch { return '[Circular]'; }
+      case 'o': case 'O': return inspect(arg);
+      default: return match;
+    }
+  });
+  // Append remaining args
+  while (i < args.length) {
+    str += ' ' + (typeof args[i] === 'string' ? args[i] : inspect(args[i]));
+    i++;
+  }
+  return str;
+}
+
+/**
+ * debuglog — returns a conditional logging function.
+ *
+ * In browser, checks process.env.NODE_DEBUG for the section name.
+ */
+export function debuglog(section) {
+  const key = section.toUpperCase();
+  let enabled = false;
+  if (typeof process !== 'undefined' && process.env && process.env.NODE_DEBUG) {
+    enabled = process.env.NODE_DEBUG.toUpperCase().split(',').some(
+      s => s.trim() === key || s.trim() === '*'
+    );
+  }
+  return function(...args) {
+    if (enabled) {
+      console.error(`${key} ${process.pid}: ${format(...args)}`);
+    }
+  };
+}
+
+/**
+ * deprecate — wraps a function to emit a deprecation warning on first call.
+ */
+export function deprecate(fn, msg, code) {
+  let warned = false;
+  function deprecated(...args) {
+    if (!warned) {
+      warned = true;
+      if (typeof process !== 'undefined' && process.emitWarning) {
+        process.emitWarning(msg, 'DeprecationWarning', code);
+      } else {
+        console.warn(`[DEP${code || ''}] DeprecationWarning: ${msg}`);
+      }
+    }
+    return fn.apply(this, args);
+  }
+  Object.setPrototypeOf(deprecated, fn);
+  return deprecated;
+}
+
+/**
+ * callbackify — converts async/promise function to callback style.
+ */
+export function callbackify(fn) {
+  return function(...args) {
+    const callback = args.pop();
+    fn.apply(this, args).then(
+      (result) => callback(null, result),
+      (err) => {
+        if (!err) {
+          const wrapped = new Error('Promise was rejected with a falsy value');
+          wrapped.reason = err;
+          callback(wrapped);
+        } else {
+          callback(err);
+        }
+      }
+    );
+  };
+}
+
+// Re-export TextEncoder/TextDecoder for convenience
+export const _TextEncoder = globalThis.TextEncoder;
+export const _TextDecoder = globalThis.TextDecoder;
+
 // Default export: entire util namespace
 const util = {
   promisify,
   inherits,
   types,
   inspect,
+  isDeepStrictEqual,
+  format,
+  debuglog,
+  deprecate,
+  callbackify,
+  TextEncoder: globalThis.TextEncoder,
+  TextDecoder: globalThis.TextDecoder,
 };
 
 export default util;

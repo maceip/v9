@@ -504,10 +504,14 @@ const httpGet = _get(httpRequest);
 export const http = {
   request: httpRequest,
   get: httpGet,
+  createServer() {
+    throw new Error('http.createServer() is not available in browser — use a service worker or external proxy');
+  },
   Agent: class Agent {},
   globalAgent: {},
   ClientRequest,
   IncomingMessage,
+  ServerResponse: class ServerResponse {},
   METHODS: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS',
     'CONNECT', 'TRACE'],
   STATUS_CODES: {
@@ -544,10 +548,14 @@ const httpsGet = _get(httpsRequest);
 export const https = {
   request: httpsRequest,
   get: httpsGet,
+  createServer() {
+    throw new Error('https.createServer() is not available in browser');
+  },
   Agent: class Agent {},
   globalAgent: {},
   ClientRequest,
   IncomingMessage,
+  ServerResponse: class ServerResponse {},
 };
 
 export default { http, https };
