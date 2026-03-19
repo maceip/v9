@@ -272,7 +272,13 @@ class Process extends EventEmitter {
       v8: 'browser-native',
       edgejs: '0.1.0',
     };
-    this.env = {};
+    // Proxy coerces all values to strings on set (Node.js contract)
+    this.env = new Proxy({}, {
+      set(target, key, value) {
+        target[key] = String(value);
+        return true;
+      },
+    });
     this.argv = ['node', 'script.js'];
     this.pid = 1;
     this.ppid = 0;

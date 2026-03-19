@@ -53,10 +53,11 @@ export class Readable extends EventEmitter {
       _maybeEnd(this);
       return false;
     }
-    if (typeof chunk === 'string') {
-      chunk = _stringToBuffer(chunk, state.encoding || 'utf8');
-    }
-    const chunkLen = state.objectMode ? 1 : chunk.length;
+    // Strings pass through as-is — do NOT convert to Uint8Array.
+    // Only measure byte length for buffer-management purposes.
+    const chunkLen = state.objectMode ? 1
+      : (typeof chunk === 'string' ? Buffer.byteLength(chunk, state.encoding || 'utf8')
+      : chunk.length);
     state.buffer.push(chunk);
     state.length += chunkLen;
 
@@ -350,13 +351,6 @@ function _maybeEnd(stream) {
   }
 }
 
-function _stringToBuffer(str, encoding) {
-  if (encoding === 'utf8' || encoding === 'utf-8' || !encoding) {
-    return new TextEncoder().encode(str);
-  }
-  // For other encodings, let the Buffer bridge handle it if available
-  return new TextEncoder().encode(str);
-}
 
 // ─── Writable ───────────────────────────────────────────────────────
 
@@ -419,11 +413,10 @@ export class Writable extends EventEmitter {
       return false;
     }
 
-    if (typeof chunk === 'string') {
-      chunk = _stringToBuffer(chunk, encoding);
-    }
-
-    const chunkLen = state.objectMode ? 1 : (chunk ? chunk.length : 0);
+    // Strings pass through as-is — _write receives them with the encoding arg.
+    const chunkLen = state.objectMode ? 1
+      : (typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding)
+      : (chunk ? chunk.length : 0));
 
     if (state.corked || state.writing) {
       // Queue the write
