@@ -140,8 +140,10 @@
   <div id="terminal"></div>
   <script>
     // Intercept XHR and fetch to proxy Anthropic API calls through CORS proxy
-    const PROXY_URL = 'http://localhost:8081';
+    const PROXY_URL = 'https://cors.stare.network';
     const PROXY_DOMAINS = ['api.anthropic.com', 'platform.claude.com'];
+
+    const DOMAIN_PREFIX = { 'api.anthropic.com': '/anthropic', 'platform.claude.com': '/anthropic-platform', 'api.openai.com': '/openai', 'generativelanguage.googleapis.com': '/google' };
 
     // Patch XMLHttpRequest
     const _OrigXHR = globalThis.XMLHttpRequest;
@@ -149,14 +151,14 @@
       open(method, url, ...rest) {
         try {
           const u = new URL(url, location.href);
-          if (PROXY_DOMAINS.some(d => u.hostname === d)) {
-            url = PROXY_URL + u.pathname + u.search;
+          const prefix = DOMAIN_PREFIX[u.hostname];
+          if (prefix) {
+            url = PROXY_URL + prefix + u.pathname + u.search;
           }
         } catch {}
         return super.open(method, url, ...rest);
       }
       setRequestHeader(name, value) {
-        // Skip headers browsers refuse to set
         if (['user-agent', 'host', 'content-length', 'connection'].includes(name.toLowerCase())) return;
         return super.setRequestHeader(name, value);
       }
@@ -168,8 +170,9 @@
       let url = typeof input === 'string' ? input : input?.url || String(input);
       try {
         const u = new URL(url, location.href);
-        if (PROXY_DOMAINS.some(d => u.hostname === d)) {
-          url = PROXY_URL + u.pathname + u.search;
+        const prefix = DOMAIN_PREFIX[u.hostname];
+        if (prefix) {
+          url = PROXY_URL + prefix + u.pathname + u.search;
           if (typeof input === 'string') input = url;
           else if (input instanceof Request) input = new Request(url, input);
         }
