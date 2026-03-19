@@ -1056,11 +1056,29 @@ export const bufferBridge = Buffer;
  *
  * @param {object} edgeInstance - The EdgeJS Wasm instance
  */
+// ─── Phase 7: Additional module imports ──────────────────────────────
+
+import osModule from './os.js';
+import ttyModule from './tty.js';
+import readlineModule, { promises as readlinePromises } from './readline.js';
+import zlibModule from './zlib.js';
+import asyncHooksModule from './async-hooks.js';
+import moduleShim, { _setRequire, _setBuiltinList } from './module-shim.js';
+import timersPromisesModule, { timersModule } from './timers-promises.js';
+import streamConsumers from './stream-consumers.js';
+import workerThreadsModule from './worker-threads.js';
+import assertModule from './assert.js';
+import stringDecoderModule from './string-decoder.js';
+import constantsModule from './constants.js';
+import inspectorModule from './inspector.js';
+import nodePtyShim from './node-pty-shim.js';
+
 export function registerBrowserBuiltins(edgeInstance) {
   const builtins = {
+    // ── Original modules ──
     'crypto': cryptoBridge,
     'events': { EventEmitter, default: EventEmitter },
-    'stream': { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished },
+    'stream': { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished } },
     'path': pathBridge,
     'path/posix': pathBridge,
     'url': urlBridge,
@@ -1074,15 +1092,49 @@ export function registerBrowserBuiltins(edgeInstance) {
     'tls': tls,
     'dns': dns,
     'child_process': childProcess,
+
+    // ── Phase 7: New modules ──
+    'os': osModule,
+    'tty': ttyModule,
+    'readline': readlineModule,
+    'readline/promises': readlinePromises,
+    'zlib': zlibModule,
+    'async_hooks': asyncHooksModule,
+    'module': moduleShim,
+    'timers': timersModule,
+    'timers/promises': timersPromisesModule,
+    'stream/consumers': streamConsumers,
+    'worker_threads': workerThreadsModule,
+    'assert': assertModule,
+    'assert/strict': assertModule.strict || assertModule,
+    'string_decoder': stringDecoderModule,
+    'constants': constantsModule,
+    'inspector': inspectorModule,
+    'inspector/promises': inspectorModule,
+
+    // ── Third-party shims ──
+    'node-pty': nodePtyShim,
   };
 
-  // Inject into EdgeJS's module resolution
-  // This is called after EdgeJS initializes, hooking into its require() chain
+  // Register all builtins + node: prefixed aliases
   for (const [name, impl] of Object.entries(builtins)) {
     if (edgeInstance._registerBuiltinOverride) {
       edgeInstance._registerBuiltinOverride(name, impl);
+      // Also register with node: prefix for ESM-style imports
+      if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
+          name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder' ||
+          name === 'readline/promises' || name === 'timers/promises' || name === 'stream/consumers' ||
+          name === 'inspector/promises' || name === 'assert/strict' || name === 'path/posix') {
+        edgeInstance._registerBuiltinOverride('node:' + name, impl);
+      }
     }
   }
+
+  // Wire up module shim to use the runtime's require
+  if (edgeInstance._memfsRequire) {
+    _setRequire(edgeInstance._memfsRequire);
+  }
+  _setBuiltinList(Object.keys(builtins));
 
   return builtins;
 }

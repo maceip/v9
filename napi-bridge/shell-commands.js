@@ -730,13 +730,521 @@ function testCmd(args) {
   return { stdout: '', stderr: '', exitCode: 1 };
 }
 
-// ─── Registry ────────────────────────────────────────────────────────
+// ─── rg (ripgrep) ───────────────────────────────────────────────────
+// Subtask 15: Translate ripgrep flags to our grep shim.
+
+const _RG_TYPE_MAP = {
+  js: ['.js', '.mjs', '.cjs', '.jsx'],
+  ts: ['.ts', '.mts', '.cts', '.tsx'],
+  py: ['.py', '.pyi'],
+  rust: ['.rs'],
+  go: ['.go'],
+  java: ['.java'],
+  c: ['.c', '.h'],
+  cpp: ['.cpp', '.cc', '.cxx', '.hpp', '.hxx', '.h'],
+  css: ['.css', '.scss', '.less'],
+  html: ['.html', '.htm'],
+  json: ['.json'],
+  md: ['.md', '.markdown'],
+  yaml: ['.yaml', '.yml'],
+  xml: ['.xml'],
+  sh: ['.sh', '.bash', '.zsh'],
+  ruby: ['.rb'],
+  php: ['.php'],
+  swift: ['.swift'],
+  kotlin: ['.kt', '.kts'],
+  lua: ['.lua'],
+  toml: ['.toml'],
+};
+
+function rg(args, options) {
+  // Parse rg-specific flags and translate to grep
+  let pattern = null;
+  let fixedStrings = false;
+  let ignoreCase = false;
+  let lineNumbers = true; // rg default
+  let listFiles = false;
+  let countOnly = false;
+  let wordBound = false;
+  let jsonOutput = false;
+  let hidden = false;
+  let noIgnore = false;
+  let typeList = false;
+  let typeFilters = []; // extension filters from -t
+  let globFilters = []; // glob filters from -g
+  const paths = [];
+  let invertMatch = false;
+  let maxCount = Infinity;
+  let contextBefore = 0;
+  let contextAfter = 0;
+  let noFilename = false;
+  let withFilename = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--type-list') { typeList = true; continue; }
+    if (arg === '--json') { jsonOutput = true; continue; }
+    if (arg === '--hidden') { hidden = true; continue; }
+    if (arg === '--no-ignore') { noIgnore = true; continue; }
+    if (arg === '--no-heading') { continue; } // default
+    if (arg === '--no-line-number' || arg === '-N') { lineNumbers = false; continue; }
+    if (arg === '--line-number' || arg === '-n') { lineNumbers = true; continue; }
+    if (arg === '--files-with-matches' || arg === '-l') { listFiles = true; continue; }
+    if (arg === '--count' || arg === '-c') { countOnly = true; continue; }
+    if (arg === '--fixed-strings' || arg === '-F') { fixedStrings = true; continue; }
+    if (arg === '--ignore-case' || arg === '-i') { ignoreCase = true; continue; }
+    if (arg === '--word-regexp' || arg === '-w') { wordBound = true; continue; }
+    if (arg === '--invert-match' || arg === '-v') { invertMatch = true; continue; }
+    if (arg === '--no-filename' || arg === '-I') { noFilename = true; continue; }
+    if (arg === '--with-filename' || arg === '-H') { withFilename = true; continue; }
+    if ((arg === '-t' || arg === '--type') && i + 1 < args.length) {
+      const t = args[++i];
+      if (_RG_TYPE_MAP[t]) typeFilters.push(..._RG_TYPE_MAP[t]);
+      continue;
+    }
+    if ((arg === '-g' || arg === '--glob') && i + 1 < args.length) {
+      globFilters.push(args[++i]);
+      continue;
+    }
+    if ((arg === '-e' || arg === '--regexp') && i + 1 < args.length) {
+      pattern = args[++i];
+      continue;
+    }
+    if ((arg === '-m' || arg === '--max-count') && i + 1 < args.length) {
+      maxCount = parseInt(args[++i], 10);
+      continue;
+    }
+    if ((arg === '-B' || arg === '--before-context') && i + 1 < args.length) {
+      contextBefore = parseInt(args[++i], 10);
+      continue;
+    }
+    if ((arg === '-A' || arg === '--after-context') && i + 1 < args.length) {
+      contextAfter = parseInt(args[++i], 10);
+      continue;
+    }
+    if ((arg === '-C' || arg === '--context') && i + 1 < args.length) {
+      contextBefore = contextAfter = parseInt(args[++i], 10);
+      continue;
+    }
+    if (arg.startsWith('-') && arg.length > 1) {
+      // Compound short flags like -rn, -il
+      for (const ch of arg.slice(1)) {
+        if (ch === 'i') ignoreCase = true;
+        else if (ch === 'l') listFiles = true;
+        else if (ch === 'c') countOnly = true;
+        else if (ch === 'n') lineNumbers = true;
+        else if (ch === 'w') wordBound = true;
+        else if (ch === 'v') invertMatch = true;
+        else if (ch === 'F') fixedStrings = true;
+      }
+      continue;
+    }
+    // Positional: first is pattern, rest are paths
+    if (pattern === null) pattern = arg;
+    else paths.push(arg);
+  }
+
+  if (typeList) {
+    const lines = Object.entries(_RG_TYPE_MAP).map(([name, exts]) => `${name}: ${exts.join(', ')}`);
+    return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+  }
+
+  if (!pattern) return { stdout: '', stderr: 'rg: no pattern given\n', exitCode: 2 };
+  if (paths.length === 0) paths.push('.');
+
+  // Build regex
+  let reStr = fixedStrings ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : pattern;
+  if (wordBound) reStr = `\\b${reStr}\\b`;
+  const flags = ignoreCase ? 'i' : '';
+  let re;
+  try { re = new RegExp(reStr, flags); } catch { re = new RegExp(reStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags); }
+
+  const results = [];
+  let matchCount = 0;
+
+  function shouldIncludeFile(filePath) {
+    if (typeFilters.length > 0) {
+      const ext = filePath.substring(filePath.lastIndexOf('.'));
+      if (!typeFilters.includes(ext)) return false;
+    }
+    if (globFilters.length > 0) {
+      const name = filePath.split('/').pop();
+      for (const g of globFilters) {
+        if (g.startsWith('!')) {
+          const negPattern = g.slice(1);
+          const negRe = new RegExp('^' + negPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
+          if (negRe.test(name)) return false;
+        } else {
+          const posRe = new RegExp('^' + g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
+          if (!posRe.test(name)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function searchFile(filePath, displayPath) {
+    if (matchCount >= maxCount) return;
+    if (!shouldIncludeFile(filePath)) return;
+    let text;
+    try { text = readFileText(filePath); } catch { return; }
+    const lines = text.split('\n');
+    let fileCount = 0;
+    const fileMatches = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      if (matchCount >= maxCount) break;
+      const match = re.test(lines[i]);
+      if (match !== invertMatch) {
+        fileCount++;
+        matchCount++;
+        if (jsonOutput) {
+          fileMatches.push(JSON.stringify({
+            type: 'match',
+            data: {
+              path: { text: displayPath },
+              lines: { text: lines[i] + '\n' },
+              line_number: i + 1,
+              absolute_offset: 0,
+              submatches: [{ match: { text: lines[i].match(re)?.[0] || '' }, start: 0, end: lines[i].length }],
+            },
+          }));
+        } else if (!countOnly && !listFiles) {
+          const prefix = (paths.length > 1 || withFilename) && !noFilename ? displayPath + ':' : '';
+          const ln = lineNumbers ? `${i + 1}:` : '';
+          fileMatches.push(`${prefix}${ln}${lines[i]}`);
+        }
+      }
+    }
+
+    if (listFiles && fileCount > 0) results.push(displayPath);
+    else if (countOnly) results.push(paths.length > 1 ? `${displayPath}:${fileCount}` : `${fileCount}`);
+    else results.push(...fileMatches);
+  }
+
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    if (isDir(resolved)) {
+      walkDir(resolved, (filePath) => {
+        if (!hidden && filePath.split('/').some(s => s.startsWith('.') && s !== '.' && s !== '..')) return;
+        searchFile(filePath, filePath);
+      });
+    } else {
+      searchFile(resolved, p);
+    }
+  }
+
+  if (results.length === 0) return { stdout: '', stderr: '', exitCode: 1 };
+  return { stdout: results.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── xargs ──────────────────────────────────────────────────────────
+
+function xargs(args, options) {
+  const stdinData = (options && options._stdin) || '';
+  // Simplistic: pass stdin lines as args to the given command
+  const items = stdinData.trim().split(/\s+/).filter(Boolean);
+  if (args.length === 0) {
+    // Default: echo
+    return { stdout: items.join(' ') + '\n', stderr: '', exitCode: 0 };
+  }
+  // Run command with items as extra args
+  const cmd = args[0];
+  const cmdArgs = [...args.slice(1), ...items];
+  if (commands[cmd]) {
+    return commands[cmd](cmdArgs, options);
+  }
+  return { stdout: '', stderr: `xargs: ${cmd}: command not found\n`, exitCode: 127 };
+}
+
+// ─── tee ────────────────────────────────────────────────────────────
+
+function tee(args, options) {
+  const append = args.includes('-a');
+  const paths = args.filter(a => !a.startsWith('-'));
+  const stdinData = (options && options._stdin) || '';
+
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    const encoded = new TextEncoder().encode(stdinData);
+    if (append) {
+      try {
+        const existing = defaultMemfs.readFile(resolved);
+        const combined = new Uint8Array(existing.length + encoded.length);
+        combined.set(existing);
+        combined.set(encoded, existing.length);
+        defaultMemfs.writeFile(resolved, combined);
+      } catch {
+        defaultMemfs.writeFile(resolved, encoded);
+      }
+    } else {
+      defaultMemfs.writeFile(resolved, encoded);
+    }
+  }
+
+  return { stdout: stdinData, stderr: '', exitCode: 0 };
+}
+
+// ─── sed (basic s/pattern/replacement/) ─────────────────────────────
+
+function sed(args, options) {
+  let inPlace = false;
+  let expression = null;
+  const paths = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-i') { inPlace = true; continue; }
+    if (args[i] === '-e' && i + 1 < args.length) { expression = args[++i]; continue; }
+    if (!expression && !args[i].startsWith('-')) { expression = args[i]; continue; }
+    paths.push(args[i]);
+  }
+
+  if (!expression) return { stdout: '', stderr: 'sed: no expression\n', exitCode: 1 };
+
+  // Parse s/pattern/replacement/flags
+  const sMatch = expression.match(/^s(.)(.+?)\1(.*?)\1([gimp]*)$/);
+  if (!sMatch) return { stdout: '', stderr: `sed: unsupported expression: ${expression}\n`, exitCode: 1 };
+  const [, , pat, repl, flags] = sMatch;
+  const globalFlag = flags.includes('g');
+  const re = new RegExp(pat, (flags.includes('i') ? 'i' : '') + (globalFlag ? 'g' : ''));
+
+  function transform(text) { return text.replace(re, repl); }
+
+  let text;
+  if (options && options._stdin && paths.length === 0) {
+    text = options._stdin;
+    return { stdout: transform(text), stderr: '', exitCode: 0 };
+  }
+
+  if (paths.length === 0) return { stdout: '', stderr: 'sed: no input files\n', exitCode: 1 };
+
+  const output = [];
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    try {
+      text = readFileText(resolved);
+      const result = transform(text);
+      if (inPlace) {
+        defaultMemfs.writeFile(resolved, new TextEncoder().encode(result));
+      } else {
+        output.push(result);
+      }
+    } catch {
+      return { stdout: '', stderr: `sed: ${p}: No such file or directory\n`, exitCode: 1 };
+    }
+  }
+
+  return { stdout: inPlace ? '' : output.join(''), stderr: '', exitCode: 0 };
+}
+
+// ─── awk (basic print support) ──────────────────────────────────────
+
+function awk(args, options) {
+  let program = null;
+  const paths = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (!program && !args[i].startsWith('-')) { program = args[i]; continue; }
+    if (args[i] === '-F' && i + 1 < args.length) { i++; continue; } // field separator (ignored for now)
+    if (!args[i].startsWith('-')) paths.push(args[i]);
+  }
+
+  if (!program) return { stdout: '', stderr: 'awk: no program given\n', exitCode: 1 };
+
+  // Minimal: support {print}, {print $N}, and /pattern/{print}
+  let text;
+  if (options && options._stdin) text = options._stdin;
+  else if (paths.length > 0) {
+    try { text = readFileText(normalizePath(paths[0])); }
+    catch { return { stdout: '', stderr: `awk: ${paths[0]}: No such file or directory\n`, exitCode: 1 }; }
+  } else {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+
+  const lines = text.split('\n');
+  const output = [];
+
+  // Parse simple patterns: {print}, {print $1}, /re/{print $2}
+  const printMatch = program.match(/^\{print(?:\s+(.*?))?\}$/);
+  const filteredPrint = program.match(/^\/(.+?)\/\s*\{print(?:\s+(.*?))?\}$/);
+
+  for (const line of lines) {
+    if (!line && line !== '0') continue;
+    const fields = line.split(/\s+/);
+
+    if (filteredPrint) {
+      const [, pat, expr] = filteredPrint;
+      if (!new RegExp(pat).test(line)) continue;
+      if (expr) {
+        output.push(_awkEval(expr, fields, line));
+      } else {
+        output.push(line);
+      }
+    } else if (printMatch) {
+      const expr = printMatch[1];
+      if (expr) {
+        output.push(_awkEval(expr, fields, line));
+      } else {
+        output.push(line);
+      }
+    }
+  }
+
+  return { stdout: output.join('\n') + (output.length ? '\n' : ''), stderr: '', exitCode: 0 };
+}
+
+function _awkEval(expr, fields, line) {
+  // Replace $0 with full line, $N with field N
+  return expr.replace(/\$(\d+)/g, (_, n) => {
+    const idx = parseInt(n, 10);
+    if (idx === 0) return line;
+    return fields[idx - 1] || '';
+  });
+}
+
+// ─── which ──────────────────────────────────────────────────────────
+
+function which(args) {
+  for (const name of args) {
+    if (commands[name] || name === 'rg' || name === 'git' || name === 'node') {
+      return { stdout: `/usr/bin/${name}\n`, stderr: '', exitCode: 0 };
+    }
+  }
+  return { stdout: '', stderr: `which: no ${args[0]} in PATH\n`, exitCode: 1 };
+}
+
+// ─── whoami ─────────────────────────────────────────────────────────
+
+function whoami() {
+  return { stdout: 'user\n', stderr: '', exitCode: 0 };
+}
+
+// ─── date ───────────────────────────────────────────────────────────
+
+function date(args) {
+  if (args.includes('-u') || args.includes('--utc')) {
+    return { stdout: new Date().toUTCString() + '\n', stderr: '', exitCode: 0 };
+  }
+  return { stdout: new Date().toString() + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── uname ──────────────────────────────────────────────────────────
+
+function uname(args) {
+  if (args.includes('-a')) {
+    return { stdout: 'Linux browser 6.0.0-edgejs wasm32 GNU/Linux\n', stderr: '', exitCode: 0 };
+  }
+  if (args.includes('-m')) return { stdout: 'wasm32\n', stderr: '', exitCode: 0 };
+  if (args.includes('-r')) return { stdout: '6.0.0-edgejs\n', stderr: '', exitCode: 0 };
+  if (args.includes('-s') || args.length === 0) return { stdout: 'Linux\n', stderr: '', exitCode: 0 };
+  return { stdout: 'Linux\n', stderr: '', exitCode: 0 };
+}
+
+// ─── seq ────────────────────────────────────────────────────────────
+
+function seq(args) {
+  let start = 1, step = 1, end = 1;
+  if (args.length === 1) { end = parseInt(args[0], 10); }
+  else if (args.length === 2) { start = parseInt(args[0], 10); end = parseInt(args[1], 10); }
+  else if (args.length >= 3) { start = parseInt(args[0], 10); step = parseInt(args[1], 10); end = parseInt(args[2], 10); }
+  const lines = [];
+  if (step > 0) { for (let i = start; i <= end; i += step) lines.push(String(i)); }
+  else if (step < 0) { for (let i = start; i >= end; i += step) lines.push(String(i)); }
+  return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── yes ────────────────────────────────────────────────────────────
+
+function yes(args) {
+  const str = args.length > 0 ? args.join(' ') : 'y';
+  // Output 100 lines (can't be infinite in sync context)
+  const lines = Array(100).fill(str);
+  return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── printf ─────────────────────────────────────────────────────────
+
+function printfCmd(args) {
+  if (args.length === 0) return { stdout: '', stderr: '', exitCode: 0 };
+  let fmt = args[0];
+  // Basic: replace %s with args, \n with newline, \t with tab
+  let argIdx = 1;
+  const result = fmt
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\r/g, '\r')
+    .replace(/%%/g, '\0PERCENT\0')
+    .replace(/%s/g, () => args[argIdx++] || '')
+    .replace(/%d/g, () => parseInt(args[argIdx++] || '0', 10))
+    .replace(/\0PERCENT\0/g, '%');
+  return { stdout: result, stderr: '', exitCode: 0 };
+}
+
+// ─── readlink ───────────────────────────────────────────────────────
+
+function readlink(args) {
+  let canonicalize = false;
+  const paths = [];
+  for (const arg of args) {
+    if (arg === '-f' || arg === '--canonicalize') canonicalize = true;
+    else if (!arg.startsWith('-')) paths.push(arg);
+  }
+  if (paths.length === 0) return { stdout: '', stderr: 'readlink: missing operand\n', exitCode: 1 };
+  const resolved = normalizePath(paths[0]);
+  if (!fileExists(resolved)) return { stdout: '', stderr: `readlink: ${paths[0]}: No such file or directory\n`, exitCode: 1 };
+  return { stdout: resolved + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── realpath ───────────────────────────────────────────────────────
+
+function realpathCmd(args) {
+  const paths = args.filter(a => !a.startsWith('-'));
+  if (paths.length === 0) return { stdout: '', stderr: 'realpath: missing operand\n', exitCode: 1 };
+  const output = [];
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    if (!fileExists(resolved) && !isDir(resolved)) {
+      return { stdout: '', stderr: `realpath: ${p}: No such file or directory\n`, exitCode: 1 };
+    }
+    output.push(resolved);
+  }
+  return { stdout: output.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── stat ───────────────────────────────────────────────────────────
+
+function statCmd(args) {
+  const paths = args.filter(a => !a.startsWith('-'));
+  if (paths.length === 0) return { stdout: '', stderr: 'stat: missing operand\n', exitCode: 1 };
+  const output = [];
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    try {
+      const s = statFile(resolved);
+      output.push(`  File: ${p}`);
+      output.push(`  Size: ${s.size || 0}\tBlocks: 0\tIO Block: 4096\t${s.isDirectory() ? 'directory' : 'regular file'}`);
+      output.push(`Access: (0755/${s.isDirectory() ? 'drwxr-xr-x' : '-rwxr-xr-x'})\tUid: (1000/user)\tGid: (1000/user)`);
+    } catch {
+      return { stdout: '', stderr: `stat: cannot stat '${p}': No such file or directory\n`, exitCode: 1 };
+    }
+  }
+  return { stdout: output.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+// ─── chmod / chown (no-op) ──────────────────────────────────────────
+
+function chmod() { return { stdout: '', stderr: '', exitCode: 0 }; }
+function chown() { return { stdout: '', stderr: '', exitCode: 0 }; }
+
+
 
 export const commands = {
   ls, cat, grep, find, head, tail, echo, pwd, mkdir, rm, cp, mv, touch,
   wc, sort, uniq, tr, basename, dirname, env, cd,
   'true': trueCmd, 'false': falseCmd, exit: exitCmd,
   test: testCmd, '[': testCmd,
+  rg, xargs, tee, sed, awk, which, whoami, date, uname, seq, yes, printf: printfCmd,
+  readlink, realpath: realpathCmd, stat: statCmd, chmod, chown,
 };
 
 export function hasCommand(name) {
