@@ -1,20 +1,116 @@
-/**
- * fs — ESM re-exports for browser import { readFileSync } from "node:fs".
- *
- * Thin wrapper around the default fs module from fs.js.
- */
+// Auto-generated ESM wrapper for node:fs
+// Source: scripts/generate-esm-wrappers.mjs
+// Reference: 103 exports from Node.js fs
+
 import fs from './fs.js';
 
-export const {
-  readFileSync, writeFileSync, readdirSync, statSync, mkdirSync,
-  unlinkSync, renameSync, existsSync, accessSync, realpathSync,
-  openSync, readSync, writeSync, closeSync, rmdirSync,
-  readFile, writeFile, readdir, stat, mkdir, unlink, rename,
-  access, realpath, open, close, rmdir,
-  createReadStream, createWriteStream,
-  constants,
-} = fs;
+function _notImplemented(name) {
+  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+}
 
-export const promises = fs.promises;
+export const Dir = typeof fs.Dir !== 'undefined' ? fs.Dir : _notImplemented('fs.Dir');
+export const Dirent = typeof fs.Dirent !== 'undefined' ? fs.Dirent : _notImplemented('fs.Dirent');
+export const FileReadStream = typeof fs.FileReadStream !== 'undefined' ? fs.FileReadStream : _notImplemented('fs.FileReadStream');
+export const FileWriteStream = typeof fs.FileWriteStream !== 'undefined' ? fs.FileWriteStream : _notImplemented('fs.FileWriteStream');
+export const ReadStream = typeof fs.ReadStream !== 'undefined' ? fs.ReadStream : _notImplemented('fs.ReadStream');
+export const Stats = typeof fs.Stats !== 'undefined' ? fs.Stats : _notImplemented('fs.Stats');
+export const Utf8Stream = typeof fs.Utf8Stream !== 'undefined' ? fs.Utf8Stream : _notImplemented('fs.Utf8Stream');
+export const WriteStream = typeof fs.WriteStream !== 'undefined' ? fs.WriteStream : _notImplemented('fs.WriteStream');
+export const access = typeof fs.access !== 'undefined' ? fs.access : _notImplemented('fs.access');
+export const accessSync = typeof fs.accessSync !== 'undefined' ? fs.accessSync : _notImplemented('fs.accessSync');
+export const appendFile = typeof fs.appendFile !== 'undefined' ? fs.appendFile : _notImplemented('fs.appendFile');
+export const appendFileSync = typeof fs.appendFileSync !== 'undefined' ? fs.appendFileSync : _notImplemented('fs.appendFileSync');
+export const chmod = typeof fs.chmod !== 'undefined' ? fs.chmod : _notImplemented('fs.chmod');
+export const chmodSync = typeof fs.chmodSync !== 'undefined' ? fs.chmodSync : _notImplemented('fs.chmodSync');
+export const chown = typeof fs.chown !== 'undefined' ? fs.chown : _notImplemented('fs.chown');
+export const chownSync = typeof fs.chownSync !== 'undefined' ? fs.chownSync : _notImplemented('fs.chownSync');
+export const close = typeof fs.close !== 'undefined' ? fs.close : _notImplemented('fs.close');
+export const closeSync = typeof fs.closeSync !== 'undefined' ? fs.closeSync : _notImplemented('fs.closeSync');
+export const constants = typeof fs.constants !== 'undefined' ? fs.constants : _notImplemented('fs.constants');
+export const copyFile = typeof fs.copyFile !== 'undefined' ? fs.copyFile : _notImplemented('fs.copyFile');
+export const copyFileSync = typeof fs.copyFileSync !== 'undefined' ? fs.copyFileSync : _notImplemented('fs.copyFileSync');
+export const cp = typeof fs.cp !== 'undefined' ? fs.cp : _notImplemented('fs.cp');
+export const cpSync = typeof fs.cpSync !== 'undefined' ? fs.cpSync : _notImplemented('fs.cpSync');
+export const createReadStream = typeof fs.createReadStream !== 'undefined' ? fs.createReadStream : _notImplemented('fs.createReadStream');
+export const createWriteStream = typeof fs.createWriteStream !== 'undefined' ? fs.createWriteStream : _notImplemented('fs.createWriteStream');
+export const exists = typeof fs.exists !== 'undefined' ? fs.exists : _notImplemented('fs.exists');
+export const existsSync = typeof fs.existsSync !== 'undefined' ? fs.existsSync : _notImplemented('fs.existsSync');
+export const fchmod = typeof fs.fchmod !== 'undefined' ? fs.fchmod : _notImplemented('fs.fchmod');
+export const fchmodSync = typeof fs.fchmodSync !== 'undefined' ? fs.fchmodSync : _notImplemented('fs.fchmodSync');
+export const fchown = typeof fs.fchown !== 'undefined' ? fs.fchown : _notImplemented('fs.fchown');
+export const fchownSync = typeof fs.fchownSync !== 'undefined' ? fs.fchownSync : _notImplemented('fs.fchownSync');
+export const fdatasync = typeof fs.fdatasync !== 'undefined' ? fs.fdatasync : _notImplemented('fs.fdatasync');
+export const fdatasyncSync = typeof fs.fdatasyncSync !== 'undefined' ? fs.fdatasyncSync : _notImplemented('fs.fdatasyncSync');
+export const fstat = typeof fs.fstat !== 'undefined' ? fs.fstat : _notImplemented('fs.fstat');
+export const fstatSync = typeof fs.fstatSync !== 'undefined' ? fs.fstatSync : _notImplemented('fs.fstatSync');
+export const fsync = typeof fs.fsync !== 'undefined' ? fs.fsync : _notImplemented('fs.fsync');
+export const fsyncSync = typeof fs.fsyncSync !== 'undefined' ? fs.fsyncSync : _notImplemented('fs.fsyncSync');
+export const ftruncate = typeof fs.ftruncate !== 'undefined' ? fs.ftruncate : _notImplemented('fs.ftruncate');
+export const ftruncateSync = typeof fs.ftruncateSync !== 'undefined' ? fs.ftruncateSync : _notImplemented('fs.ftruncateSync');
+export const futimes = typeof fs.futimes !== 'undefined' ? fs.futimes : _notImplemented('fs.futimes');
+export const futimesSync = typeof fs.futimesSync !== 'undefined' ? fs.futimesSync : _notImplemented('fs.futimesSync');
+export const glob = typeof fs.glob !== 'undefined' ? fs.glob : _notImplemented('fs.glob');
+export const globSync = typeof fs.globSync !== 'undefined' ? fs.globSync : _notImplemented('fs.globSync');
+export const lchmod = typeof fs.lchmod !== 'undefined' ? fs.lchmod : _notImplemented('fs.lchmod');
+export const lchmodSync = typeof fs.lchmodSync !== 'undefined' ? fs.lchmodSync : _notImplemented('fs.lchmodSync');
+export const lchown = typeof fs.lchown !== 'undefined' ? fs.lchown : _notImplemented('fs.lchown');
+export const lchownSync = typeof fs.lchownSync !== 'undefined' ? fs.lchownSync : _notImplemented('fs.lchownSync');
+export const link = typeof fs.link !== 'undefined' ? fs.link : _notImplemented('fs.link');
+export const linkSync = typeof fs.linkSync !== 'undefined' ? fs.linkSync : _notImplemented('fs.linkSync');
+export const lstat = typeof fs.lstat !== 'undefined' ? fs.lstat : _notImplemented('fs.lstat');
+export const lstatSync = typeof fs.lstatSync !== 'undefined' ? fs.lstatSync : _notImplemented('fs.lstatSync');
+export const lutimes = typeof fs.lutimes !== 'undefined' ? fs.lutimes : _notImplemented('fs.lutimes');
+export const lutimesSync = typeof fs.lutimesSync !== 'undefined' ? fs.lutimesSync : _notImplemented('fs.lutimesSync');
+export const mkdir = typeof fs.mkdir !== 'undefined' ? fs.mkdir : _notImplemented('fs.mkdir');
+export const mkdirSync = typeof fs.mkdirSync !== 'undefined' ? fs.mkdirSync : _notImplemented('fs.mkdirSync');
+export const mkdtemp = typeof fs.mkdtemp !== 'undefined' ? fs.mkdtemp : _notImplemented('fs.mkdtemp');
+export const mkdtempDisposableSync = typeof fs.mkdtempDisposableSync !== 'undefined' ? fs.mkdtempDisposableSync : _notImplemented('fs.mkdtempDisposableSync');
+export const mkdtempSync = typeof fs.mkdtempSync !== 'undefined' ? fs.mkdtempSync : _notImplemented('fs.mkdtempSync');
+export const open = typeof fs.open !== 'undefined' ? fs.open : _notImplemented('fs.open');
+export const openAsBlob = typeof fs.openAsBlob !== 'undefined' ? fs.openAsBlob : _notImplemented('fs.openAsBlob');
+export const openSync = typeof fs.openSync !== 'undefined' ? fs.openSync : _notImplemented('fs.openSync');
+export const opendir = typeof fs.opendir !== 'undefined' ? fs.opendir : _notImplemented('fs.opendir');
+export const opendirSync = typeof fs.opendirSync !== 'undefined' ? fs.opendirSync : _notImplemented('fs.opendirSync');
+export const promises = typeof fs.promises !== 'undefined' ? fs.promises : _notImplemented('fs.promises');
+export const read = typeof fs.read !== 'undefined' ? fs.read : _notImplemented('fs.read');
+export const readFile = typeof fs.readFile !== 'undefined' ? fs.readFile : _notImplemented('fs.readFile');
+export const readFileSync = typeof fs.readFileSync !== 'undefined' ? fs.readFileSync : _notImplemented('fs.readFileSync');
+export const readSync = typeof fs.readSync !== 'undefined' ? fs.readSync : _notImplemented('fs.readSync');
+export const readdir = typeof fs.readdir !== 'undefined' ? fs.readdir : _notImplemented('fs.readdir');
+export const readdirSync = typeof fs.readdirSync !== 'undefined' ? fs.readdirSync : _notImplemented('fs.readdirSync');
+export const readlink = typeof fs.readlink !== 'undefined' ? fs.readlink : _notImplemented('fs.readlink');
+export const readlinkSync = typeof fs.readlinkSync !== 'undefined' ? fs.readlinkSync : _notImplemented('fs.readlinkSync');
+export const readv = typeof fs.readv !== 'undefined' ? fs.readv : _notImplemented('fs.readv');
+export const readvSync = typeof fs.readvSync !== 'undefined' ? fs.readvSync : _notImplemented('fs.readvSync');
+export const realpath = typeof fs.realpath !== 'undefined' ? fs.realpath : _notImplemented('fs.realpath');
+export const realpathSync = typeof fs.realpathSync !== 'undefined' ? fs.realpathSync : _notImplemented('fs.realpathSync');
+export const rename = typeof fs.rename !== 'undefined' ? fs.rename : _notImplemented('fs.rename');
+export const renameSync = typeof fs.renameSync !== 'undefined' ? fs.renameSync : _notImplemented('fs.renameSync');
+export const rm = typeof fs.rm !== 'undefined' ? fs.rm : _notImplemented('fs.rm');
+export const rmSync = typeof fs.rmSync !== 'undefined' ? fs.rmSync : _notImplemented('fs.rmSync');
+export const rmdir = typeof fs.rmdir !== 'undefined' ? fs.rmdir : _notImplemented('fs.rmdir');
+export const rmdirSync = typeof fs.rmdirSync !== 'undefined' ? fs.rmdirSync : _notImplemented('fs.rmdirSync');
+export const stat = typeof fs.stat !== 'undefined' ? fs.stat : _notImplemented('fs.stat');
+export const statSync = typeof fs.statSync !== 'undefined' ? fs.statSync : _notImplemented('fs.statSync');
+export const statfs = typeof fs.statfs !== 'undefined' ? fs.statfs : _notImplemented('fs.statfs');
+export const statfsSync = typeof fs.statfsSync !== 'undefined' ? fs.statfsSync : _notImplemented('fs.statfsSync');
+export const symlink = typeof fs.symlink !== 'undefined' ? fs.symlink : _notImplemented('fs.symlink');
+export const symlinkSync = typeof fs.symlinkSync !== 'undefined' ? fs.symlinkSync : _notImplemented('fs.symlinkSync');
+export const truncate = typeof fs.truncate !== 'undefined' ? fs.truncate : _notImplemented('fs.truncate');
+export const truncateSync = typeof fs.truncateSync !== 'undefined' ? fs.truncateSync : _notImplemented('fs.truncateSync');
+export const unlink = typeof fs.unlink !== 'undefined' ? fs.unlink : _notImplemented('fs.unlink');
+export const unlinkSync = typeof fs.unlinkSync !== 'undefined' ? fs.unlinkSync : _notImplemented('fs.unlinkSync');
+export const unwatchFile = typeof fs.unwatchFile !== 'undefined' ? fs.unwatchFile : _notImplemented('fs.unwatchFile');
+export const utimes = typeof fs.utimes !== 'undefined' ? fs.utimes : _notImplemented('fs.utimes');
+export const utimesSync = typeof fs.utimesSync !== 'undefined' ? fs.utimesSync : _notImplemented('fs.utimesSync');
+export const watch = typeof fs.watch !== 'undefined' ? fs.watch : _notImplemented('fs.watch');
+export const watchFile = typeof fs.watchFile !== 'undefined' ? fs.watchFile : _notImplemented('fs.watchFile');
+export const write = typeof fs.write !== 'undefined' ? fs.write : _notImplemented('fs.write');
+export const writeFile = typeof fs.writeFile !== 'undefined' ? fs.writeFile : _notImplemented('fs.writeFile');
+export const writeFileSync = typeof fs.writeFileSync !== 'undefined' ? fs.writeFileSync : _notImplemented('fs.writeFileSync');
+export const writeSync = typeof fs.writeSync !== 'undefined' ? fs.writeSync : _notImplemented('fs.writeSync');
+export const writev = typeof fs.writev !== 'undefined' ? fs.writev : _notImplemented('fs.writev');
+export const writevSync = typeof fs.writevSync !== 'undefined' ? fs.writevSync : _notImplemented('fs.writevSync');
 
-export default fs;
+const _module = { Dir, Dirent, FileReadStream, FileWriteStream, ReadStream, Stats, Utf8Stream, WriteStream, access, accessSync, appendFile, appendFileSync, chmod, chmodSync, chown, chownSync, close, closeSync, constants, copyFile, copyFileSync, cp, cpSync, createReadStream, createWriteStream, exists, existsSync, fchmod, fchmodSync, fchown, fchownSync, fdatasync, fdatasyncSync, fstat, fstatSync, fsync, fsyncSync, ftruncate, ftruncateSync, futimes, futimesSync, glob, globSync, lchmod, lchmodSync, lchown, lchownSync, link, linkSync, lstat, lstatSync, lutimes, lutimesSync, mkdir, mkdirSync, mkdtemp, mkdtempDisposableSync, mkdtempSync, open, openAsBlob, openSync, opendir, opendirSync, promises, read, readFile, readFileSync, readSync, readdir, readdirSync, readlink, readlinkSync, readv, readvSync, realpath, realpathSync, rename, renameSync, rm, rmSync, rmdir, rmdirSync, stat, statSync, statfs, statfsSync, symlink, symlinkSync, truncate, truncateSync, unlink, unlinkSync, unwatchFile, utimes, utimesSync, watch, watchFile, write, writeFile, writeFileSync, writeSync, writev, writevSync };
+export default _module;

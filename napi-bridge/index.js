@@ -2952,7 +2952,10 @@ export async function initEdgeJS(options = {}) {
   function _memfsRequire(name, fromDir) {
     fromDir = fromDir || _sharedProcessBridge.cwd();
     const resolved = _resolveModule(name, fromDir);
-    if (!resolved) throw new Error(`Cannot find module '${name}' from '${fromDir}'`);
+    if (!resolved) {
+      console.warn(`[require] Cannot find module '${name}' from '${fromDir}'`);
+      throw new Error(`Cannot find module '${name}' from '${fromDir}'`);
+    }
     if (resolved.type === 'builtin') return resolved.exports;
 
     const filePath = resolved.path;

@@ -375,7 +375,7 @@ export const pathBridge = {
   delimiter: ':',
 
   join(...parts) {
-    return this.normalize(parts.filter(Boolean).join('/'));
+    return pathBridge.normalize(parts.filter(Boolean).join('/'));
   },
 
   normalize(p) {
@@ -400,7 +400,7 @@ export const pathBridge = {
         ? process.cwd() : '/';
       resolved = cwd.replace(/\/$/, '') + '/' + resolved;
     }
-    return this.normalize(resolved);
+    return pathBridge.normalize(resolved);
   },
 
   dirname(p) {
@@ -417,7 +417,7 @@ export const pathBridge = {
   },
 
   extname(p) {
-    const base = this.basename(p);
+    const base = pathBridge.basename(p);
     const idx = base.lastIndexOf('.');
     return idx <= 0 ? '' : base.substring(idx);
   },
@@ -427,8 +427,8 @@ export const pathBridge = {
   },
 
   relative(from, to) {
-    const fromParts = this.resolve(from).split('/').filter(Boolean);
-    const toParts = this.resolve(to).split('/').filter(Boolean);
+    const fromParts = pathBridge.resolve(from).split('/').filter(Boolean);
+    const toParts = pathBridge.resolve(to).split('/').filter(Boolean);
     let common = 0;
     while (common < fromParts.length && common < toParts.length &&
            fromParts[common] === toParts[common]) {
@@ -441,10 +441,10 @@ export const pathBridge = {
   parse(p) {
     return {
       root: p.startsWith('/') ? '/' : '',
-      dir: this.dirname(p),
-      base: this.basename(p),
-      ext: this.extname(p),
-      name: this.basename(p, this.extname(p)),
+      dir: pathBridge.dirname(p),
+      base: pathBridge.basename(p),
+      ext: pathBridge.extname(p),
+      name: pathBridge.basename(p, pathBridge.extname(p)),
     };
   },
 
@@ -498,6 +498,10 @@ export const urlBridge = {
       u = url;
     } else {
       throw new TypeError('The "url" argument must be of type string or an instance of URL. Received ' + typeof url);
+    }
+    // In browser runtime, import.meta.url is http:// — extract pathname instead of throwing
+    if (u.protocol !== 'file:' && (u.protocol === 'http:' || u.protocol === 'https:')) {
+      return decodeURIComponent(u.pathname);
     }
     if (u.protocol !== 'file:') {
       throw new TypeError('The URL must be of scheme file');
@@ -580,6 +584,14 @@ class Process extends EventEmitter {
     this.exitCode = 0;
 
     this._cwd = '/';
+
+    // Bind cwd/chdir so they work when destructured (const { cwd } = process)
+    const self = this;
+    this.cwd = () => self._cwd;
+    this.chdir = (dir) => {
+      if (typeof dir !== 'string') throw new TypeError('The "directory" argument must be of type string');
+      self._cwd = dir;
+    };
 
     // stdout — Writable stream that logs to console
     this.stdout = new Writable({
@@ -1092,7 +1104,7 @@ import ttyModule from './tty.js';
 import readlineModule, { promises as readlinePromises } from './readline.js';
 import zlibModule from './zlib.js';
 import asyncHooksModule from './async-hooks.js';
-import moduleShim, { _setRequire, _setBuiltinList } from './module-shim.js';
+import moduleShim, { _setRequire, _setBuiltinList, _setBuiltinModule } from './module-shim.js';
 import timersPromisesModule, { timersModule } from './timers-promises.js';
 import streamConsumers from './stream-consumers.js';
 import workerThreadsModule from './worker-threads.js';
@@ -1113,8 +1125,8 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     // `const { createHash } = require('crypto')` and
     // `import { createHash } from 'node:crypto'` both work.
     'crypto': { ...cryptoBridge, default: cryptoBridge },
-    'events': { EventEmitter, default: EventEmitter },
-    'stream': { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished } },
+    'events': Object.assign(EventEmitter, { EventEmitter, default: EventEmitter, setMaxListeners: EventEmitter.setMaxListeners || (() => {}) }),
+    'stream': Object.assign(Readable, { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: Readable }),
     'path': { ...pathBridge, default: pathBridge },
     'path/posix': { ...pathBridge, default: pathBridge },
     'url': { ...urlBridge, default: urlBridge },
@@ -1149,6 +1161,37 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'inspector': inspectorModule,
     'inspector/promises': inspectorModule,
 
+    // ── Missing builtins (stubs for modules not yet fully implemented) ──
+    'console': Object.assign({}, globalThis.console, {
+      Console: class Console {
+        constructor(opts) {
+          const out = opts?.stdout || { write: (s) => console.log(s) };
+          const err = opts?.stderr || { write: (s) => console.error(s) };
+          this.log = (...a) => out.write(a.map(String).join(' ') + '\n');
+          this.error = (...a) => err.write(a.map(String).join(' ') + '\n');
+          this.warn = this.error;
+          this.info = this.log;
+          this.debug = this.log;
+          this.trace = this.log;
+          this.dir = this.log;
+          this.time = () => {};
+          this.timeEnd = () => {};
+          this.timeLog = () => {};
+          this.assert = (v, ...a) => { if (!v) this.error('Assertion failed:', ...a); };
+          this.count = () => {};
+          this.countReset = () => {};
+          this.group = () => {};
+          this.groupEnd = () => {};
+          this.table = this.log;
+          this.clear = () => {};
+        }
+      },
+    }),
+    'util/types': util.types || {},
+    'querystring': { parse: (s) => Object.fromEntries(new URLSearchParams(s)), stringify: (o) => new URLSearchParams(o).toString(), encode: (o) => new URLSearchParams(o).toString(), decode: (s) => Object.fromEntries(new URLSearchParams(s)), escape: encodeURIComponent, unescape: decodeURIComponent },
+    'perf_hooks': { performance: globalThis.performance, PerformanceObserver: globalThis.PerformanceObserver || class {} },
+    'diagnostics_channel': { channel: () => ({ subscribe: () => {}, unsubscribe: () => {} }), hasSubscribers: () => false, Channel: class {} },
+
     // ── Third-party shims ──
     'node-pty': nodePtyShim,
   };
@@ -1173,6 +1216,14 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     _setRequire(edgeInstance._memfsRequire);
   }
   _setBuiltinList(Object.keys(builtins));
+  // Also populate the sync builtin cache for createRequire
+  for (const [name, impl] of Object.entries(builtins)) {
+    _setBuiltinModule(name, impl);
+    if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
+        name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder') {
+      _setBuiltinModule('node:' + name, impl);
+    }
+  }
 
   return builtins;
 }

@@ -5,8 +5,35 @@
  * Claude Code and Codex which call createRequire(import.meta.url).
  */
 
-// This will be set by browser-builtins.js after all modules are registered
+// Lazy-loaded builtin modules — populated on first require() call
+let _builtinCache = null;
 let _memfsRequire = null;
+
+function _getBuiltins() {
+  if (_builtinCache) return _builtinCache;
+  // Build a sync lookup of all builtins we know about
+  // These will be populated by _setRequire, but we provide fallbacks
+  _builtinCache = {};
+  return _builtinCache;
+}
+
+// Synchronous builtin resolver — checks the registered overrides
+function _syncRequireBuiltin(name) {
+  const clean = name.startsWith('node:') ? name.slice(5) : name;
+  const builtins = _getBuiltins();
+  if (builtins[clean]) return builtins[clean];
+  if (builtins[name]) return builtins[name];
+  // Try globalThis for things like 'process', 'console', 'buffer'
+  if (clean === 'process') return globalThis.process;
+  if (clean === 'console') return globalThis.console;
+  if (clean === 'buffer') return { Buffer: globalThis.Buffer };
+  return null;
+}
+
+export function _setBuiltinModule(name, mod) {
+  if (!_builtinCache) _builtinCache = {};
+  _builtinCache[name] = mod;
+}
 let _registeredModules = [];
 
 export function _setRequire(requireFn) {
@@ -35,10 +62,14 @@ export function createRequire(filename) {
   }
 
   function localRequire(id) {
+    // Check builtins first (always available, even before _memfsRequire is set)
+    const builtin = _syncRequireBuiltin(id);
+    if (builtin) return builtin;
+    // Then try the full MEMFS resolver
     if (_memfsRequire) {
       return _memfsRequire(id, dir);
     }
-    throw new Error(`Cannot find module '${id}'`);
+    throw new Error(`Cannot find module '${id}' from '${dir}'`);
   }
 
   localRequire.resolve = (id) => {

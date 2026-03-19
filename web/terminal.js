@@ -95,6 +95,9 @@ async function boot() {
   term.open(container);
   if (fitAddon) fitAddon.fit();
 
+  // Wire global process.stdout to xterm BEFORE loading any CLI
+  globalThis._xtermWrite = (data) => term.write(data);
+
   // ── Load EdgeJS runtime ────────────────────────────────────────────
 
   const config = getConfig();
@@ -112,6 +115,7 @@ async function boot() {
   }
 
   let runtime;
+  let cliModule = null;
 
   try {
     const { initEdgeJS } = await import('../napi-bridge/index.js');
@@ -145,7 +149,6 @@ async function boot() {
     // ── Load Claude Code bundle if provided ──────────────────────────
     // ESM path: import() the bundle directly so the browser resolves
     // node:* specifiers via the import map. This avoids fetch+MEMFS+require.
-    let cliModule = null;
     if (config.claudeCodeBundle) {
       try {
         cliModule = await import(config.claudeCodeBundle);
