@@ -2,6 +2,10 @@
  * Git shim — read-only git operations against a virtual git state.
  *
  * Pre-populate via initGitState({ branch, head, log, initialFiles }).
+ *
+ * NOTE (Bug #18): git blame output is a stub — every line is attributed
+ * to the same commit/author. Acceptable for read-only use; not a real
+ * blame implementation.
  */
 
 import { defaultMemfs } from './memfs.js';
@@ -79,6 +83,51 @@ function gitLog(args) {
   return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
 }
 
+// Bug #12: Simple line-by-line diff using LCS for correct unified output
+function _simpleDiff(oldLines, newLines) {
+  // Build a basic LCS table
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  // For very large files, fall back to naive all-delete/all-add
+  if (m * n > 100000) {
+    const hunks = [];
+    for (const l of oldLines) hunks.push('-' + l);
+    for (const l of newLines) hunks.push('+' + l);
+    return hunks;
+  }
+
+  // LCS DP
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to produce diff
+  const result = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      result.push(' ' + oldLines[i - 1]);
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push('+' + newLines[j - 1]);
+      j--;
+    } else {
+      result.push('-' + oldLines[i - 1]);
+      i--;
+    }
+  }
+  result.reverse();
+  return result;
+}
+
 function gitDiff(args) {
   let nameOnly = args.includes('--name-only');
   const changed = getChangedFiles();
@@ -96,12 +145,11 @@ function gitDiff(args) {
     lines.push(`diff --git a${f} b${f}`);
     lines.push(`--- a${f}`);
     lines.push(`+++ b${f}`);
-    // Simple unified diff
+
     const origLines = original.split('\n');
     const currLines = current.split('\n');
     lines.push(`@@ -1,${origLines.length} +1,${currLines.length} @@`);
-    for (const l of origLines) lines.push('-' + l);
-    for (const l of currLines) lines.push('+' + l);
+    lines.push(..._simpleDiff(origLines, currLines));
   }
 
   for (const f of changed.added) {
@@ -114,9 +162,11 @@ function gitDiff(args) {
   }
 
   for (const f of changed.deleted) {
+    const original = gitState.initialFiles[f] || '';
     lines.push(`diff --git a${f} b${f}`);
     lines.push('deleted file');
     lines.push(`--- a${f}`);
+    for (const l of original.split('\n')) lines.push('-' + l);
   }
 
   return { stdout: lines.join('\n') + (lines.length ? '\n' : ''), stderr: '', exitCode: 0 };
@@ -133,9 +183,10 @@ function gitBlame(args) {
     return { stdout: '', stderr: `fatal: no such path '${file}'\n`, exitCode: 1 };
   }
 
-  const lines = content.split('\n');
+  // NOTE: Stub blame — all lines attributed to HEAD commit. Not a real implementation.
+  const blines = content.split('\n');
   const hash = gitState.head.substring(0, 8);
-  const output = lines.map((line, i) =>
+  const output = blines.map((line, i) =>
     `${hash} (user ${gitState.log[0]?.date || '2026-01-01'} ${i + 1}) ${line}`
   );
 
@@ -149,15 +200,16 @@ function gitBranch(args) {
   return { stdout: `* ${gitState.branch}\n`, stderr: '', exitCode: 0 };
 }
 
+// Bug #4: Check --abbrev-ref BEFORE plain HEAD so the specific check is reachable
 function gitRevParse(args) {
-  if (args.includes('HEAD')) {
-    return { stdout: gitState.head + '\n', stderr: '', exitCode: 0 };
-  }
   if (args.includes('--show-toplevel')) {
     return { stdout: '/\n', stderr: '', exitCode: 0 };
   }
   if (args.includes('--abbrev-ref') && args.includes('HEAD')) {
     return { stdout: gitState.branch + '\n', stderr: '', exitCode: 0 };
+  }
+  if (args.includes('HEAD')) {
+    return { stdout: gitState.head + '\n', stderr: '', exitCode: 0 };
   }
   return { stdout: gitState.head + '\n', stderr: '', exitCode: 0 };
 }
@@ -169,10 +221,13 @@ function gitConfig(args) {
   return { stdout: '', stderr: '', exitCode: 1 };
 }
 
+// Bug #11: Walk MEMFS to detect untracked (added) files not in initialFiles
 function getChangedFiles() {
   const modified = [];
   const added = [];
   const deleted = [];
+
+  const knownPaths = new Set(Object.keys(gitState.initialFiles));
 
   // Compare initialFiles with current MEMFS state
   for (const [path, content] of Object.entries(gitState.initialFiles)) {
@@ -184,10 +239,39 @@ function getChangedFiles() {
     }
   }
 
-  // Check for new files (walk MEMFS, compare against initialFiles)
-  // This is expensive for large filesystems so we skip deep walk for now
+  // Walk MEMFS to find files not in initialFiles (untracked)
+  // Walk directories that contain known files, plus common project roots
+  const dirsToScan = new Set();
+  for (const p of knownPaths) {
+    const idx = p.lastIndexOf('/');
+    if (idx > 0) dirsToScan.add(p.substring(0, idx));
+  }
+  // Always scan root-level directories where initial files live
+  if (dirsToScan.size === 0) {
+    dirsToScan.add('/');
+  }
+
+  for (const dir of dirsToScan) {
+    _walkForUntracked(dir, knownPaths, added);
+  }
 
   return { modified, added, deleted };
+}
+
+function _walkForUntracked(dirPath, knownPaths, added) {
+  let entries;
+  try { entries = defaultMemfs.readdir(dirPath); } catch { return; }
+  for (const name of entries) {
+    const full = dirPath === '/' ? '/' + name : dirPath + '/' + name;
+    try {
+      const s = defaultMemfs.stat(full);
+      if (s.isDirectory()) {
+        _walkForUntracked(full, knownPaths, added);
+      } else if (!knownPaths.has(full)) {
+        added.push(full);
+      }
+    } catch { /* skip */ }
+  }
 }
 
 export { gitState };

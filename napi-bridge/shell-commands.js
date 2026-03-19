@@ -5,7 +5,7 @@
  */
 
 import { defaultMemfs } from './memfs.js';
-import * as fs from './fs.js';
+import fsModule from './fs.js';
 
 const _decoder = new TextDecoder('utf-8');
 const _encoder = new TextEncoder();
@@ -74,17 +74,21 @@ function ls(args) {
 
   const output = [];
 
-  for (const p of paths) {
-    const resolved = normalizePath(p);
+  function lsDir(resolved, label) {
     if (!fileExists(resolved)) {
-      return { stdout: '', stderr: `ls: cannot access '${p}': No such file or directory\n`, exitCode: 1 };
+      output.push(`ls: cannot access '${label}': No such file or directory`);
+      return false;
     }
     if (isFile(resolved)) {
       output.push(resolved.split('/').pop());
-      continue;
+      return true;
     }
     const entries = defaultMemfs.readdir(resolved);
     const filtered = showAll ? entries : entries.filter(e => !e.startsWith('.'));
+
+    if (recursive && output.length > 0) output.push('');
+    if (recursive) output.push(resolved + ':');
+
     if (longFormat) {
       for (const name of filtered) {
         const full = resolved === '/' ? '/' + name : resolved + '/' + name;
@@ -99,6 +103,24 @@ function ls(args) {
     } else {
       output.push(filtered.join('\n'));
     }
+
+    // Bug #5: Implement recursive walk for ls -R
+    if (recursive) {
+      for (const name of filtered) {
+        const full = resolved === '/' ? '/' + name : resolved + '/' + name;
+        if (isDir(full)) {
+          lsDir(full, full);
+        }
+      }
+    }
+    return true;
+  }
+
+  for (const p of paths) {
+    const resolved = normalizePath(p);
+    if (!lsDir(resolved, p)) {
+      return { stdout: '', stderr: `ls: cannot access '${p}': No such file or directory\n`, exitCode: 1 };
+    }
   }
 
   return { stdout: output.join('\n') + '\n', stderr: '', exitCode: 0 };
@@ -106,9 +128,13 @@ function ls(args) {
 
 // ─── cat ─────────────────────────────────────────────────────────────
 
-function cat(args) {
+function cat(args, options) {
   const paths = args.filter(a => !a.startsWith('-'));
-  if (paths.length === 0) return { stdout: '', stderr: '', exitCode: 0 };
+  // Bug #15: cat with no args reads from stdin
+  if (paths.length === 0) {
+    const stdinData = (options && options._stdin) || '';
+    return { stdout: stdinData, stderr: '', exitCode: 0 };
+  }
 
   const output = [];
   for (const p of paths) {
@@ -129,10 +155,13 @@ function grep(args, options) {
   let listFiles = false, countOnly = false, invertMatch = false;
   let pattern = null;
   const paths = [];
+  let dashdash = false;
 
+  // Bug #19: Parse flags regardless of position (before --)
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg.startsWith('-') && !pattern) {
+    if (arg === '--') { dashdash = true; continue; }
+    if (!dashdash && arg.startsWith('-') && arg.length > 1 && !/^-\d/.test(arg)) {
       if (arg.includes('r') || arg.includes('R')) recursive = true;
       if (arg.includes('n')) lineNumbers = true;
       if (arg.includes('i')) ignoreCase = true;
@@ -400,6 +429,7 @@ function rm(args) {
   return { stdout: '', stderr: '', exitCode: 0 };
 }
 
+// Bug #20: Use public MEMFS API instead of private _resolve()
 function rmRecursive(dirPath) {
   const entries = defaultMemfs.readdir(dirPath);
   for (const name of entries) {
@@ -407,12 +437,9 @@ function rmRecursive(dirPath) {
     if (isDir(full)) rmRecursive(full);
     else defaultMemfs.unlink(full);
   }
-  // Remove the dir itself - use the parent approach
-  const parts = dirPath.split('/').filter(Boolean);
-  const name = parts.pop();
-  const parent = '/' + parts.join('/');
-  const parentInode = defaultMemfs._resolve(parent || '/');
-  if (parentInode) parentInode.children.delete(name);
+  // Remove the now-empty directory via public rmdir-like unlink
+  // MEMFS doesn't have rmdir, so use the fs module's rmdirSync
+  try { fsModule.rmdirSync(dirPath); } catch { /* ignore */ }
 }
 
 // ─── cp ──────────────────────────────────────────────────────────────
@@ -470,8 +497,17 @@ function touch(args) {
     const resolved = normalizePath(p);
     if (!fileExists(resolved)) {
       defaultMemfs.writeFile(resolved, new Uint8Array(0));
+    } else {
+      // Bug #13: Update mtime on existing files
+      try {
+        const inode = defaultMemfs._resolve(resolved);
+        if (inode) {
+          const now = Date.now();
+          inode.mtime = now;
+          inode.atime = now;
+        }
+      } catch { /* ignore */ }
     }
-    // Update mtime if it exists
   }
   return { stdout: '', stderr: '', exitCode: 0 };
 }

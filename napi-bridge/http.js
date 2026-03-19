@@ -1,7 +1,7 @@
 /**
  * http/https — Node.js-compatible HTTP client via browser fetch().
  *
- * ClientRequest (Writable) accumulates body, fires fetch() on end().
+ * ClientRequest (Writable-like) accumulates body, fires fetch() on end().
  * IncomingMessage (Readable) wraps the Response, streams body chunks.
  */
 
@@ -59,6 +59,13 @@ async function _proxyFetch(url, opts) {
     }
 
     connectReq.on('connect', (_res, socket) => {
+      // Bug #9: Check proxy response status before proceeding
+      if (_res.statusCode !== 200) {
+        reject(new Error(`CONNECT tunnel failed: ${_res.statusCode} ${_res.statusMessage}`));
+        socket.destroy();
+        return;
+      }
+
       const reqMod = target.protocol === 'https:' ? nodeHttps.default : nodeHttp.default;
       const reqOpts = {
         hostname: target.hostname,
@@ -70,25 +77,35 @@ async function _proxyFetch(url, opts) {
       };
 
       const req = reqMod.request(reqOpts, (res) => {
-        // Build a Response-like object
+        // Build a Response-like object with streaming support
         const headers = new Headers();
         for (const [k, v] of Object.entries(res.headers)) {
           if (Array.isArray(v)) v.forEach(val => headers.append(k, val));
           else if (v !== undefined) headers.set(k, v);
         }
 
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          const body = Buffer.concat(chunks);
-          const response = new Response(body, {
-            status: res.statusCode,
-            statusText: res.statusMessage,
-            headers,
-          });
-          resolve(response);
+        // Bug #10: Stream the response instead of buffering everything
+        // Create a ReadableStream that pipes from the Node.js response
+        const readable = new ReadableStream({
+          start(controller) {
+            res.on('data', (chunk) => {
+              controller.enqueue(new Uint8Array(chunk));
+            });
+            res.on('end', () => {
+              controller.close();
+            });
+            res.on('error', (err) => {
+              controller.error(err);
+            });
+          },
         });
-        res.on('error', reject);
+
+        const response = new Response(readable, {
+          status: res.statusCode,
+          statusText: res.statusMessage,
+          headers,
+        });
+        resolve(response);
       });
 
       req.on('error', reject);
@@ -150,20 +167,33 @@ class IncomingMessage extends Readable {
     this.headers = {};
     this.rawHeaders = [];
 
-    // Lowercase all header keys (Node.js convention)
+    // Bug #8: Handle multi-value headers correctly
+    // set-cookie must be an array; other duplicate headers joined with ', '
     response.headers.forEach((value, key) => {
       const lk = key.toLowerCase();
-      this.headers[lk] = value;
       this.rawHeaders.push(key, value);
+      if (lk === 'set-cookie') {
+        if (!this.headers[lk]) {
+          this.headers[lk] = [value];
+        } else {
+          this.headers[lk].push(value);
+        }
+      } else if (this.headers[lk] !== undefined) {
+        this.headers[lk] += ', ' + value;
+      } else {
+        this.headers[lk] = value;
+      }
     });
 
     this._response = response;
-    this._started = false;
+    this._reader = null;
+    this._reading = false;
   }
 
   _read() {
-    if (this._started) return;
-    this._started = true;
+    // Bug #2: Respect backpressure — only pump when _read() is called
+    if (this._reading) return;
+    this._reading = true;
 
     const body = this._response.body;
     if (!body) {
@@ -177,20 +207,10 @@ class IncomingMessage extends Readable {
 
     // If body is a ReadableStream (browser or native fetch)
     if (typeof body.getReader === 'function') {
-      const reader = body.getReader();
-      const pump = () => {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            this.push(null);
-            return;
-          }
-          this.push(new Uint8Array(value));
-          pump();
-        }).catch((err) => {
-          this.destroy(err);
-        });
-      };
-      pump();
+      if (!this._reader) {
+        this._reader = body.getReader();
+      }
+      this._pumpReader();
     } else {
       // Buffer/non-streaming body — push all at once
       this._response.arrayBuffer().then((buf) => {
@@ -201,11 +221,31 @@ class IncomingMessage extends Readable {
       });
     }
   }
+
+  _pumpReader() {
+    this._reader.read().then(({ done, value }) => {
+      if (done) {
+        this.push(null);
+        return;
+      }
+      // Respect backpressure: if push() returns false, stop until next _read()
+      const ok = this.push(new Uint8Array(value));
+      if (ok) {
+        this._pumpReader();
+      } else {
+        this._reading = false;
+        // Next _read() call will resume pumping
+      }
+    }).catch((err) => {
+      this.destroy(err);
+    });
+  }
 }
 
 // ─── ClientRequest ──────────────────────────────────────────────────
+// Bug #16: Extend Writable so ClientRequest supports pipe-into and emits 'finish'
 
-class ClientRequest extends EventEmitter {
+class ClientRequest extends Writable {
   constructor(url, options, callback) {
     super();
 
@@ -226,13 +266,14 @@ class ClientRequest extends EventEmitter {
       this.once('response', callback);
     }
 
-    this._headers = {};
+    this._reqHeaders = {};
     this._headerNames = {}; // lowercased → original case
     this._bodyChunks = [];
     this._ended = false;
     this._abortController = new AbortController();
-    this._timeout = null;
+    this._timeoutTimer = null;
     this._destroyed = false;
+    this._aborted = false;
 
     // Apply headers from options
     if (this._options.headers) {
@@ -242,22 +283,33 @@ class ClientRequest extends EventEmitter {
     }
   }
 
+  // Override Writable._write to accumulate body chunks
+  _write(chunk, encoding, callback) {
+    if (typeof chunk === 'string') {
+      this._bodyChunks.push(_encoder.encode(chunk));
+    } else if (chunk) {
+      this._bodyChunks.push(new Uint8Array(chunk));
+    }
+    callback();
+  }
+
   setHeader(name, value) {
     const lk = name.toLowerCase();
-    this._headers[lk] = value;
+    this._reqHeaders[lk] = value;
     this._headerNames[lk] = name;
   }
 
   getHeader(name) {
-    return this._headers[name.toLowerCase()];
+    return this._reqHeaders[name.toLowerCase()];
   }
 
   removeHeader(name) {
     const lk = name.toLowerCase();
-    delete this._headers[lk];
+    delete this._reqHeaders[lk];
     delete this._headerNames[lk];
   }
 
+  // Legacy write() — also accepted directly (in addition to Writable.write)
   write(chunk, encoding, callback) {
     if (typeof encoding === 'function') {
       callback = encoding;
@@ -288,7 +340,9 @@ class ClientRequest extends EventEmitter {
     if (this._ended) return;
     this._ended = true;
 
-    if (callback) this.once('response', callback);
+    // Bug #7: end() callback fires when request is finished writing, not on response
+    // Fire callback and 'finish' event after body is sent, before waiting for response
+    const endCallback = callback;
 
     // Build fetch URL
     const opts = this._options;
@@ -321,10 +375,14 @@ class ClientRequest extends EventEmitter {
 
     // Build headers (exclude content-length — fetch handles it)
     const headers = {};
-    for (const [lk, val] of Object.entries(this._headers)) {
+    for (const [lk, val] of Object.entries(this._reqHeaders)) {
       if (lk === 'content-length') continue;
       headers[lk] = String(val);
     }
+
+    // Fire 'finish' and end callback NOW (body is ready to send)
+    if (endCallback) endCallback();
+    this.emit('finish');
 
     // Fire fetch
     const fetchOpts = {
@@ -337,10 +395,14 @@ class ClientRequest extends EventEmitter {
 
     _proxyFetch(url, fetchOpts)
       .then((response) => {
+        // Bug #3: Clear timeout timer on successful response
+        this._clearTimeoutTimer();
         const msg = new IncomingMessage(response);
         this.emit('response', msg);
       })
       .catch((err) => {
+        // Bug #3: Clear timeout timer on error too
+        this._clearTimeoutTimer();
         if (!this._destroyed) {
           this.emit('error', err);
         }
@@ -348,12 +410,17 @@ class ClientRequest extends EventEmitter {
   }
 
   abort() {
+    // Bug #6: Emit 'abort' event before setting _destroyed
+    this.emit('abort');
+    this._aborted = true;
     this._destroyed = true;
+    this._clearTimeoutTimer();
     this._abortController.abort();
   }
 
   destroy(err) {
     this._destroyed = true;
+    this._clearTimeoutTimer();
     this._abortController.abort();
     if (err) this.emit('error', err);
     return this;
@@ -361,14 +428,20 @@ class ClientRequest extends EventEmitter {
 
   setTimeout(ms, callback) {
     if (callback) this.once('timeout', callback);
-    this._timeout = setTimeout(() => {
+    // Bug #3: Clear any previous timer before setting a new one
+    this._clearTimeoutTimer();
+    this._timeoutTimer = setTimeout(() => {
+      this._timeoutTimer = null;
       this.emit('timeout');
     }, ms);
     return this;
   }
 
-  get on() {
-    return super.on.bind(this);
+  _clearTimeoutTimer() {
+    if (this._timeoutTimer !== null) {
+      clearTimeout(this._timeoutTimer);
+      this._timeoutTimer = null;
+    }
   }
 }
 
@@ -400,6 +473,7 @@ function _get(requestFn) {
 const httpRequest = _request('http:');
 const httpGet = _get(httpRequest);
 
+// Bug #17: Complete STATUS_CODES table
 export const http = {
   request: httpRequest,
   get: httpGet,
@@ -407,13 +481,31 @@ export const http = {
   globalAgent: {},
   ClientRequest,
   IncomingMessage,
-  METHODS: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'],
+  METHODS: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS',
+    'CONNECT', 'TRACE'],
   STATUS_CODES: {
-    200: 'OK', 201: 'Created', 204: 'No Content',
-    301: 'Moved Permanently', 302: 'Found', 304: 'Not Modified',
-    400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden',
-    404: 'Not Found', 405: 'Method Not Allowed',
-    500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable',
+    100: 'Continue', 101: 'Switching Protocols', 102: 'Processing',
+    200: 'OK', 201: 'Created', 202: 'Accepted', 203: 'Non-Authoritative Information',
+    204: 'No Content', 205: 'Reset Content', 206: 'Partial Content',
+    300: 'Multiple Choices', 301: 'Moved Permanently', 302: 'Found',
+    303: 'See Other', 304: 'Not Modified', 307: 'Temporary Redirect',
+    308: 'Permanent Redirect',
+    400: 'Bad Request', 401: 'Unauthorized', 402: 'Payment Required',
+    403: 'Forbidden', 404: 'Not Found', 405: 'Method Not Allowed',
+    406: 'Not Acceptable', 407: 'Proxy Authentication Required',
+    408: 'Request Timeout', 409: 'Conflict', 410: 'Gone',
+    411: 'Length Required', 412: 'Precondition Failed',
+    413: 'Payload Too Large', 414: 'URI Too Long',
+    415: 'Unsupported Media Type', 416: 'Range Not Satisfiable',
+    417: 'Expectation Failed', 418: "I'm a Teapot",
+    422: 'Unprocessable Entity', 425: 'Too Early',
+    426: 'Upgrade Required', 428: 'Precondition Required',
+    429: 'Too Many Requests', 431: 'Request Header Fields Too Large',
+    451: 'Unavailable For Legal Reasons',
+    500: 'Internal Server Error', 501: 'Not Implemented',
+    502: 'Bad Gateway', 503: 'Service Unavailable',
+    504: 'Gateway Timeout', 505: 'HTTP Version Not Supported',
+    507: 'Insufficient Storage', 511: 'Network Authentication Required',
   },
 };
 

@@ -154,7 +154,21 @@ const _SHA512_K = [
 ];
 const _M64 = 0xFFFFFFFFFFFFFFFFn;
 
-function _sha512(data) {
+const _SHA512_IV = [
+  0x6a09e667f3bcc908n, 0xbb67ae8584caa73bn,
+  0x3c6ef372fe94f82bn, 0xa54ff53a5f1d36f1n,
+  0x510e527fade682d1n, 0x9b05688c2b3e6c1fn,
+  0x1f83d9abfb41bd6bn, 0x5be0cd19137e2179n,
+];
+
+const _SHA384_IV = [
+  0xcbbb9d5dc1059ed8n, 0x629a292a367cd507n,
+  0x9159015a3070dd17n, 0x152fecd8f70e5939n,
+  0x67332667ffc00b31n, 0x8eb44a8768581511n,
+  0xdb0c2e0d64f98fa7n, 0x47b5481dbefa4fa4n,
+];
+
+function _sha512(data, iv) {
   const msg = (data instanceof Uint8Array) ? data : new TextEncoder().encode(data);
   const bitLen = BigInt(msg.length) * 8n;
 
@@ -171,13 +185,8 @@ function _sha512(data) {
   dv.setUint32(totalLen - 4, Number(bitLen & 0xFFFFFFFFn), false);
   dv.setUint32(totalLen - 8, Number((bitLen >> 32n) & 0xFFFFFFFFn), false);
 
-  // Initial hash values
-  const H = [
-    0x6a09e667f3bcc908n, 0xbb67ae8584caa73bn,
-    0x3c6ef372fe94f82bn, 0xa54ff53a5f1d36f1n,
-    0x510e527fade682d1n, 0x9b05688c2b3e6c1fn,
-    0x1f83d9abfb41bd6bn, 0x5be0cd19137e2179n,
-  ];
+  // Initial hash values — SHA-384 uses different IVs from SHA-512
+  const H = Array.from(iv || _SHA512_IV);
 
   const W = new Array(80);
 
@@ -234,7 +243,7 @@ function _hashBytes(algorithm, data) {
     case 'sha256': case 'sha-256': return _sha256(data);
     case 'sha1': case 'sha-1': return _sha1(data);
     case 'sha512': case 'sha-512': return _sha512(data);
-    case 'sha384': case 'sha-384': return _sha512(data).subarray(0, 48);
+    case 'sha384': case 'sha-384': return _sha512(data, _SHA384_IV).subarray(0, 48);
     default: throw new Error(`Unsupported hash algorithm: ${algorithm}`);
   }
 }

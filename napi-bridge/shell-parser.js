@@ -150,6 +150,7 @@ function parseSimpleCommand(tokens) {
   const args = [];
   let redirectOut = null;
   let redirectAppend = false;
+  let redirectIn = null;
   let mergeStderr = false;
 
   let i = 0;
@@ -175,6 +176,10 @@ function parseSimpleCommand(tokens) {
     } else if (tok.type === 'APPEND') {
       i++;
       if (i < tokens.length) { redirectOut = tokens[i].value; redirectAppend = true; }
+    } else if (tok.type === 'INPUT') {
+      // Bug #14: Parse input redirect < file
+      i++;
+      if (i < tokens.length) { redirectIn = tokens[i].value; }
     } else if (tok.type === 'MERGE_STDERR') {
       mergeStderr = true;
     } else if (tok.type === 'WORD') {
@@ -184,7 +189,7 @@ function parseSimpleCommand(tokens) {
   }
 
   const cmd = args.shift() || '';
-  return { cmd, args, envVars, redirectOut, redirectAppend, mergeStderr };
+  return { cmd, args, envVars, redirectOut, redirectAppend, redirectIn, mergeStderr };
 }
 
 // ─── Glob expansion ──────────────────────────────────────────────────
@@ -267,7 +272,25 @@ function executePipeline(commands, options) {
   let input = null;
 
   for (let i = 0; i < commands.length; i++) {
-    let { cmd, args, envVars, redirectOut, redirectAppend, mergeStderr } = commands[i];
+    let { cmd, args, envVars, redirectOut, redirectAppend, redirectIn, mergeStderr } = commands[i];
+
+    // Bug #14: Handle input redirect — read file and use as stdin
+    if (redirectIn && input === null) {
+      try {
+        const resolved = redirectIn.startsWith('/') ? redirectIn
+          : (typeof process !== 'undefined' ? process.cwd() : '/').replace(/\/$/, '') + '/' + redirectIn;
+        const parts = resolved.split('/').filter(Boolean);
+        const result = [];
+        for (const part of parts) {
+          if (part === '..') result.pop();
+          else if (part !== '.') result.push(part);
+        }
+        const norm = '/' + result.join('/');
+        input = new TextDecoder().decode(defaultMemfs.readFile(norm));
+      } catch {
+        return { stdout: '', stderr: `${cmd}: ${redirectIn}: No such file or directory\n`, exitCode: 1 };
+      }
+    }
 
     // Check for bash -c unwrapping
     const unwrapped = unwrapShellInvocation(cmd, args);
