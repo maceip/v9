@@ -309,6 +309,53 @@ export const cryptoBridge = {
     return crypto.randomUUID();
   },
 
+  randomFillSync(buf, offset, size) {
+    offset = offset || 0;
+    size = size || buf.length - offset;
+    const view = new Uint8Array(buf.buffer || buf, buf.byteOffset + offset, size);
+    crypto.getRandomValues(view);
+    return buf;
+  },
+
+  randomFill(buf, offset, size, cb) {
+    if (typeof offset === 'function') { cb = offset; offset = 0; size = buf.length; }
+    if (typeof size === 'function') { cb = size; size = buf.length - offset; }
+    try { this.randomFillSync(buf, offset, size); cb(null, buf); }
+    catch (e) { cb(e); }
+  },
+
+  randomInt(min, max, cb) {
+    if (max === undefined) { max = min; min = 0; }
+    const range = max - min;
+    const val = min + Math.floor(Math.random() * range);
+    if (cb) cb(null, val); else return val;
+  },
+
+  timingSafeEqual(a, b) {
+    if (a.length !== b.length) throw new RangeError('Input buffers must have the same byte length');
+    let result = 0;
+    for (let i = 0; i < a.length; i++) result |= a[i] ^ b[i];
+    return result === 0;
+  },
+
+  getRandomValues(buf) {
+    return crypto.getRandomValues(buf);
+  },
+
+  getHashes() { return ['sha1', 'sha256', 'sha384', 'sha512', 'md5']; },
+  getCiphers() { return []; },
+  getCurves() { return []; },
+  getFips() { return 0; },
+  setFips() {},
+  subtle: globalThis.crypto?.subtle || {},
+  webcrypto: globalThis.crypto || {},
+  constants: {},
+  hash(algo, data, outputEncoding) {
+    const h = cryptoBridge.createHash(algo);
+    h.update(data);
+    return outputEncoding ? h.digest(outputEncoding) : h.digest();
+  },
+
   createHash(algorithm) {
     const algo = algorithm.toLowerCase();
     const chunks = [];
@@ -1162,6 +1209,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'inspector/promises': inspectorModule,
 
     // ── Missing builtins (stubs for modules not yet fully implemented) ──
+    'punycode': { encode: (s) => s, decode: (s) => s, toASCII: (s) => s, toUnicode: (s) => s, ucs2: { decode: (s) => [...s].map(c => c.codePointAt(0)), encode: (a) => String.fromCodePoint(...a) }, version: '2.3.1' },
     'http2': { constants: {}, connect: () => { throw new Error('http2 not available in browser'); }, createServer: () => { throw new Error('http2 not available in browser'); }, createSecureServer: () => { throw new Error('http2 not available in browser'); } },
     'console': Object.assign({}, globalThis.console, {
       Console: class Console {
@@ -1190,8 +1238,8 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     }),
     'util/types': util.types || {},
     'querystring': { parse: (s) => Object.fromEntries(new URLSearchParams(s)), stringify: (o) => new URLSearchParams(o).toString(), encode: (o) => new URLSearchParams(o).toString(), decode: (s) => Object.fromEntries(new URLSearchParams(s)), escape: encodeURIComponent, unescape: decodeURIComponent },
-    'perf_hooks': { performance: globalThis.performance, PerformanceObserver: globalThis.PerformanceObserver || class {} },
-    'diagnostics_channel': { channel: () => ({ subscribe: () => {}, unsubscribe: () => {} }), hasSubscribers: () => false, Channel: class {} },
+    'perf_hooks': Object.assign({}, { performance: globalThis.performance, PerformanceObserver: globalThis.PerformanceObserver || class {}, monitorEventLoopDelay: () => ({ enable(){}, disable(){}, min:0, max:0, mean:0, percentile(){return 0;} }), createHistogram: () => ({}) }),
+    'diagnostics_channel': (() => { try { const m = import.meta; /* dynamic import won't work here */ } catch {} class Ch { constructor(n) { this.name=n; this._subscribers=[]; this._parentWrap=undefined; } get hasSubscribers() { return this._subscribers.length>0; } subscribe(fn) { this._subscribers.push(fn); } unsubscribe(fn) { this._subscribers=this._subscribers.filter(s=>s!==fn); } publish(m) { for(const fn of this._subscribers) fn(m,this.name); } bindStore(){} unbindStore(){} runStores(d,fn,...a){return fn(...a);} } const chs=new Map(); const ch=(n)=>{if(!chs.has(n))chs.set(n,new Ch(n));return chs.get(n);}; return { Channel:Ch, channel:ch, hasSubscribers:(n)=>chs.has(n)&&chs.get(n).hasSubscribers, subscribe:(n,fn)=>ch(n).subscribe(fn), unsubscribe:(n,fn)=>ch(n).unsubscribe(fn), tracingChannel:(n)=>({start:ch(n+':start'),end:ch(n+':end'),asyncStart:ch(n+':asyncStart'),asyncEnd:ch(n+':asyncEnd'),error:ch(n+':error'),hasSubscribers:false,subscribe(){},unsubscribe(){},traceSync(fn,c,t,...a){return fn.apply(t,a);},tracePromise(fn,c,t,...a){return fn.apply(t,a);},traceCallback(fn){return fn;}}), TracingChannel:class{constructor(){} subscribe(){} unsubscribe(){}} }; })(),
 
     // ── Third-party shims ──
     'node-pty': nodePtyShim,

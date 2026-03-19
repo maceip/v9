@@ -5,8 +5,8 @@
 import { processBridge } from './browser-builtins.js';
 const _impl = processBridge;
 
-// Set globalThis.process so code that accesses `process` without importing works
-if (typeof globalThis.process === 'undefined') {
+// Set globalThis.process so code that accesses process without importing works
+if (typeof globalThis.process === 'undefined' || !globalThis.process.cwd) {
   globalThis.process = processBridge;
 }
 

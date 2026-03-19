@@ -36,12 +36,18 @@ export const utimes = promises.utimes || _stub('utimes');
 export const watch = promises.watch || _stub('watch');
 export const cp = promises.cp || _stub('cp');
 export const glob = promises.glob || _stub('glob');
+export const opendir = promises.opendir || _stub('opendir');
+export const chown = promises.chown || _stub('chown');
+export const lchmod = promises.lchmod || _stub('lchmod');
+export const lchown = promises.lchown || _stub('lchown');
+export const lutimes = promises.lutimes || _stub('lutimes');
+export const statfs = promises.statfs || _stub('statfs');
 export const constants = fs.constants || {};
 
 const _module = {
   readFile, writeFile, readdir, stat, lstat, mkdir, unlink, rename,
   access, realpath, rmdir, chmod, copyFile, rm, appendFile, symlink,
-  link, mkdtemp, open, readlink, truncate, utimes, watch, cp, glob,
-  constants,
+  link, mkdtemp, open, opendir, readlink, truncate, utimes, watch,
+  cp, glob, chown, lchmod, lchown, lutimes, statfs, constants,
 };
 export default _module;

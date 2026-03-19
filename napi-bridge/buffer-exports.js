@@ -14,6 +14,7 @@ export function isAscii() { return false; }
 export function isUtf8() { return true; }
 export function transcode() { throw new Error('transcode not implemented in browser runtime'); }
 export function resolveObjectURL() { throw new Error('resolveObjectURL not implemented'); }
+export const INSPECT_MAX_BYTES = 50;
 
-const _module = { Buffer, constants, kMaxLength, kStringMaxLength, SlowBuffer, Blob, File, atob, btoa, isAscii, isUtf8, transcode, resolveObjectURL };
+const _module = { Buffer, constants, kMaxLength, kStringMaxLength, SlowBuffer, Blob, File, atob, btoa, isAscii, isUtf8, transcode, resolveObjectURL, INSPECT_MAX_BYTES };
 export default _module;

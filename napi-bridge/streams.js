@@ -896,4 +896,17 @@ Stream.PassThrough = PassThrough;
 Stream.pipeline = pipeline;
 Stream.finished = finished;
 
+let _defaultHWM = 16384;
+let _defaultHWMObj = 16;
+export function getDefaultHighWaterMark(objectMode) { return objectMode ? _defaultHWMObj : _defaultHWM; }
+export function setDefaultHighWaterMark(objectMode, value) { if (objectMode) _defaultHWMObj = value; else _defaultHWM = value; }
+Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
+Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
+
+export const promises = {
+  pipeline: (...args) => new Promise((res, rej) => { pipeline(...args.slice(0, -1), (e) => e ? rej(e) : res()); }),
+  finished: (...args) => new Promise((res, rej) => { finished(...args.slice(0, -1), (e) => e ? rej(e) : res()); }),
+};
+Stream.promises = promises;
+
 export default Stream;
