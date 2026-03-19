@@ -108,3 +108,42 @@ export async function loadUrlModule() {
     },
   };
 }
+
+export async function loadStreamsModule() {
+  if (targetMode === 'node') {
+    const mod = await import('node:stream');
+    return {
+      Readable: mod.Readable,
+      Writable: mod.Writable,
+      Transform: mod.Transform,
+      Duplex: mod.Duplex,
+      PassThrough: mod.PassThrough,
+      pipeline: mod.pipeline,
+      finished: mod.finished,
+    };
+  }
+
+  const mod = await importWithContext('../../napi-bridge/streams.js');
+  return {
+    Readable: pickFirst(mod.Readable, mod.default?.Readable),
+    Writable: pickFirst(mod.Writable, mod.default?.Writable),
+    Transform: pickFirst(mod.Transform, mod.default?.Transform),
+    Duplex: pickFirst(mod.Duplex, mod.default?.Duplex),
+    PassThrough: pickFirst(mod.PassThrough, mod.default?.PassThrough),
+    pipeline: pickFirst(mod.pipeline, mod.default?.pipeline),
+    finished: pickFirst(mod.finished, mod.default?.finished),
+  };
+}
+
+export async function loadProcessModule() {
+  if (targetMode === 'node') {
+    return { processObject: process };
+  }
+
+  const mod = await importWithContext('../../napi-bridge/browser-builtins.js');
+  const processObject = mod.processBridge;
+  if (!processObject) {
+    throw new Error('Bridge processBridge export not found');
+  }
+  return { processObject };
+}
