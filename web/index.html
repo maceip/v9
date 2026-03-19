@@ -124,6 +124,44 @@
 <body>
   <div id="terminal"></div>
   <script>
+    // Intercept XHR and fetch to proxy Anthropic API calls through CORS proxy
+    const PROXY_URL = 'http://localhost:8081';
+    const PROXY_DOMAINS = ['api.anthropic.com', 'platform.claude.com'];
+
+    // Patch XMLHttpRequest
+    const _OrigXHR = globalThis.XMLHttpRequest;
+    globalThis.XMLHttpRequest = class extends _OrigXHR {
+      open(method, url, ...rest) {
+        try {
+          const u = new URL(url, location.href);
+          if (PROXY_DOMAINS.some(d => u.hostname === d)) {
+            url = PROXY_URL + u.pathname + u.search;
+          }
+        } catch {}
+        return super.open(method, url, ...rest);
+      }
+      setRequestHeader(name, value) {
+        // Skip headers browsers refuse to set
+        if (['user-agent', 'host', 'content-length', 'connection'].includes(name.toLowerCase())) return;
+        return super.setRequestHeader(name, value);
+      }
+    };
+
+    // Patch fetch
+    const _origFetch = globalThis.fetch;
+    globalThis.fetch = function(input, init) {
+      let url = typeof input === 'string' ? input : input?.url || String(input);
+      try {
+        const u = new URL(url, location.href);
+        if (PROXY_DOMAINS.some(d => u.hostname === d)) {
+          url = PROXY_URL + u.pathname + u.search;
+          if (typeof input === 'string') input = url;
+          else if (input instanceof Request) input = new Request(url, input);
+        }
+      } catch {}
+      return _origFetch.call(globalThis, input, init);
+    };
+
     // Polyfill setImmediate (Node.js has it, browsers don't — Ink needs it)
     if (typeof globalThis.setImmediate === 'undefined') {
       globalThis.setImmediate = (fn, ...args) => globalThis.setTimeout(fn, 0, ...args);
@@ -177,7 +215,7 @@
     if (typeof globalThis.process === 'undefined') {
       const _apiKey = sessionStorage.getItem('anthropic_api_key') || '';
       globalThis.process = {
-        env: { ..._apiKey ? { ANTHROPIC_API_KEY: _apiKey } : {}, HOME: '/home/user', TERM: 'xterm-256color', COLORTERM: 'truecolor', SHELL: '/bin/bash', USER: 'user', LANG: 'en_US.UTF-8', PATH: '/usr/local/bin:/usr/bin:/bin' },
+        env: { ..._apiKey ? { ANTHROPIC_API_KEY: _apiKey } : {}, HOME: '/home/user', TERM: 'xterm-256color', COLORTERM: 'truecolor', SHELL: '/bin/bash', USER: 'user', LANG: 'en_US.UTF-8', PATH: '/usr/local/bin:/usr/bin:/bin', ANTHROPIC_BASE_URL: 'http://localhost:8081' },
         argv: ['node', '/app/claude-code.js'], argv0: 'node', execArgv: [], execPath: '/usr/local/bin/node',
         cwd: () => '/', chdir: () => {},
         platform: 'linux', arch: 'x64', version: 'v20.0.0-browser',

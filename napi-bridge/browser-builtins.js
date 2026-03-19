@@ -1162,6 +1162,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'inspector/promises': inspectorModule,
 
     // ── Missing builtins (stubs for modules not yet fully implemented) ──
+    'http2': { constants: {}, connect: () => { throw new Error('http2 not available in browser'); }, createServer: () => { throw new Error('http2 not available in browser'); }, createSecureServer: () => { throw new Error('http2 not available in browser'); } },
     'console': Object.assign({}, globalThis.console, {
       Console: class Console {
         constructor(opts) {
