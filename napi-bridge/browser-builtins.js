@@ -12,6 +12,7 @@
 import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished } from './streams.js';
 import util from './util.js';
+import fs from './fs.js';
 
 /**
  * crypto — Web Crypto API bridge
@@ -770,6 +771,7 @@ export function registerBrowserBuiltins(edgeInstance) {
     'util': util,
     'buffer': { Buffer: bufferBridge, kMaxLength: 2 ** 31 - 1 },
     'process': processBridge,
+    'fs': fs,
   };
 
   // Inject into EdgeJS's module resolution

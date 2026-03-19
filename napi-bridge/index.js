@@ -3250,7 +3250,39 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
     };
   }
 
+  // ── Module registration system ──────────────────────────────────────
+  // JS-side module map: _registerBuiltinOverride stores overrides that
+  // intercept require() calls from the Wasm runtime.
+  const _builtinOverrides = new Map();
+
+  function _registerBuiltinOverride(name, impl) {
+    _builtinOverrides.set(name, impl);
+  }
+
+  // Pre-populate MEMFS from options.files if provided
+  if (options.files) {
+    try {
+      const { defaultMemfs } = await import('./memfs.js');
+      defaultMemfs.populate(options.files);
+    } catch (_) {
+      // MEMFS not available — skip
+    }
+  }
+
   return {
+    /** Register a browser-side module override for the given built-in name. */
+    _registerBuiltinOverride,
+
+    /** Retrieve a registered builtin override (or undefined). */
+    _getBuiltinOverride(name) {
+      return _builtinOverrides.get(name);
+    },
+
+    /** All registered builtin overrides. */
+    get _builtinOverrides() {
+      return _builtinOverrides;
+    },
+
     /**
      * Run a JavaScript string and return the result.
      * @param {string} code - JavaScript code to execute

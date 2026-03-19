@@ -18,7 +18,8 @@ SHELL := /bin/bash
 .PHONY: all setup fetch configure build test clean distclean lint size help \
 	release-gate test-release-gate test-manifest bench \
 	test-browser test-runtime-stability test-soak-quick test-soak-integration \
-	test-soak-nightly test-quick test-integration test-nightly test-guardrails
+	test-soak-nightly test-quick test-integration test-nightly test-guardrails \
+	test-core test-fs
 
 # ---- Paths ----
 ROOT_DIR   := $(shell pwd)
@@ -205,6 +206,15 @@ test-soak-integration:
 test-soak-nightly:
 	@echo ">>> Running nightly soak profile..."
 	cd $(ROOT_DIR) && node tests/test-soak.mjs --profile nightly
+
+test-core:
+	@echo ">>> Running core module conformance tests..."
+	cd $(ROOT_DIR) && node tests/conformance/test-streams.mjs
+	cd $(ROOT_DIR) && node tests/conformance/test-integration-phase3.mjs
+
+test-fs:
+	@echo ">>> Running filesystem conformance tests..."
+	cd $(ROOT_DIR) && node tests/conformance/test-fs.mjs
 
 test-quick: test-unit test-napi test-guardrails
 

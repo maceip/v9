@@ -126,12 +126,7 @@ export class Readable extends EventEmitter {
 
     const onerror = (err) => {
       cleanup();
-      if (EventEmitter.listenerCount
-        ? EventEmitter.listenerCount(dest, 'error') === 0
-        : dest.listenerCount('error') === 0
-      ) {
-        dest.destroy(err);
-      }
+      source.unpipe(dest);
     };
 
     const onclose = () => {
@@ -221,10 +216,14 @@ export class Readable extends EventEmitter {
     const state = this._readableState;
     if (state.destroyed) return this;
     state.destroyed = true;
+    state.ended = true;
 
     const doDestroy = (e) => {
-      if (e) this.emit('error', e);
-      this.emit('close');
+      // Defer so listeners registered after destroy() still fire
+      Promise.resolve().then(() => {
+        if (e) this.emit('error', e);
+        this.emit('close');
+      });
     };
 
     if (this._destroy) {
@@ -482,8 +481,10 @@ export class Writable extends EventEmitter {
     state.destroyed = true;
 
     const doDestroy = (e) => {
-      if (e) this.emit('error', e);
-      this.emit('close');
+      Promise.resolve().then(() => {
+        if (e) this.emit('error', e);
+        this.emit('close');
+      });
     };
 
     if (this._destroy && this._destroy !== Writable.prototype._destroy) {
@@ -641,11 +642,14 @@ export class Duplex extends Readable {
     const wState = this._writableState;
     if (rState.destroyed) return this;
     rState.destroyed = true;
+    rState.ended = true;
     wState.destroyed = true;
 
     const doDestroy = (e) => {
-      if (e) this.emit('error', e);
-      this.emit('close');
+      Promise.resolve().then(() => {
+        if (e) this.emit('error', e);
+        this.emit('close');
+      });
     };
 
     if (this._destroy && this._destroy !== Duplex.prototype._destroy) {
