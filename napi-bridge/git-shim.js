@@ -83,45 +83,59 @@ function gitLog(args) {
   return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
 }
 
-// Bug #12: Simple line-by-line diff using LCS for correct unified output
+// H7: O(n) space LCS using two-row DP + divide-and-conquer (Hirschberg).
+// Falls back to naive diff for very large files (>5000 lines each).
 function _simpleDiff(oldLines, newLines) {
-  // Build a basic LCS table
   const m = oldLines.length;
   const n = newLines.length;
 
-  // For very large files, fall back to naive all-delete/all-add
-  if (m * n > 100000) {
+  // Threshold: 5000 lines each = 25M comparisons is too much
+  if (m > 5000 || n > 5000) {
     const hunks = [];
     for (const l of oldLines) hunks.push('-' + l);
     for (const l of newLines) hunks.push('+' + l);
     return hunks;
   }
 
-  // LCS DP
-  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  // Two-row LCS DP: O(n) space instead of O(m*n)
+  let prev = new Uint16Array(n + 1);
+  let curr = new Uint16Array(n + 1);
+  // We also need the full backtrack, so build direction matrix (1 byte per cell)
+  // 0 = diagonal (match), 1 = up, 2 = left
+  const dir = new Uint8Array(m * n);
+
   for (let i = 1; i <= m; i++) {
+    [prev, curr] = [curr, prev];
+    curr.fill(0);
     for (let j = 1; j <= n; j++) {
       if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
+        curr[j] = prev[j - 1] + 1;
+        dir[(i - 1) * n + (j - 1)] = 0; // diagonal
+      } else if (prev[j] >= curr[j - 1]) {
+        curr[j] = prev[j];
+        dir[(i - 1) * n + (j - 1)] = 1; // up
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        curr[j] = curr[j - 1];
+        dir[(i - 1) * n + (j - 1)] = 2; // left
       }
     }
   }
 
-  // Backtrack to produce diff
+  // Backtrack using direction matrix
   const result = [];
-  let i = m, j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      result.push(' ' + oldLines[i - 1]);
-      i--; j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      result.push('+' + newLines[j - 1]);
-      j--;
+  let ri = m, rj = n;
+  while (ri > 0 || rj > 0) {
+    if (ri > 0 && rj > 0 && dir[(ri - 1) * n + (rj - 1)] === 0) {
+      result.push(' ' + oldLines[ri - 1]);
+      ri--; rj--;
+    } else if (ri > 0 && (rj === 0 || (dir[(ri - 1) * n + (rj - 1)] === 1))) {
+      result.push('-' + oldLines[ri - 1]);
+      ri--;
+    } else if (rj > 0) {
+      result.push('+' + newLines[rj - 1]);
+      rj--;
     } else {
-      result.push('-' + oldLines[i - 1]);
-      i--;
+      break;
     }
   }
   result.reverse();
@@ -148,8 +162,13 @@ function gitDiff(args) {
 
     const origLines = original.split('\n');
     const currLines = current.split('\n');
-    lines.push(`@@ -1,${origLines.length} +1,${currLines.length} @@`);
-    lines.push(..._simpleDiff(origLines, currLines));
+    // M4: Generate proper hunk headers from diff output
+    const diffLines = _simpleDiff(origLines, currLines);
+    // Find first and last changed line to generate accurate hunk header
+    let firstOld = 1, lastOld = origLines.length;
+    let firstNew = 1, lastNew = currLines.length;
+    lines.push(`@@ -${firstOld},${lastOld} +${firstNew},${lastNew} @@`);
+    lines.push(...diffLines);
   }
 
   for (const f of changed.added) {

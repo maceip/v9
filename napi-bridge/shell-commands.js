@@ -20,7 +20,7 @@ function normalizePath(p) {
   const parts = p.split('/').filter(Boolean);
   const result = [];
   for (const part of parts) {
-    if (part === '..') result.pop();
+    if (part === '..') { if (result.length > 0) result.pop(); }
     else if (part !== '.') result.push(part);
   }
   return '/' + result.join('/');
@@ -136,16 +136,20 @@ function cat(args, options) {
     return { stdout: stdinData, stderr: '', exitCode: 0 };
   }
 
+  // H6: Continue on missing files (like real cat), report all errors
   const output = [];
+  const errors = [];
+  let exitCode = 0;
   for (const p of paths) {
     const resolved = normalizePath(p);
     try {
       output.push(readFileText(resolved));
     } catch {
-      return { stdout: '', stderr: `cat: ${p}: No such file or directory\n`, exitCode: 1 };
+      errors.push(`cat: ${p}: No such file or directory`);
+      exitCode = 1;
     }
   }
-  return { stdout: output.join(''), stderr: '', exitCode: 0 };
+  return { stdout: output.join(''), stderr: errors.length ? errors.join('\n') + '\n' : '', exitCode };
 }
 
 // ─── grep ────────────────────────────────────────────────────────────
@@ -200,7 +204,8 @@ function grep(args, options) {
       if (match !== invertMatch) {
         count++;
         if (!countOnly && !listFiles) {
-          const prefix = paths.length > 1 ? displayPath + ':' : '';
+          // M11: Show filename prefix for multiple files OR recursive mode
+          const prefix = (paths.length > 1 || recursive) ? displayPath + ':' : '';
           const ln = lineNumbers ? `${i + 1}:` : '';
           results.push(`${prefix}${ln}${lines[i]}`);
         }
@@ -453,7 +458,12 @@ function cp(args) {
   }
   if (paths.length < 2) return { stdout: '', stderr: 'cp: missing operand\n', exitCode: 1 };
   const src = normalizePath(paths[0]);
-  const dest = normalizePath(paths[1]);
+  let dest = normalizePath(paths[1]);
+  // M13: If dest is an existing directory, copy src inside it
+  if (isDir(dest)) {
+    const srcName = src.split('/').filter(Boolean).pop();
+    dest = dest === '/' ? '/' + srcName : dest + '/' + srcName;
+  }
   try {
     cpRecursive(src, dest, recursive);
   } catch (e) {
@@ -491,6 +501,7 @@ function mv(args) {
 
 // ─── touch ───────────────────────────────────────────────────────────
 
+// M6: Use public API only — read+write to update mtime instead of private _resolve
 function touch(args) {
   const paths = args.filter(a => !a.startsWith('-'));
   for (const p of paths) {
@@ -498,15 +509,11 @@ function touch(args) {
     if (!fileExists(resolved)) {
       defaultMemfs.writeFile(resolved, new Uint8Array(0));
     } else {
-      // Bug #13: Update mtime on existing files
+      // Re-write existing content to update mtime via public writeFile
       try {
-        const inode = defaultMemfs._resolve(resolved);
-        if (inode) {
-          const now = Date.now();
-          inode.mtime = now;
-          inode.atime = now;
-        }
-      } catch { /* ignore */ }
+        const existing = defaultMemfs.readFile(resolved);
+        defaultMemfs.writeFile(resolved, existing);
+      } catch { /* ignore: e.g. directories */ }
     }
   }
   return { stdout: '', stderr: '', exitCode: 0 };
@@ -541,7 +548,12 @@ function wc(args, options) {
   }
 
   const parts = [];
-  if (countLines) parts.push(text.split('\n').length - 1);
+  // H1: wc -l counts newline characters, not lines
+  if (countLines) {
+    let count = 0;
+    for (let i = 0; i < text.length; i++) { if (text[i] === '\n') count++; }
+    parts.push(count);
+  }
   if (countWords) parts.push(text.trim().split(/\s+/).filter(Boolean).length);
   if (countChars) parts.push(_encoder.encode(text).length);
 
@@ -575,7 +587,8 @@ function sort(args, options) {
   let lines = text.split('\n');
   if (lines[lines.length - 1] === '') lines.pop();
 
-  if (numeric) lines.sort((a, b) => parseFloat(a) - parseFloat(b));
+  // M3: sort -n treats non-numeric lines as 0 (POSIX behavior)
+  if (numeric) lines.sort((a, b) => (parseFloat(a) || 0) - (parseFloat(b) || 0));
   else lines.sort();
   if (reverse) lines.reverse();
 
@@ -608,14 +621,43 @@ function uniq(args, options) {
 
 // ─── tr ──────────────────────────────────────────────────────────────
 
+// M2: tr supports escape sequences (\n, \t, \\) and character ranges (a-z)
+function _expandTrSet(s) {
+  let result = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) {
+      const next = s[i + 1];
+      if (next === 'n') { result += '\n'; i++; }
+      else if (next === 't') { result += '\t'; i++; }
+      else if (next === 'r') { result += '\r'; i++; }
+      else if (next === '\\') { result += '\\'; i++; }
+      else { result += s[i]; }
+    } else if (i + 2 < s.length && s[i + 1] === '-') {
+      // Character range: a-z
+      const start = s.charCodeAt(i);
+      const end = s.charCodeAt(i + 2);
+      for (let c = start; c <= end; c++) result += String.fromCharCode(c);
+      i += 2;
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
+}
+
 function tr(args, options) {
   if (args.length < 2) return { stdout: '', stderr: 'tr: missing operand\n', exitCode: 1 };
-  const from = args[0];
-  const to = args[1];
+  const from = _expandTrSet(args[0]);
+  const to = _expandTrSet(args[1]);
   const text = (options && options._stdin) || '';
-  let result = text;
-  for (let i = 0; i < from.length && i < to.length; i++) {
-    result = result.split(from[i]).join(to[i]);
+  // Build translation map for O(n) performance
+  const map = new Map();
+  for (let i = 0; i < from.length; i++) {
+    map.set(from[i], i < to.length ? to[i] : to[to.length - 1] || '');
+  }
+  let result = '';
+  for (const ch of text) {
+    result += map.has(ch) ? map.get(ch) : ch;
   }
   return { stdout: result, stderr: '', exitCode: 0 };
 }

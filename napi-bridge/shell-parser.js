@@ -4,20 +4,51 @@
  * Handles:
  * - bash -c 'command' / sh -c 'command'
  * - Pipes: cmd1 | cmd2
- * - Redirects: > file, >> file, 2>&1
+ * - Redirects: > file, >> file, < file, 2>&1, 1>&2
  * - Semicolons: cmd1; cmd2
  * - && / ||: conditional chaining
- * - Quoting: 'single', "double", \escape
- * - Environment variables: FOO=bar command
- * - Glob expansion: *.js (basic)
+ * - Quoting: 'single', "double", \escape (quoted args skip glob expansion)
+ * - Environment variables: FOO=bar command, $VAR expansion
+ * - Glob expansion: *.js (basic, unquoted only)
+ *
+ * SECURITY:
+ * - Input length capped at MAX_INPUT_LENGTH to prevent ReDoS (C7)
+ * - Glob regex uses simple character classes, not .* (C7)
+ * - Path normalization clamps at root (C3)
  */
 
 import { defaultMemfs } from './memfs.js';
 import { runCommand, hasCommand } from './shell-commands.js';
 
+const MAX_INPUT_LENGTH = 1_000_000; // C7: prevent ReDoS on huge inputs
+
+// ─── Safe path normalization (C3: clamp at root) ────────────────────
+
+function _normPath(p) {
+  const parts = p.split('/').filter(Boolean);
+  const result = [];
+  for (const part of parts) {
+    if (part === '..') { if (result.length > 0) result.pop(); }
+    else if (part !== '.') result.push(part);
+  }
+  return '/' + result.join('/');
+}
+
+function _resolvePath(p) {
+  if (p.startsWith('/')) return _normPath(p);
+  const cwd = typeof process !== 'undefined' ? process.cwd() : '/';
+  return _normPath(cwd.replace(/\/$/, '') + '/' + p);
+}
+
 // ─── Tokenizer ───────────────────────────────────────────────────────
+// H5: Track whether each WORD token came from a quoted context.
+// Quoted words have `quoted: true` and skip glob expansion.
 
 function tokenize(input) {
+  if (input.length > MAX_INPUT_LENGTH) {
+    throw new Error(`Shell input too long (${input.length} > ${MAX_INPUT_LENGTH})`);
+  }
+
   const tokens = [];
   let i = 0;
   const len = input.length;
@@ -34,17 +65,21 @@ function tokenize(input) {
     if (input[i] === '>' && input[i + 1] === '>') { tokens.push({ type: 'APPEND', value: '>>' }); i += 2; continue; }
     if (input[i] === '>') { tokens.push({ type: 'REDIRECT', value: '>' }); i++; continue; }
     if (input[i] === '<') { tokens.push({ type: 'INPUT', value: '<' }); i++; continue; }
-    if (input[i] === '2' && input[i + 1] === '>' && input[i + 2] === '&' && input[i + 3] === '1') {
-      tokens.push({ type: 'MERGE_STDERR', value: '2>&1' }); i += 4; continue;
+    // M5: Generalized fd redirects: N>&M (e.g., 2>&1, 1>&2)
+    if (/[0-9]/.test(input[i]) && input[i + 1] === '>' && input[i + 2] === '&' && /[0-9]/.test(input[i + 3])) {
+      const srcFd = input[i];
+      const dstFd = input[i + 3];
+      tokens.push({ type: 'FD_REDIRECT', value: `${srcFd}>&${dstFd}`, srcFd, dstFd });
+      i += 4; continue;
     }
 
-    // Quoted strings
+    // Quoted strings — mark as quoted so glob expansion is skipped (H5)
     if (input[i] === "'") {
       let str = '';
       i++; // skip opening quote
       while (i < len && input[i] !== "'") { str += input[i]; i++; }
-      i++; // skip closing quote
-      tokens.push({ type: 'WORD', value: str });
+      if (i < len) i++; // skip closing quote
+      tokens.push({ type: 'WORD', value: str, quoted: true });
       continue;
     }
 
@@ -55,8 +90,8 @@ function tokenize(input) {
         if (input[i] === '\\' && i + 1 < len) { str += input[i + 1]; i += 2; }
         else { str += input[i]; i++; }
       }
-      i++; // skip closing quote
-      tokens.push({ type: 'WORD', value: str });
+      if (i < len) i++; // skip closing quote
+      tokens.push({ type: 'WORD', value: str, quoted: true });
       continue;
     }
 
@@ -68,30 +103,33 @@ function tokenize(input) {
         if (input[i] === '\\' && i + 1 < len) { str += input[i + 1]; i += 2; }
         else { str += input[i]; i++; }
       }
-      tokens.push({ type: 'WORD', value: str });
+      tokens.push({ type: 'WORD', value: str, quoted: false });
       continue;
     }
 
-    // Regular word
+    // Regular word (may contain embedded quotes)
     let word = '';
+    let hasQuotes = false;
     while (i < len && input[i] !== ' ' && input[i] !== '\t' && !isOperatorChar(input, i)) {
       if (input[i] === '\\' && i + 1 < len) { word += input[i + 1]; i += 2; }
-      else if (input[i] === "'" ) {
+      else if (input[i] === "'") {
+        hasQuotes = true;
         i++;
         while (i < len && input[i] !== "'") { word += input[i]; i++; }
-        i++;
+        if (i < len) i++;
       } else if (input[i] === '"') {
+        hasQuotes = true;
         i++;
         while (i < len && input[i] !== '"') {
           if (input[i] === '\\' && i + 1 < len) { word += input[i + 1]; i += 2; }
           else { word += input[i]; i++; }
         }
-        i++;
+        if (i < len) i++;
       } else {
         word += input[i]; i++;
       }
     }
-    if (word) tokens.push({ type: 'WORD', value: word });
+    if (word) tokens.push({ type: 'WORD', value: word, quoted: hasQuotes });
   }
 
   return tokens;
@@ -101,14 +139,13 @@ function isOperatorChar(input, i) {
   const c = input[i];
   if (c === '|' || c === ';' || c === '>' || c === '<') return true;
   if (c === '&' && input[i + 1] === '&') return true;
-  if (c === '2' && input[i + 1] === '>' && input[i + 2] === '&') return true;
+  if (/[0-9]/.test(c) && input[i + 1] === '>' && input[i + 2] === '&') return true;
   return false;
 }
 
 // ─── Parser ──────────────────────────────────────────────────────────
 
 function parseTokens(tokens) {
-  // Split into command groups by ;, &&, ||
   const pipelines = [];
   let current = [];
   const separators = [];
@@ -128,7 +165,6 @@ function parseTokens(tokens) {
 }
 
 function parsePipeline(tokens) {
-  // Split by PIPE
   const commands = [];
   let current = [];
 
@@ -147,7 +183,7 @@ function parsePipeline(tokens) {
 
 function parseSimpleCommand(tokens) {
   const envVars = {};
-  const args = [];
+  const args = [];       // { value, quoted } pairs
   let redirectOut = null;
   let redirectAppend = false;
   let redirectIn = null;
@@ -177,42 +213,62 @@ function parseSimpleCommand(tokens) {
       i++;
       if (i < tokens.length) { redirectOut = tokens[i].value; redirectAppend = true; }
     } else if (tok.type === 'INPUT') {
-      // Bug #14: Parse input redirect < file
       i++;
       if (i < tokens.length) { redirectIn = tokens[i].value; }
-    } else if (tok.type === 'MERGE_STDERR') {
-      mergeStderr = true;
+    } else if (tok.type === 'FD_REDIRECT' || tok.type === 'MERGE_STDERR') {
+      // M5: Handle generalized fd redirects
+      if (tok.srcFd === '2' && tok.dstFd === '1') mergeStderr = true;
+      // Other fd redirects (1>&2, etc.) are noted but not fully implemented
     } else if (tok.type === 'WORD') {
-      args.push(tok.value);
+      args.push({ value: tok.value, quoted: !!tok.quoted });
     }
     i++;
   }
 
-  const cmd = args.shift() || '';
-  return { cmd, args, envVars, redirectOut, redirectAppend, redirectIn, mergeStderr };
+  const cmdArg = args.shift() || { value: '', quoted: false };
+  return {
+    cmd: cmdArg.value,
+    args,  // Now array of { value, quoted }
+    envVars,
+    redirectOut, redirectAppend, redirectIn, mergeStderr,
+  };
 }
 
-// ─── Glob expansion ──────────────────────────────────────────────────
+// ─── $VAR expansion (M8) ────────────────────────────────────────────
+
+function _expandVars(str) {
+  if (typeof process === 'undefined' || !process.env) return str;
+  return str.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => {
+    return process.env[name] || '';
+  });
+}
+
+// ─── Glob expansion (C7: safe regex, H5: skip quoted args) ─────────
 
 function expandGlobs(args) {
   const result = [];
   for (const arg of args) {
-    if (arg.includes('*') || arg.includes('?')) {
-      const expanded = expandGlob(arg);
+    // H5: Never expand globs for quoted arguments
+    if (arg.quoted) {
+      result.push(arg.value);
+      continue;
+    }
+    const val = arg.value;
+    if (val.includes('*') || val.includes('?')) {
+      const expanded = expandGlob(val);
       if (expanded.length > 0) {
         result.push(...expanded);
       } else {
-        result.push(arg); // No match, keep as-is
+        result.push(val); // No match, keep as-is
       }
     } else {
-      result.push(arg);
+      result.push(val);
     }
   }
   return result;
 }
 
 function expandGlob(pattern) {
-  // Simple glob: split into dir + file pattern
   const lastSlash = pattern.lastIndexOf('/');
   let dir, filePattern;
   if (lastSlash >= 0) {
@@ -223,7 +279,17 @@ function expandGlob(pattern) {
     filePattern = pattern;
   }
 
-  const re = new RegExp('^' + filePattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+  // C7: Build regex safely — use [^/]* instead of .* to prevent catastrophic backtracking
+  let reStr = '^';
+  for (const ch of filePattern) {
+    if (ch === '*') reStr += '[^/]*';
+    else if (ch === '?') reStr += '[^/]';
+    else reStr += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  reStr += '$';
+
+  let re;
+  try { re = new RegExp(reStr); } catch { return []; }
 
   try {
     const entries = defaultMemfs.readdir(dir);
@@ -239,8 +305,9 @@ function expandGlob(pattern) {
 // ─── Unwrap bash/sh -c ──────────────────────────────────────────────
 
 function unwrapShellInvocation(cmd, args) {
-  if ((cmd === 'bash' || cmd === 'sh' || cmd === '/bin/bash' || cmd === '/bin/sh') && args[0] === '-c' && args.length >= 2) {
-    return args.slice(1).join(' ');
+  if ((cmd === 'bash' || cmd === 'sh' || cmd === '/bin/bash' || cmd === '/bin/sh') &&
+      args.length >= 2 && args[0].value === '-c') {
+    return args.slice(1).map(a => a.value).join(' ');
   }
   return null;
 }
@@ -254,7 +321,6 @@ export function executeCommandString(commandStr, options) {
   let lastResult = { stdout: '', stderr: '', exitCode: 0 };
 
   for (let i = 0; i < pipelines.length; i++) {
-    // Check separator condition
     if (i > 0) {
       const sep = separators[i - 1];
       if (sep === 'AND' && lastResult.exitCode !== 0) continue;
@@ -274,19 +340,13 @@ function executePipeline(commands, options) {
   for (let i = 0; i < commands.length; i++) {
     let { cmd, args, envVars, redirectOut, redirectAppend, redirectIn, mergeStderr } = commands[i];
 
-    // Bug #14: Handle input redirect — read file and use as stdin
+    // M8: Expand $VAR in cmd and unquoted args
+    cmd = _expandVars(cmd);
+
+    // Handle input redirect
     if (redirectIn && input === null) {
       try {
-        const resolved = redirectIn.startsWith('/') ? redirectIn
-          : (typeof process !== 'undefined' ? process.cwd() : '/').replace(/\/$/, '') + '/' + redirectIn;
-        const parts = resolved.split('/').filter(Boolean);
-        const result = [];
-        for (const part of parts) {
-          if (part === '..') result.pop();
-          else if (part !== '.') result.push(part);
-        }
-        const norm = '/' + result.join('/');
-        input = new TextDecoder().decode(defaultMemfs.readFile(norm));
+        input = new TextDecoder().decode(defaultMemfs.readFile(_resolvePath(redirectIn)));
       } catch {
         return { stdout: '', stderr: `${cmd}: ${redirectIn}: No such file or directory\n`, exitCode: 1 };
       }
@@ -299,7 +359,6 @@ function executePipeline(commands, options) {
       if (i < commands.length - 1) {
         input = result.stdout;
       } else {
-        // Handle redirect for the unwrapped result
         if (redirectOut) {
           writeRedirect(redirectOut, result.stdout, redirectAppend);
           return { stdout: '', stderr: result.stderr, exitCode: result.exitCode };
@@ -309,8 +368,11 @@ function executePipeline(commands, options) {
       continue;
     }
 
-    // Expand globs
-    args = expandGlobs(args);
+    // Expand globs (H5: respects quoted flag) and $VAR in unquoted args
+    const expandedArgs = expandGlobs(args.map(a => {
+      if (a.quoted) return a;
+      return { value: _expandVars(a.value), quoted: false };
+    }));
 
     // Set env vars
     const savedEnv = {};
@@ -325,7 +387,7 @@ function executePipeline(commands, options) {
     let result;
 
     if (hasCommand(cmd)) {
-      result = runCommand(cmd, args, cmdOptions);
+      result = runCommand(cmd, expandedArgs, cmdOptions);
     } else {
       result = { stdout: '', stderr: `${cmd}: command not found\n`, exitCode: 127 };
     }
@@ -359,16 +421,7 @@ function executePipeline(commands, options) {
 }
 
 function writeRedirect(path, content, append) {
-  const resolved = path.startsWith('/') ? path : (typeof process !== 'undefined' ? process.cwd() : '/') + '/' + path;
-
-  // Normalize the path
-  const parts = resolved.split('/').filter(Boolean);
-  const result = [];
-  for (const part of parts) {
-    if (part === '..') result.pop();
-    else if (part !== '.') result.push(part);
-  }
-  const norm = '/' + result.join('/');
+  const norm = _resolvePath(path);
 
   if (append) {
     try {

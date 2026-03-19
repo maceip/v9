@@ -2859,7 +2859,7 @@ export async function initEdgeJS(options = {}) {
     const parts = p.split('/').filter(Boolean);
     const result = [];
     for (const part of parts) {
-      if (part === '..') result.pop();
+      if (part === '..') { if (result.length > 0) result.pop(); }
       else if (part !== '.') result.push(part);
     }
     return '/' + result.join('/');
@@ -2947,6 +2947,12 @@ export async function initEdgeJS(options = {}) {
     };
 
     try {
+      // C6: SECURITY NOTE — new Function() executes loaded modules with full
+      // access to globalThis. This is intentional: Claude Code and its
+      // dependencies require unrestricted JS execution. The trust boundary
+      // is at the MEMFS level — only code pre-loaded into MEMFS (via
+      // initEdgeJS({ files }) or runtime.fs.writeFileSync) can be required.
+      // Do NOT load untrusted code into MEMFS without sandboxing.
       const wrapped = new Function(
         'exports', 'require', 'module', '__filename', '__dirname',
         source
@@ -2959,6 +2965,15 @@ export async function initEdgeJS(options = {}) {
     }
     return moduleObj.exports;
   }
+
+  // M9: require.main and require.cache for compatibility
+  _memfsRequire.main = null;
+  _memfsRequire.cache = _moduleCache;
+  _memfsRequire.resolve = (name) => {
+    const r = _resolveModule(name, _sharedProcessBridge.cwd());
+    if (!r || r.type === 'builtin') return name;
+    return r.path;
+  };
 
   // ── Bridge-only mode ────────────────────────────────────────────────
   // When no Wasm module is available, return a lightweight runtime backed
@@ -2975,10 +2990,14 @@ export async function initEdgeJS(options = {}) {
       },
 
       runFile(path) {
+        // M7: Log errors to stderr instead of swallowing silently
         try {
           _memfsRequire(String(path), _sharedProcessBridge.cwd());
           return 0;
-        } catch { return 1; }
+        } catch (err) {
+          try { _sharedProcessBridge.stderr.write(`Error: ${err.message}\n`); } catch {}
+          return 1;
+        }
       },
 
       execute(scriptPath, opts = {}) {

@@ -117,7 +117,7 @@ function normalizePath(p) {
   const parts = p.split('/').filter(Boolean);
   const result = [];
   for (const part of parts) {
-    if (part === '..') result.pop();
+    if (part === '..') { if (result.length > 0) result.pop(); }
     else if (part !== '.') result.push(part);
   }
   return '/' + result.join('/');

@@ -52,13 +52,13 @@ async function loadXterm() {
 }
 
 // ─── Configuration ───────────────────────────────────────────────────
+// H4: API key is prompted, NOT read from URL query string.
+// Only proxy and bundle URLs come from query params.
 
 function getConfig() {
   const params = new URLSearchParams(globalThis.location?.search || '');
   return {
-    apiKey: params.get('key') || '',
     proxyUrl: params.get('proxy') || '',
-    // If no Claude Code bundle, run in SDK-direct mode
     claudeCodeBundle: params.get('bundle') || '',
   };
 }
@@ -98,6 +98,19 @@ async function boot() {
   // ── Load EdgeJS runtime ────────────────────────────────────────────
 
   const config = getConfig();
+
+  // H4: Prompt for API key via sessionStorage (not URL params)
+  let apiKey = sessionStorage.getItem('anthropic_api_key') || '';
+  if (!apiKey) {
+    term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
+    term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
+    term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
+    term.writeln('');
+    term.writeln('\x1b[33mNo API key found in session.\x1b[0m');
+    term.writeln('\x1b[90mSet via: sessionStorage.setItem("anthropic_api_key", "sk-ant-...")\x1b[0m');
+    term.writeln('\x1b[90mThen reload the page.\x1b[0m');
+  }
+
   let runtime;
 
   try {
@@ -111,7 +124,7 @@ async function boot() {
         COLORTERM: 'truecolor',
         COLUMNS: String(term.cols),
         LINES: String(term.rows),
-        ...(config.apiKey ? { ANTHROPIC_API_KEY: config.apiKey } : {}),
+        ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
       },
     });
 
@@ -126,24 +139,27 @@ async function boot() {
       runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
       runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
     } catch (err) {
-      term.writeln('\x1b[33m[sdk] Anthropic SDK bundle not found: ' + err.message + '\x1b[0m');
-      term.writeln('\x1b[90m  Run: sh scripts/bundle-sdk.sh\x1b[0m');
+      term.writeln('\x1b[33m[sdk] Bundle not found. Run: sh scripts/bundle-sdk.sh\x1b[0m');
     }
 
     // ── Load Claude Code bundle if provided ──────────────────────────
     if (config.claudeCodeBundle) {
       try {
         const resp = await fetch(config.claudeCodeBundle);
+        // C5: Check HTTP status before executing as code
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        }
         const bundleSrc = await resp.text();
         runtime.fs.mkdirSync('/app', { recursive: true });
         runtime.fs.writeFileSync('/app/claude-code.js', bundleSrc);
       } catch (err) {
-        term.writeln('\x1b[33m[bundle] Failed to load Claude Code bundle: ' + err.message + '\x1b[0m');
+        term.writeln('\x1b[33m[bundle] Failed to load: ' + _safe(err.message) + '\x1b[0m');
       }
     }
 
   } catch (err) {
-    term.writeln('\x1b[33m[edgejs] Runtime not available: ' + err.message + '\x1b[0m');
+    term.writeln('\x1b[33m[edgejs] Runtime not available: ' + _safe(err.message) + '\x1b[0m');
     term.writeln('\x1b[90mTerminal UI loaded — runtime will connect when Wasm is built.\x1b[0m');
     runtime = null;
   }
@@ -168,24 +184,23 @@ async function boot() {
     }
   });
 
-  // ── Welcome message ────────────────────────────────────────────────
-
-  term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
-  term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
-  term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
-  term.writeln('');
+  // ── Status display ─────────────────────────────────────────────────
 
   if (runtime) {
+    term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
+    term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
+    term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
+    term.writeln('');
     term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
 
-    if (config.apiKey) {
+    if (apiKey) {
       term.writeln('\x1b[32m✓ API key configured\x1b[0m');
     } else {
-      term.writeln('\x1b[33m⚠ No API key — add ?key=sk-ant-... to URL\x1b[0m');
+      term.writeln('\x1b[33m⚠ No API key\x1b[0m');
     }
 
     if (config.proxyUrl) {
-      term.writeln(`\x1b[32m✓ CORS proxy: ${config.proxyUrl}\x1b[0m`);
+      term.writeln('\x1b[32m✓ CORS proxy configured\x1b[0m');
     }
 
     // If Claude Code bundle is loaded, run it
@@ -196,17 +211,14 @@ async function boot() {
     if (hasBundle) {
       term.writeln('\x1b[32m✓ Claude Code bundle loaded\x1b[0m');
       term.writeln('');
-      // Run Claude Code entry point
       try {
         runtime.require('/app/claude-code.js', '/app');
       } catch (err) {
-        term.writeln('\x1b[31m✗ Claude Code failed to start: ' + err.message + '\x1b[0m');
+        term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
       }
     } else {
       term.writeln('');
-      term.writeln('\x1b[90mNo Claude Code bundle loaded.\x1b[0m');
-      term.writeln('\x1b[90mTo load: add ?bundle=<url-to-bundle.js> to URL\x1b[0m');
-      term.writeln('');
+      term.writeln('\x1b[90mNo Claude Code bundle. Add ?bundle=<url> to URL\x1b[0m');
     }
   }
 
@@ -215,8 +227,18 @@ async function boot() {
   globalThis.__edgeRuntime = runtime;
 }
 
+// C4: Safe text output — never use innerHTML with untrusted data
+function _safe(str) {
+  if (typeof str !== 'string') return String(str || '');
+  // Truncate to prevent terminal flooding
+  return str.length > 200 ? str.slice(0, 200) + '...' : str;
+}
+
 boot().catch((err) => {
   console.error('[terminal] Boot failed:', err);
-  document.body.innerHTML = '<pre style="color:#f00;padding:1em">' +
-    'Terminal boot failed: ' + err.message + '</pre>';
+  // C4: Use textContent, never innerHTML, to prevent XSS
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'color:#f00;padding:1em';
+  pre.textContent = 'Terminal boot failed: ' + (err.message || String(err));
+  document.body.replaceChildren(pre);
 });
