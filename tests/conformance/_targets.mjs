@@ -135,6 +135,20 @@ export async function loadStreamsModule() {
   };
 }
 
+export async function loadFsModule() {
+  if (targetMode === 'node') {
+    const mod = await import('node:fs');
+    return { fs: mod.default || mod };
+  }
+
+  const mod = await importWithContext('../../napi-bridge/fs.js');
+  const fs = pickFirst(mod.default, mod.fs, mod);
+  if (!fs) {
+    throw new Error('Bridge fs export not found');
+  }
+  return { fs };
+}
+
 export async function loadProcessModule() {
   if (targetMode === 'node') {
     return { processObject: process };

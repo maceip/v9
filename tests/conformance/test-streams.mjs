@@ -242,9 +242,10 @@ await testAsync('Duplex supports writable input and readable output', async () =
   const duplex = new EchoDuplex();
   const chunks = [];
   duplex.on('data', (chunk) => chunks.push(String(chunk)));
+  const endPromise = waitForEvent(duplex, 'end');
   duplex.write('x');
   duplex.end('y');
-  await waitForEvent(duplex, 'end');
+  await endPromise;
   assertEq(chunks.join(''), 'xy');
 });
 
