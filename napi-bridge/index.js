@@ -3369,6 +3369,10 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
   }
 
   // Pre-populate MEMFS from options.files if provided
+  const fsMod = await import('./fs.js');
+  const bridgeFs = fsMod.default || fsMod.fs || fsMod;
+  const { processBridge } = await import('./browser-builtins.js');
+
   if (options.files) {
     try {
       const { defaultMemfs } = await import('./memfs.js');
@@ -3428,8 +3432,22 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
       return executeScript(scriptPath, options.inject || {});
     },
 
-    /** Access the virtual filesystem */
-    fs: instance.FS,
+    /** Access the virtual filesystem (Node.js-compatible API backed by MEMFS) */
+    fs: bridgeFs,
+
+    /** Push data into process.stdin (for terminal keyboard input) */
+    pushStdin(data) {
+      processBridge.stdin.push(typeof data === 'string' ? data : String(data));
+    },
+
+    /** Update terminal dimensions and emit SIGWINCH */
+    setTerminalSize(cols, rows) {
+      processBridge.stdout.columns = cols;
+      processBridge.stdout.rows = rows;
+      processBridge.stderr.columns = cols;
+      processBridge.stderr.rows = rows;
+      try { processBridge.emit('SIGWINCH'); } catch {}
+    },
 
     /** Raw Emscripten module (for advanced use) */
     module: instance,
