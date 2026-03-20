@@ -77,6 +77,8 @@ const proxy = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-fileServer.listen(8080, () => console.log('File server: http://localhost:8080/web/'));
-proxy.listen(8081, () => console.log('CORS proxy:  http://localhost:8081/'));
-console.log('\nOpen: http://localhost:8080/web/index.html?bundle=/dist/claude-code-cli.js');
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const PROXY_PORT = parseInt(process.env.PROXY_PORT || String(PORT + 1), 10);
+fileServer.listen(PORT, () => console.log(`File server: http://localhost:${PORT}/web/`));
+proxy.listen(PROXY_PORT, () => console.log(`CORS proxy:  http://localhost:${PROXY_PORT}/`));
+console.log(`\nOpen: http://localhost:${PORT}/web/index.html?bundle=/dist/claude-code-cli.js`);

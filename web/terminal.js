@@ -176,6 +176,11 @@ async function boot() {
   // ── Keyboard input → process.stdin ─────────────────────────────────
 
   term.onData((data) => {
+    // Push to global process.stdin (ESM CLI path)
+    if (typeof globalThis._stdinPush === 'function') {
+      globalThis._stdinPush(data);
+    }
+    // Also push to runtime.pushStdin (Wasm runtime path)
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
     }

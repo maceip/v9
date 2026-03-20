@@ -148,7 +148,35 @@
         cwd: () => '/', chdir: () => {}, platform: 'linux', arch: 'x64',
         version: 'v20.0.0-browser', versions: { node: '20.0.0' }, pid: 1, ppid: 0,
         title: 'browser', exitCode: 0, umask: () => 0o22,
-        stdin: { isTTY: true, on: ()=>globalThis.process.stdin, once: ()=>globalThis.process.stdin, read: ()=>null, resume: ()=>globalThis.process.stdin, pause: ()=>globalThis.process.stdin, setEncoding: ()=>globalThis.process.stdin, setRawMode: (m)=>{globalThis.process.stdin.isRaw=m;return globalThis.process.stdin;}, isRaw: false, readable: true, fd: 0, ref: ()=>globalThis.process.stdin, unref: ()=>globalThis.process.stdin, removeListener: ()=>globalThis.process.stdin, removeAllListeners: ()=>globalThis.process.stdin, listeners: ()=>[], listenerCount: ()=>0, emit: ()=>false, addListener: ()=>globalThis.process.stdin, prependListener: ()=>globalThis.process.stdin },
+        stdin: (() => {
+          const _listeners = {};
+          const stdin = {
+            isTTY: true, isRaw: false, readable: true, fd: 0,
+            on(ev, fn) { if (!_listeners[ev]) _listeners[ev] = []; _listeners[ev].push(fn); return stdin; },
+            once(ev, fn) { const w = (...a) => { stdin.removeListener(ev, w); fn(...a); }; w.listener = fn; return stdin.on(ev, w); },
+            addListener(ev, fn) { return stdin.on(ev, fn); },
+            prependListener(ev, fn) { if (!_listeners[ev]) _listeners[ev] = []; _listeners[ev].unshift(fn); return stdin; },
+            removeListener(ev, fn) { if (_listeners[ev]) _listeners[ev] = _listeners[ev].filter(f => f !== fn && f.listener !== fn); return stdin; },
+            removeAllListeners(ev) { if (ev) delete _listeners[ev]; else Object.keys(_listeners).forEach(k => delete _listeners[k]); return stdin; },
+            off(ev, fn) { return stdin.removeListener(ev, fn); },
+            emit(ev, ...args) { const fns = _listeners[ev]; if (!fns) return false; for (const fn of fns.slice()) fn(...args); return true; },
+            listeners(ev) { return (_listeners[ev] || []).slice(); },
+            listenerCount(ev) { return (_listeners[ev] || []).length; },
+            rawListeners(ev) { return (_listeners[ev] || []).slice(); },
+            eventNames() { return Object.keys(_listeners).filter(k => _listeners[k]?.length > 0); },
+            setMaxListeners() { return stdin; }, getMaxListeners() { return 10; },
+            read() { return null; },
+            resume() { return stdin; }, pause() { return stdin; },
+            setEncoding() { return stdin; },
+            setRawMode(m) { stdin.isRaw = m; return stdin; },
+            ref() { return stdin; }, unref() { return stdin; },
+            pipe() { return stdin; }, unpipe() { return stdin; },
+            destroy() {},
+          };
+          // Expose a push method for terminal.js to inject keystrokes
+          globalThis._stdinPush = (data) => { stdin.emit('data', data); };
+          return stdin;
+        })(),
         stdout: { isTTY: true, columns: 80, rows: 24, write: (s)=>{const str=typeof s==='string'?s:new TextDecoder().decode(s);if(globalThis._xtermWrite)globalThis._xtermWrite(str);else globalThis._origConsoleLog?.(str);return true;}, on: ()=>globalThis.process.stdout, once: ()=>globalThis.process.stdout, emit: ()=>false, end: ()=>{}, writable: true, fd: 1, getColorDepth: ()=>24, hasColors: ()=>true },
         stderr: { isTTY: true, write: (s)=>{const str=typeof s==='string'?s:new TextDecoder().decode(s);if(globalThis._xtermWrite)globalThis._xtermWrite(str);else globalThis._origConsoleError?.(str);return true;}, on: ()=>globalThis.process.stderr, once: ()=>globalThis.process.stderr, emit: ()=>false, end: ()=>{}, writable: true, fd: 2, getColorDepth: ()=>24, hasColors: ()=>true },
         exit: (code) => { console.log(`[process.exit] code=${code}`); },
