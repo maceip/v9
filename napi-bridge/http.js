@@ -507,8 +507,8 @@ export const http = {
   createServer() {
     throw new Error('http.createServer() is not available in browser — use a service worker or external proxy');
   },
-  Agent: class Agent {},
-  globalAgent: {},
+  Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
+  globalAgent: new (class extends EventEmitter { constructor() { super(); this.maxSockets = Infinity; this.maxFreeSockets = 256; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; } destroy() {} getName() { return 'localhost'; } })(),
   ClientRequest,
   IncomingMessage,
   ServerResponse: class ServerResponse {},
@@ -551,8 +551,8 @@ export const https = {
   createServer() {
     throw new Error('https.createServer() is not available in browser');
   },
-  Agent: class Agent {},
-  globalAgent: {},
+  Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
+  globalAgent: new (class extends EventEmitter { constructor() { super(); this.maxSockets = Infinity; this.maxFreeSockets = 256; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; } destroy() {} getName() { return 'localhost'; } })(),
   ClientRequest,
   IncomingMessage,
   ServerResponse: class ServerResponse {},

@@ -1,12 +1,18 @@
 // ESM wrapper for node:stream
-// Default export MUST be a constructor (Readable) because Node.js code does:
-// import Stream from 'stream'; class Foo extends Stream {}
+// Wraps classes with Proxy so they can be called without 'new' (CJS compat)
+import { Readable as _R, Writable as _W, Duplex as _D, Transform as _T, PassThrough as _PT, pipeline, finished, getDefaultHighWaterMark, setDefaultHighWaterMark, promises } from './streams.js';
 
-import { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, getDefaultHighWaterMark, setDefaultHighWaterMark, promises } from './streams.js';
+function _wrap(Cls) { return new Proxy(Cls, { apply(t, _, a) { return new t(...a); } }); }
 
-export { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, getDefaultHighWaterMark, setDefaultHighWaterMark, promises };
-
+export const Readable = _wrap(_R);
+export const Writable = _wrap(_W);
+export const Duplex = _wrap(_D);
+export const Transform = _wrap(_T);
+export const PassThrough = _wrap(_PT);
 export const Stream = Readable;
+
+export { pipeline, finished, getDefaultHighWaterMark, setDefaultHighWaterMark, promises };
+
 export function addAbortSignal() {}
 export function compose() { throw new Error('stream.compose not implemented'); }
 export function destroy() {}
@@ -17,6 +23,5 @@ export function isReadable() { return true; }
 export function isWritable() { return true; }
 export function duplexPair() { return [new Duplex(), new Duplex()]; }
 
-// Default is Readable constructor with all stream classes attached
 Object.assign(Readable, { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, getDefaultHighWaterMark, setDefaultHighWaterMark, promises, addAbortSignal, compose, destroy, isDestroyed, isDisturbed, isErrored, isReadable, isWritable, duplexPair });
 export default Readable;
