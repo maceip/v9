@@ -4,6 +4,8 @@ Browser-native Node.js runtime based on [EdgeJS](https://github.com/wasmerio/edg
 compiled to WebAssembly via Emscripten.
 
 **Goal**: Run Claude Code, Codex CLI, and Gemini CLI in the browser.
+Use **Parsec** (`experimental/parsec-engine/`) as the packaging/lift pipeline for
+real apps that need static prep, rewrite, and browser-oriented load plans.
 
 ## Module Structure
 
@@ -70,6 +72,9 @@ The runtime also auto-expands builtin overrides using this manifest via
 disabled by default to avoid reintroducing old stub-only wrappers.
 
 ### 2) Parsec Engine (Two-Stage Pipeline)
+
+Parsec is the recommended path for turning npm packages, repo snapshots, and raw
+WASM inputs into reproducible browser-loadable bundles plus loader metadata.
 
 Run the parser/prep/packaging engine from CLI:
 
