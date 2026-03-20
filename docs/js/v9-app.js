@@ -13,6 +13,7 @@ import { NavFluid } from './fluid.js';
 import { GlassScene } from './glass.js';
 import { ZoomController } from './zoom.js';
 import { initIcons } from './icons.js';
+import { SwipeDismiss } from './swipe.js';
 
 // ── State ──
 let state = 'IDLE';
@@ -271,7 +272,7 @@ function resetToIdle() {
   termOverlay.style.opacity = '';
   bootText.style.display = '';
   bootText.innerHTML = '';
-  termWrap.classList.remove('zoomed', 'swiping', 'snap-back', 'dismissing');
+  termWrap.classList.remove('zoomed');
   termWrap.classList.add('idle');
   termWrap.style.transform = '';
   if (glass) { glass.fog = 0.55; glass.glassBlur = 0.8; glass.start(); }
@@ -289,70 +290,21 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Predictive back: swipe-to-dismiss with stretch + snap-back ──
+// ── Predictive back: Android Quickstep swipe-to-dismiss ──
+// Uses real underdamped spring physics from Android's SpringForce.java
+// Velocity-tracked fling detection (not distance-based)
 const dismissedTray = document.getElementById('dismissed-tray');
-let swipe = null;
-const SWIPE_THRESHOLD = 120;  // px to dismiss
-const STRETCH_FACTOR = 0.35;  // rubber-band stretch ratio
 
-termWrap.addEventListener('touchstart', (e) => {
-  if (state !== 'RUNNING' && state !== 'BOOTING') return;
-  const t = e.touches[0];
-  swipe = { sx: t.clientX, sy: t.clientY, dx: 0, dy: 0, active: false };
-}, { passive: true });
-
-termWrap.addEventListener('touchmove', (e) => {
-  if (!swipe || (state !== 'RUNNING' && state !== 'BOOTING')) return;
-  const t = e.touches[0];
-  swipe.dx = t.clientX - swipe.sx;
-  swipe.dy = t.clientY - swipe.sy;
-
-  // Only activate after 10px movement
-  if (!swipe.active && (Math.abs(swipe.dx) > 10 || Math.abs(swipe.dy) > 10)) {
-    swipe.active = true;
-    termWrap.classList.add('swiping');
-  }
-
-  if (swipe.active) {
-    // Rubber-band: stretch diminishes with distance
-    const stretchX = swipe.dx * STRETCH_FACTOR;
-    const stretchY = swipe.dy * STRETCH_FACTOR;
-    const dist = Math.sqrt(stretchX * stretchX + stretchY * stretchY);
-    const scaleDown = Math.max(0.85, 1 - dist / 1500);
-    termWrap.style.transform = `translate(${stretchX}px, ${stretchY}px) scale(${scaleDown})`;
-  }
-}, { passive: true });
-
-termWrap.addEventListener('touchend', () => {
-  if (!swipe || !swipe.active) { swipe = null; return; }
-  termWrap.classList.remove('swiping');
-
-  const dist = Math.sqrt(swipe.dx * swipe.dx + swipe.dy * swipe.dy);
-
-  if (dist > SWIPE_THRESHOLD) {
-    // Dismiss — fling in swipe direction
-    const angle = Math.atan2(swipe.dy, swipe.dx);
-    const flingX = Math.cos(angle) * 600;
-    const flingY = Math.sin(angle) * 600;
-    termWrap.classList.add('dismissing');
-    termWrap.style.transform = `translate(${flingX}px, ${flingY}px) scale(0.3)`;
-
-    setTimeout(() => {
-      // Add tile to dismissed tray
-      addDismissedTile();
-      resetToIdle();
-    }, 300);
-  } else {
-    // Snap back — spring wobble
-    termWrap.classList.add('snap-back');
-    termWrap.style.transform = 'translate(0, 0) scale(1)';
-    setTimeout(() => {
-      termWrap.classList.remove('snap-back');
-      termWrap.style.transform = '';
-    }, 450);
-  }
-  swipe = null;
-}, { passive: true });
+new SwipeDismiss(termWrap, {
+  canSwipe: () => state === 'RUNNING' || state === 'BOOTING',
+  onDismiss: () => {
+    addDismissedTile();
+    resetToIdle();
+  },
+  onSnapBack: () => {
+    // Terminal stays in current state — no action needed
+  },
+});
 
 let dismissedCount = 0;
 function addDismissedTile() {
