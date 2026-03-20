@@ -7,6 +7,11 @@
 //   alignment expectation for V8 allocations.
 // - We wrap mmap/sysconf to keep page size and anonymous mapping behavior
 //   consistent for the V8 platform layer.
+//
+// Allocation strategy:
+// - Each anonymous mapping has a MappingHeader with magic + size + prot.
+// - A global allocation set tracks all live mappings for robust validation.
+// - munmap validates the magic header before freeing.
 
 #if defined(__EMSCRIPTEN__)
 
@@ -22,13 +27,49 @@
 namespace {
 
 constexpr long kV8EmscriptenPageSize = 4096;
+constexpr uint32_t kMappingMagic = 0xED6E4D41; // "EDMA" - EdgeJS MMap Allocation
 
-// We use inline metadata instead of a global map/mutex to avoid lock 
-// contention and hash lookups on linear memory allocations.
-struct AllocationRecord {
-  size_t size;
+struct MappingHeader {
+  uint32_t magic;
+  size_t total_size;   // includes header + payload
+  size_t payload_size; // user-requested length (rounded up to page alignment)
   int prot;
 };
+
+// Allocation tracking set for robust munmap validation.
+// We use a simple sorted array since typical mapping counts are small (<1000).
+// For larger workloads, this could be replaced with an unordered_set.
+static void** g_live_mappings = nullptr;
+static size_t g_live_count = 0;
+static size_t g_live_capacity = 0;
+
+void TrackMapping(void* header_ptr) {
+  if (g_live_count >= g_live_capacity) {
+    size_t new_cap = g_live_capacity == 0 ? 64 : g_live_capacity * 2;
+    void** new_arr = static_cast<void**>(realloc(g_live_mappings, new_cap * sizeof(void*)));
+    if (!new_arr) return; // best-effort tracking
+    g_live_mappings = new_arr;
+    g_live_capacity = new_cap;
+  }
+  g_live_mappings[g_live_count++] = header_ptr;
+}
+
+bool UntrackMapping(void* header_ptr) {
+  for (size_t i = 0; i < g_live_count; i++) {
+    if (g_live_mappings[i] == header_ptr) {
+      g_live_mappings[i] = g_live_mappings[--g_live_count];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsTrackedMapping(void* header_ptr) {
+  for (size_t i = 0; i < g_live_count; i++) {
+    if (g_live_mappings[i] == header_ptr) return true;
+  }
+  return false;
+}
 
 size_t RoundUp(size_t value, size_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
@@ -52,18 +93,27 @@ bool IsAnonymousMap(int flags, int fd) {
 }
 
 void* AllocateAligned(size_t length, size_t alignment, int prot) {
-  const size_t total_size = RoundUp(length, alignment) + sizeof(AllocationRecord);
+  const size_t payload_size = RoundUp(length, alignment);
+  const size_t total_size = payload_size + sizeof(MappingHeader);
+  // Align the full allocation (header + payload) so the user pointer
+  // is also aligned. We add alignment padding to ensure this.
+  const size_t alloc_size = total_size + alignment;
   void* raw_ptr = nullptr;
-  if (posix_memalign(&raw_ptr, alignment, total_size) != 0) {
+  if (posix_memalign(&raw_ptr, alignment, alloc_size) != 0) {
     return nullptr;
   }
-  memset(raw_ptr, 0, total_size);
+  memset(raw_ptr, 0, alloc_size);
 
-  auto* record = static_cast<AllocationRecord*>(raw_ptr);
-  record->size = total_size;
-  record->prot = prot;
+  // Place header at the start, user pointer right after (aligned)
+  auto* header = static_cast<MappingHeader*>(raw_ptr);
+  header->magic = kMappingMagic;
+  header->total_size = alloc_size;
+  header->payload_size = payload_size;
+  header->prot = prot;
 
-  return static_cast<char*>(raw_ptr) + sizeof(AllocationRecord);
+  TrackMapping(raw_ptr);
+
+  return static_cast<char*>(raw_ptr) + sizeof(MappingHeader);
 }
 
 }  // namespace
@@ -96,6 +146,8 @@ extern "C" void* __wrap_mmap(void* addr, size_t length, int prot, int flags,
     return MAP_FAILED;
   }
 
+  // PROT_EXEC and PROT_NONE cannot be truly enforced in Wasm linear memory.
+  // Return ENOTSUP with clear semantics.
   if ((prot & PROT_EXEC) != 0 || prot == PROT_NONE) {
     errno = ENOTSUP;
     return MAP_FAILED;
@@ -124,38 +176,47 @@ extern "C" void* __wrap_mmap(void* addr, size_t length, int prot, int flags,
 }
 
 extern "C" int __wrap_munmap(void* addr, size_t length) {
-  // If it doesn't look like our anonymous map block, defer to the real munmap
   if (addr == nullptr) {
      return 0;
   }
 
-  // Attempt to recover the record
-  void* raw_ptr = static_cast<char*>(addr) - sizeof(AllocationRecord);
-  auto* record = static_cast<AllocationRecord*>(raw_ptr);
+  // Recover the header and validate via magic + allocation tracking
+  void* raw_ptr = static_cast<char*>(addr) - sizeof(MappingHeader);
+  auto* header = static_cast<MappingHeader*>(raw_ptr);
 
-  // We cannot robustly verify if it's genuinely our mapped pointer here without 
-  // global tracking, but if the sizes match roughly, we free.
-  // In a robust implementation without global tracking we'd need a magic header.
-  // For V8's behavior where it always unmaps what it maps perfectly, this suffices.
-  if (RoundUp(length, static_cast<size_t>(kV8EmscriptenPageSize)) + sizeof(AllocationRecord) == record->size) {
+  // Three-way validation: magic header + tracked pointer + size consistency
+  if (header->magic == kMappingMagic && IsTrackedMapping(raw_ptr)) {
+    const size_t rounded_length = RoundUp(length, static_cast<size_t>(kV8EmscriptenPageSize));
+    if (rounded_length == header->payload_size) {
+      UntrackMapping(raw_ptr);
+      // Clear magic to prevent use-after-free false positives
+      header->magic = 0;
       free(raw_ptr);
       return 0;
+    }
+    // Partial unmap of a tracked mapping — not supported
+    errno = ENOTSUP;
+    return -1;
   }
 
-  // Fallback to real munmap. If the user tried a partial unmap, the real munmap 
-  // on a posix_memalign'd ptr will fail, which is exactly the ENOTSUP behavior we want.
+  // Not our mapping — fall back to real munmap
   return __real_munmap(addr, length);
 }
 
 extern "C" int __wrap_mprotect(void* addr, size_t len, int prot) {
-  // Same as mmap: Wasm linear memory cannot truly be protected page-by-page.
+  // Wasm linear memory cannot truly be protected page-by-page.
   if ((prot & PROT_EXEC) != 0 || prot == PROT_NONE) {
       errno = ENOTSUP;
       return -1;
   }
 
-  // Record update would go here if we could reliably identify the pointer. 
-  // For V8 compat, returning 0 on valid requested protections is sufficient.
+  // If this is one of our tracked mappings, update the recorded protection
+  void* raw_ptr = static_cast<char*>(addr) - sizeof(MappingHeader);
+  auto* header = static_cast<MappingHeader*>(raw_ptr);
+  if (header->magic == kMappingMagic && IsTrackedMapping(raw_ptr)) {
+    header->prot = prot;
+  }
+
   return 0;
 }
 

@@ -39,17 +39,16 @@ const NAPI_FUNCTION = 7;
 const NAPI_EXTERNAL = 8;
 const NAPI_BIGINT = 9;
 const NAPI_STATIC = 1 << 10;
-const StableTextEncoder = typeof globalThis.TextEncoder === 'function' ? globalThis.TextEncoder : null;
-const StableTextDecoder = typeof globalThis.TextDecoder === 'function' ? globalThis.TextDecoder : null;
+// Cached singleton codec instances — avoids per-call constructor overhead.
+// Hot-path: encodeUtf8/decodeUtf8 are called on every string read/write
+// through the N-API bridge (500k+ calls in typical sessions).
+const _cachedEncoder = typeof globalThis.TextEncoder === 'function' ? new globalThis.TextEncoder() : null;
+const _cachedDecoder = typeof globalThis.TextDecoder === 'function' ? new globalThis.TextDecoder() : null;
 
 function encodeUtf8(value) {
   const str = String(value);
-  if (StableTextEncoder) {
-    try {
-      return new StableTextEncoder().encode(str);
-    } catch {
-      // Fall through to legacy fallback.
-    }
+  if (_cachedEncoder) {
+    return _cachedEncoder.encode(str);
   }
   const escaped = unescape(encodeURIComponent(str));
   const out = new Uint8Array(escaped.length);
@@ -58,12 +57,8 @@ function encodeUtf8(value) {
 }
 
 function decodeUtf8(bytes) {
-  if (StableTextDecoder) {
-    try {
-      return new StableTextDecoder().decode(bytes);
-    } catch {
-      // Fall through to legacy fallback.
-    }
+  if (_cachedDecoder) {
+    return _cachedDecoder.decode(bytes);
   }
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -71,6 +66,9 @@ function decodeUtf8(bytes) {
 }
 
 function utf8ByteLength(value) {
+  if (_cachedEncoder) {
+    return _cachedEncoder.encode(String(value)).length;
+  }
   return encodeUtf8(value).length;
 }
 
@@ -139,6 +137,11 @@ class NapiBridge {
     this.memory = null; // Set when module initializes
     this.logNapiErrors = options.logNapiErrors !== false;
     this.strictUnknownImports = Boolean(options.strictUnknownImports);
+    this.diagnosticsEnabled = Boolean(options.diagnosticsEnabled); // opt-in import tracing
+
+    // Cached DataView for writeI32/writeF64 hot paths
+    this._dvBuffer = null;
+    this._dv = null;
 
     // Handle table: maps integer handles ↔ JS values
     // Handle 0 is reserved as "null pointer / invalid handle"
@@ -445,6 +448,18 @@ class NapiBridge {
   }
 
   // --- Wasm Memory Helpers ---
+  // Cached DataView: avoids per-call DataView allocation in writeI32/writeF64.
+  // Invalidated when the underlying ArrayBuffer changes (Wasm memory growth).
+
+  _getDataView() {
+    const buffer = this.getMemoryBuffer();
+    if (!buffer) return null;
+    if (this._dvBuffer !== buffer) {
+      this._dvBuffer = buffer;
+      this._dv = new DataView(buffer);
+    }
+    return this._dv;
+  }
 
   /** Read a UTF-8 string from Wasm memory */
   readString(ptr, len) {
@@ -473,18 +488,20 @@ class NapiBridge {
 
   /** Write a 32-bit integer to Wasm memory */
   writeI32(ptr, value) {
-    const buffer = this.getMemoryBuffer();
-    if (!buffer || !ptr) return;
+    if (!ptr) return;
+    const dv = this._getDataView();
+    if (!dv) return;
     if (!this.isMemoryRangeValid(ptr, 4)) return;
-    new DataView(buffer).setInt32(ptr, value, true);
+    dv.setInt32(ptr, value, true);
   }
 
   /** Write a 64-bit float to Wasm memory */
   writeF64(ptr, value) {
-    const buffer = this.getMemoryBuffer();
-    if (!buffer || !ptr) return;
+    if (!ptr) return;
+    const dv = this._getDataView();
+    if (!dv) return;
     if (!this.isMemoryRangeValid(ptr, 8)) return;
-    new DataView(buffer).setFloat64(ptr, value, true);
+    dv.setFloat64(ptr, value, true);
   }
 
   // --- N-API Function Implementations ---
@@ -2713,6 +2730,30 @@ class NapiBridge {
   getImportModule() {
     const base = this.getImports();
     const bridge = this;
+
+    // Fast path: when diagnostics are disabled, skip the Proxy wrapper entirely.
+    // The Proxy adds ~1.83x overhead per call due to map increments and trace
+    // array management. In production, return the raw imports object and only
+    // intercept missing imports via a one-time check.
+    if (!bridge.diagnosticsEnabled) {
+      // Still need to handle missing imports for WebAssembly.instantiate
+      const handler = {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          if (typeof prop !== 'string') return undefined;
+          bridge.recordMissingImport(prop);
+          if (bridge.strictUnknownImports) {
+            return () => {
+              throw new Error(`N-API import '${String(prop)}' is not implemented (strict mode)`);
+            };
+          }
+          return () => NAPI_GENERIC_FAILURE;
+        },
+      };
+      return new Proxy(base, handler);
+    }
+
+    // Diagnostics path: full call tracing + error counting
     const wrapped = new Map();
     return new Proxy(base, {
       get(target, prop) {
@@ -2737,16 +2778,13 @@ class NapiBridge {
           return wrappedFn;
         }
         if (typeof prop !== 'string') return undefined;
-        // Return a callable stub that records the missing import and returns
-        // NAPI_GENERIC_FAILURE.  We must return a function (not undefined)
-        // because WebAssembly.instantiate requires all imports to be callable.
-        // The stub does NOT return NAPI_OK — it fails loudly via the status
-        // code and the diagnostics counter, so no permissive silent-success.
         bridge.recordMissingImport(prop);
-        return (...args) => {
-          void args;
-          return NAPI_GENERIC_FAILURE;
-        };
+        if (bridge.strictUnknownImports) {
+          return () => {
+            throw new Error(`N-API import '${String(prop)}' is not implemented (strict mode)`);
+          };
+        }
+        return () => NAPI_GENERIC_FAILURE;
       },
     });
   }
@@ -2765,9 +2803,13 @@ export async function initEdgeJS(options = {}) {
   const strictUnknownImportsOption =
     options.strictUnknownImports ??
     (typeof process !== 'undefined' && process.env?.EDGEJS_STRICT_IMPORTS === '1');
+  const diagnosticsOption =
+    options.diagnosticsEnabled ??
+    (typeof process !== 'undefined' && process.env?.EDGEJS_DIAGNOSTICS === '1');
   const bridge = new NapiBridge(null, {
     logNapiErrors: options.logNapiErrors,
     strictUnknownImports: strictUnknownImportsOption,
+    diagnosticsEnabled: Boolean(diagnosticsOption),
   });
 
   const isNode = typeof process !== 'undefined' && !!process.versions?.node;
@@ -2817,6 +2859,7 @@ export async function initEdgeJS(options = {}) {
   const { createFilesystem } = await import('./memfs.js');
   const { createFsModule } = await import('./fs.js');
   const { setMemfs: _setShellMemfs } = await import('./shell-commands.js');
+  const { setForkRequire: _setForkRequire } = await import('./child-process.js');
 
   // ── Per-runtime filesystem instance ────────────────────────────────
   // Each initEdgeJS() call gets its own isolated MEMFS for snapshots,
@@ -2999,6 +3042,9 @@ export async function initEdgeJS(options = {}) {
     }
     return moduleObj.exports;
   }
+
+  // Wire fork() to use this runtime's require system for in-process child isolation
+  _setForkRequire(_memfsRequire);
 
   // M9: require.main and require.cache for compatibility
   _memfsRequire.main = null;

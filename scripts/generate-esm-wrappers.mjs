@@ -83,13 +83,20 @@ function generateWrapper(modName) {
     lines.push(`const _impl = _mod.default || _mod;`);
   } else if (config.importStyle === 'default-and-named') {
     lines.push(`import _impl from '${config.file}';`);
+  } else if (config.importStyle === 'custom') {
+    // Custom import block — module provides a literal import + _impl definition
+    lines.push(config.customImport);
   } else if (config.importStyle === 'stub-only') {
     lines.push(`const _impl = {};`);
   }
 
   lines.push('');
   lines.push(`function _notImplemented(name) {`);
-  lines.push(`  return function() { throw new Error(\`\${name} is not implemented in the browser runtime\`); };`);
+  lines.push(`  // Return a callable function (not a class) so it works as both`);
+  lines.push(`  // fn() and new fn() — class constructors throw when called without new.`);
+  lines.push(`  const stub = function() { throw new Error(\`\${name} is not implemented in the browser runtime\`); };`);
+  lines.push(`  stub.toString = () => \`[stub: \${name}]\`;`);
+  lines.push(`  return stub;`);
   lines.push(`}`);
   lines.push('');
 
