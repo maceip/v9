@@ -1237,7 +1237,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'constants': constantsModule,
     'inspector': inspectorModule,
     'inspector/promises': inspectorModule,
-    'diagnostics_channel': diagnosticsChannelModule,
+    // 'diagnostics_channel': diagnosticsChannelModule, // replaced below with _parentWrap version
 
     // ── Missing builtins (stubs for modules not yet fully implemented) ──
     'punycode': { encode: (s) => s, decode: (s) => s, toASCII: (s) => s, toUnicode: (s) => s, ucs2: { decode: (s) => [...s].map(c => c.codePointAt(0)), encode: (a) => String.fromCodePoint(...a) }, version: '2.3.1' },
