@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Globe</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="20" cy="20" r="15" fill="#9bff00" />
+    <path d="M5 20h30M20 5a22 22 0 0 0 0 30M20 5a22 22 0 0 1 0 30" fill="none" />
+    <path d="M9 11c3 2 8 3 11 3s8-1 11-3" fill="none" />
+    <path d="M9 29c3-2 8-3 11-3s8 1 11 3" fill="none" />
+  </g>
+</svg>

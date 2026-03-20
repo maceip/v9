@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>v9</title>
+  <meta name="description" content="v9 — EdgeJS browser runtime. Claude Code in your browser.">
+  <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#e8e4de" media="(prefers-color-scheme: light)">
+
+  <!-- Goldman font for navbar "v9" name -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <!-- Friz Quadrata for non-terminal text -->
+  <style>
+    @font-face {
+      font-family: 'Friz Quadrata';
+      src: url('fonts/friz-quadrata-bold-italic.ttf') format('truetype');
+      font-weight: bold;
+      font-style: italic;
+      font-display: swap;
+    }
+  </style>
+
+  <!-- Critical inline CSS — page renders instantly -->
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0f;
+      --fg: #e8e4de;
+      --nav-bg: #0d0d14;
+      --nav-border: #1a1a28;
+      --nav-highlight: rgba(255,255,255,0.03);
+      --frame-bg: #0b0b12;
+      --frame-border: #18182a;
+      --frame-joint: rgba(255,255,255,0.06);
+      --frame-highlight: rgba(255,255,255,0.015);
+      --glass-tint: rgba(120,140,180,0.06);
+      --accent: #9bff00;
+      --accent-dim: rgba(155,255,0,0.15);
+      --spot-color: rgba(180,200,255,0.04);
+      --fog-color: rgba(10,10,15,0.85);
+      --text-secondary: rgba(232,228,222,0.4);
+      --icon-tint: 0;
+      color-scheme: dark;
+    }
+
+    :root.light {
+      --bg: #e8e4de;
+      --fg: #0a0a0f;
+      --nav-bg: #ded9d1;
+      --nav-border: #c4bfb6;
+      --nav-highlight: rgba(255,255,255,0.5);
+      --frame-bg: #d8d3cb;
+      --frame-border: #b8b3aa;
+      --frame-joint: rgba(0,0,0,0.15);
+      --frame-highlight: rgba(255,255,255,0.6);
+      --glass-tint: rgba(200,210,230,0.15);
+      --accent: #00034a;
+      --accent-dim: rgba(0,3,74,0.1);
+      --spot-color: rgba(255,250,240,0.08);
+      --fog-color: rgba(232,228,222,0.85);
+      --text-secondary: rgba(10,10,15,0.35);
+      --icon-tint: 1;
+      color-scheme: light;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Friz Quadrata', 'Georgia', serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body { position: relative; }
+
+    /* ── Navbar ── */
+    #navbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 44px; z-index: 100;
+      background: var(--nav-bg);
+      border-bottom: 1px solid var(--nav-border);
+      display: flex; align-items: center; justify-content: flex-end;
+      padding: 0 16px;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    /* Beveled edge — layered shadows for machined metal */
+    #navbar::before {
+      content: '';
+      position: absolute; inset: 0;
+      border-bottom: 1px solid var(--nav-highlight);
+      box-shadow:
+        inset 0 1px 0 var(--nav-highlight),
+        inset 0 -1px 0 rgba(0,0,0,0.2),
+        0 1px 3px rgba(0,0,0,0.3),
+        0 2px 8px rgba(0,0,0,0.15);
+      pointer-events: none;
+    }
+
+    /* Brushed aluminum texture */
+    #navbar::after {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent 1px,
+          rgba(255,255,255,0.008) 1px,
+          rgba(255,255,255,0.008) 2px
+        );
+      pointer-events: none;
+    }
+
+    /* Fluid canvas overlay for navbar flourish */
+    #nav-fluid {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      mix-blend-mode: screen;
+    }
+    #navbar:hover #nav-fluid,
+    #navbar.fluid-active #nav-fluid { opacity: 0.7; }
+
+    /* Nav content */
+    .nav-name {
+      font-family: 'Goldman', sans-serif;
+      font-weight: 700;
+      font-size: 18px;
+      letter-spacing: 2px;
+      color: var(--fg);
+      position: relative;
+      z-index: 2;
+    }
+
+    .nav-progress {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 2px;
+      background: rgba(155,255,0,0.08);
+      overflow: hidden;
+      z-index: 2;
+    }
+    .nav-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.3s ease;
+      box-shadow: 0 0 8px var(--accent-dim);
+    }
+
+    /* Navbar scattered icons */
+    .nav-icon {
+      position: absolute;
+      width: 14px; height: 14px;
+      opacity: 0.06;
+      z-index: 1;
+      pointer-events: none;
+      filter: invert(var(--icon-tint));
+    }
+    .light .nav-icon { filter: invert(0); }
+
+    /* Navbar micro-details: air vents */
+    .nav-vent {
+      position: absolute;
+      z-index: 1;
+      pointer-events: none;
+    }
+    .nav-vent::before {
+      content: '';
+      display: block;
+      width: 24px; height: 8px;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 1px,
+        var(--frame-joint) 1px,
+        var(--frame-joint) 2px
+      );
+      border-radius: 1px;
+    }
+
+    /* Diagonal seam */
+    .nav-seam {
+      position: absolute;
+      width: 1px; height: 20px;
+      background: var(--frame-joint);
+      transform: rotate(35deg);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* Light reflections */
+    .nav-light {
+      position: absolute;
+      width: 40px; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--nav-highlight), transparent);
+      z-index: 1;
+      pointer-events: none;
+      border-radius: 1px;
+    }
+
+    /* ── Main viewport ── */
+    #viewport {
+      position: fixed;
+      top: 44px; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Fog overlay */
+    #fog {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 20%, var(--fog-color) 70%);
+      z-index: 10;
+      pointer-events: none;
+      transition: opacity 0.8s ease;
+    }
+
+    /* Spotlight */
+    #spotlight {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 50% 50% at 50% 45%, var(--spot-color) 0%, transparent 70%);
+      z-index: 5;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+    }
+
+    /* Floating background icons */
+    .bg-icon {
+      position: absolute;
+      width: 28px; height: 28px;
+      opacity: 0.04;
+      z-index: 3;
+      pointer-events: none;
+      transition: transform 0.1s ease;
+      filter: invert(var(--icon-tint));
+    }
+
+    /* ── Terminal container ── */
+    #terminal-wrap {
+      position: relative;
+      width: calc(100% - 12px);
+      height: calc(100% - 12px);
+      z-index: 20;
+      cursor: pointer;
+      transform-origin: center center;
+      transition: none; /* JS handles animation */
+    }
+    #terminal-wrap.zoomed { cursor: default; }
+
+    /* Terminal frame */
+    #terminal-frame {
+      position: absolute; inset: 0;
+      border: 1px solid var(--frame-border);
+      border-radius: 6px;
+      background: var(--frame-bg);
+      overflow: hidden;
+      box-shadow:
+        inset 0 1px 0 var(--frame-highlight),
+        inset 0 -1px 0 rgba(0,0,0,0.3),
+        0 4px 20px rgba(0,0,0,0.4),
+        0 8px 40px rgba(0,0,0,0.2);
+    }
+
+    /* Frame brushed aluminum texture */
+    #terminal-frame::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent,
+          transparent 1px,
+          rgba(255,255,255,0.006) 1px,
+          rgba(255,255,255,0.006) 2px
+        );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Frame corner icons */
+    .frame-icon {
+      position: absolute;
+      width: 16px; height: 16px;
+      opacity: 0.12;
+      z-index: 2;
+      pointer-events: none;
+      filter: invert(var(--icon-tint));
+    }
+    .frame-icon.tl { top: 8px; left: 8px; }
+    .frame-icon.tr { top: 8px; right: 8px; }
+    .frame-icon.bl { bottom: 8px; left: 8px; }
+    .frame-icon.br { bottom: 8px; right: 8px; }
+
+    /* Frame micro-details */
+    .frame-vent {
+      position: absolute;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .frame-vent::before {
+      content: '';
+      display: block;
+      width: 32px; height: 6px;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 1px,
+        var(--frame-joint) 1px,
+        var(--frame-joint) 2px
+      );
+      border-radius: 1px;
+    }
+    .frame-seam {
+      position: absolute;
+      width: 1px;
+      background: var(--frame-joint);
+      z-index: 2;
+      pointer-events: none;
+    }
+    .frame-joint {
+      position: absolute;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--frame-joint);
+      border: 0.5px solid rgba(0,0,0,0.2);
+      z-index: 2;
+      pointer-events: none;
+    }
+    .frame-light {
+      position: absolute;
+      background: linear-gradient(90deg, transparent, var(--frame-highlight), transparent);
+      height: 1px;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* Terminal screen (glass) */
+    #terminal-screen {
+      position: absolute;
+      top: 3px; left: 3px; right: 3px; bottom: 3px;
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--glass-tint);
+      z-index: 3;
+    }
+
+    /* Glass canvas (tumble shader + liquid glass) */
+    #glass-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+    }
+
+    /* Terminal overlay (xterm or boot text) */
+    #terminal-overlay {
+      position: absolute; inset: 0;
+      z-index: 4;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      background: rgba(10,10,15,0.95);
+    }
+    #terminal-overlay.visible { opacity: 1; }
+
+    /* Boot text */
+    #boot-text {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 14px;
+      color: var(--fg);
+      white-space: pre-wrap;
+      line-height: 1.6;
+      max-width: 600px;
+      width: 90%;
+    }
+    .boot-line {
+      display: flex; align-items: center; gap: 8px;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .boot-line.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .boot-line .boot-icon {
+      width: 18px; height: 18px;
+      flex-shrink: 0;
+    }
+    .boot-cursor {
+      display: inline-block;
+      width: 8px; height: 16px;
+      background: var(--accent);
+      animation: blink 1s step-end infinite;
+      vertical-align: middle;
+      margin-left: 2px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* CLI iframe */
+    #cli-frame {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      border: none;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      z-index: 5;
+    }
+    #cli-frame.visible { opacity: 1; }
+
+    /* ── Idle state: terminal in distance ── */
+    #terminal-wrap.idle {
+      transform: scale(0.42) translateY(8%);
+    }
+
+    /* ── Reduced motion ── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ── Hide during load flicker ── */
+    .loading { visibility: hidden; }
+  </style>
+</head>
+<body>
+  <!-- ── Navbar ── -->
+  <nav id="navbar">
+    <canvas id="nav-fluid"></canvas>
+
+    <!-- Micro-details: vents, seams, lights (positioned by JS) -->
+    <div class="nav-vent" style="top:8px;left:20px"></div>
+    <div class="nav-vent" style="top:26px;left:60px"></div>
+    <div class="nav-seam" style="top:6px;left:140px"></div>
+    <div class="nav-seam" style="top:12px;left:300px"></div>
+    <div class="nav-seam" style="top:4px;right:200px"></div>
+    <div class="nav-light" style="top:14px;left:180px;width:60px"></div>
+    <div class="nav-light" style="top:28px;left:400px;width:35px"></div>
+    <div class="nav-light" style="top:10px;right:280px;width:50px"></div>
+
+    <!-- Navbar icons (placed by JS but we seed positions in HTML for instant render) -->
+    <img class="nav-icon" src="icons/Cpu.svg" alt="" style="top:6px;left:100px" loading="lazy">
+    <img class="nav-icon" src="icons/Shield.svg" alt="" style="top:22px;left:170px" loading="lazy">
+    <img class="nav-icon" src="icons/Zap.svg" alt="" style="top:4px;left:250px" loading="lazy">
+    <img class="nav-icon" src="icons/Network.svg" alt="" style="top:24px;left:340px" loading="lazy">
+    <img class="nav-icon" src="icons/Lock.svg" alt="" style="top:8px;left:420px" loading="lazy">
+    <img class="nav-icon" src="icons/Server.svg" alt="" style="top:20px;left:510px" loading="lazy">
+    <img class="nav-icon" src="icons/Code.svg" alt="" style="top:6px;left:600px" loading="lazy">
+    <img class="nav-icon" src="icons/Fingerprint.svg" alt="" style="top:26px;left:680px" loading="lazy">
+    <img class="nav-icon" src="icons/HardDrive.svg" alt="" style="top:10px;left:760px" loading="lazy">
+    <img class="nav-icon" src="icons/Activity.svg" alt="" style="top:18px;left:850px" loading="lazy">
+    <img class="nav-icon" src="icons/Scan.svg" alt="" style="top:4px;left:940px" loading="lazy">
+    <img class="nav-icon" src="icons/Globe.svg" alt="" style="top:28px;left:1020px" loading="lazy">
+
+    <span class="nav-name">v9</span>
+
+    <div class="nav-progress">
+      <div class="nav-progress-bar" id="progress-bar"></div>
+    </div>
+  </nav>
+
+  <!-- ── Main viewport ── -->
+  <div id="viewport">
+    <!-- Floating background icons -->
+    <img class="bg-icon" src="icons/Terminal.svg" alt="" style="top:8%;left:5%">
+    <img class="bg-icon" src="icons/Database.svg" alt="" style="top:15%;right:8%">
+    <img class="bg-icon" src="icons/Wifi.svg" alt="" style="top:60%;left:3%">
+    <img class="bg-icon" src="icons/Monitor.svg" alt="" style="top:75%;right:6%">
+    <img class="bg-icon" src="icons/Puzzle.svg" alt="" style="top:30%;left:88%">
+    <img class="bg-icon" src="icons/FlaskConical.svg" alt="" style="top:85%;left:45%">
+    <img class="bg-icon" src="icons/Layers.svg" alt="" style="top:5%;left:50%">
+    <img class="bg-icon" src="icons/Bug.svg" alt="" style="top:45%;left:92%">
+    <img class="bg-icon" src="icons/Radio.svg" alt="" style="top:50%;right:90%">
+    <img class="bg-icon" src="icons/GitBranch.svg" alt="" style="top:90%;left:15%">
+    <img class="bg-icon" src="icons/Wrench.svg" alt="" style="top:20%;left:30%">
+    <img class="bg-icon" src="icons/Play.svg" alt="" style="top:70%;right:25%">
+
+    <div id="fog"></div>
+    <div id="spotlight"></div>
+
+    <!-- Terminal -->
+    <div id="terminal-wrap" class="idle">
+      <div id="terminal-frame">
+        <!-- Frame micro-details -->
+        <div class="frame-vent" style="top:8px;left:50%;transform:translateX(-50%)"></div>
+        <div class="frame-vent" style="bottom:8px;left:50%;transform:translateX(-50%)"></div>
+        <div class="frame-seam" style="top:20px;left:2px;height:30px;transform:rotate(35deg)"></div>
+        <div class="frame-seam" style="top:20px;right:2px;height:30px;transform:rotate(-35deg)"></div>
+        <div class="frame-seam" style="bottom:20px;left:2px;height:30px;transform:rotate(-35deg)"></div>
+        <div class="frame-seam" style="bottom:20px;right:2px;height:30px;transform:rotate(35deg)"></div>
+        <div class="frame-joint" style="top:4px;left:4px"></div>
+        <div class="frame-joint" style="top:4px;right:4px"></div>
+        <div class="frame-joint" style="bottom:4px;left:4px"></div>
+        <div class="frame-joint" style="bottom:4px;right:4px"></div>
+        <div class="frame-light" style="top:2px;left:20%;width:15%"></div>
+        <div class="frame-light" style="bottom:2px;right:20%;width:12%"></div>
+        <div class="frame-light" style="top:50%;left:1px;width:1px;height:20%;transform:translateY(-50%)"></div>
+
+        <!-- Corner icons -->
+        <img class="frame-icon tl" src="icons/Cpu.svg" alt="" loading="lazy">
+        <img class="frame-icon tr" src="icons/Shield.svg" alt="" loading="lazy">
+        <img class="frame-icon bl" src="icons/Zap.svg" alt="" loading="lazy">
+        <img class="frame-icon br" src="icons/Terminal.svg" alt="" loading="lazy">
+
+        <!-- Glass screen -->
+        <div id="terminal-screen">
+          <canvas id="glass-canvas"></canvas>
+
+          <!-- Terminal overlay (boot text + xterm) -->
+          <div id="terminal-overlay">
+            <div id="boot-text"></div>
+          </div>
+
+          <!-- CLI iframe (loads real web/index.html after boot) -->
+          <iframe id="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups" title="v9 CLI"></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scripts (deferred, non-blocking) ── -->
+  <script type="module" src="js/v9-app.js"></script>
+</body>
+</html>
