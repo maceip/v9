@@ -13,6 +13,12 @@ function notAvailable(mod, method) {
   };
 }
 
+function createBrowserNetError(mod, method) {
+  const err = new Error(`${mod}.${method}() is not available in the browser environment`);
+  err.code = 'ENOTSUP';
+  return err;
+}
+
 // ─── net ────────────────────────────────────────────────────────────
 
 class Socket extends EventEmitter {
@@ -21,8 +27,24 @@ class Socket extends EventEmitter {
     this.writable = false;
     this.readable = false;
   }
-  connect() { throw new Error('net.Socket.connect() is not available in the browser environment'); }
-  write() { throw new Error('net.Socket.write() is not available in the browser environment'); }
+  connect(...args) {
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    queueMicrotask(() => {
+      const err = createBrowserNetError('net.Socket', 'connect');
+      this.emit('error', err);
+      if (callback) callback(err);
+    });
+    return this;
+  }
+  write(chunk, encoding, callback) {
+    if (typeof encoding === 'function') callback = encoding;
+    queueMicrotask(() => {
+      const err = createBrowserNetError('net.Socket', 'write');
+      this.emit('error', err);
+      if (callback) callback(err);
+    });
+    return false;
+  }
   end() { return this; }
   destroy() { return this; }
   setEncoding() { return this; }
@@ -35,15 +57,35 @@ class Socket extends EventEmitter {
 
 class Server extends EventEmitter {
   constructor() { super(); }
-  listen() { throw new Error('net.Server.listen() is not available in the browser environment'); }
+  listen(...args) {
+    const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+    queueMicrotask(() => {
+      const err = createBrowserNetError('net.Server', 'listen');
+      this.emit('error', err);
+      if (callback) callback(err);
+    });
+    return this;
+  }
   close() { return this; }
   address() { return null; }
 }
 
 export const net = {
-  createConnection: notAvailable('net', 'createConnection'),
-  createServer: notAvailable('net', 'createServer'),
-  connect: notAvailable('net', 'connect'),
+  createConnection(...args) {
+    const socket = new Socket();
+    return socket.connect(...args);
+  },
+  createServer(connectionListener) {
+    const server = new Server();
+    if (typeof connectionListener === 'function') {
+      server.on('connection', connectionListener);
+    }
+    return server;
+  },
+  connect(...args) {
+    const socket = new Socket();
+    return socket.connect(...args);
+  },
   Socket,
   Server,
   isIP(input) {
@@ -58,7 +100,16 @@ export const net = {
 // ─── tls ────────────────────────────────────────────────────────────
 
 export const tls = {
-  connect: notAvailable('tls', 'connect'),
+  connect(...args) {
+    const socket = new Socket();
+    queueMicrotask(() => {
+      const err = createBrowserNetError('tls', 'connect');
+      socket.emit('error', err);
+      const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+      if (callback) callback(err);
+    });
+    return socket;
+  },
   createServer: notAvailable('tls', 'createServer'),
   createSecureContext(opts) { return { context: {}, ca: opts?.ca || [], cert: opts?.cert || null, key: opts?.key || null }; },
   getCiphers() { return ['TLS_AES_256_GCM_SHA384']; },
@@ -74,16 +125,88 @@ export const tls = {
 // ─── dns ────────────────────────────────────────────────────────────
 
 export const dns = {
-  lookup: notAvailable('dns', 'lookup'),
-  resolve: notAvailable('dns', 'resolve'),
-  resolve4: notAvailable('dns', 'resolve4'),
-  resolve6: notAvailable('dns', 'resolve6'),
+  lookup(hostname, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    const family = options?.family || 4;
+    const normalized = String(hostname || '');
+    let address = '127.0.0.1';
+    if (normalized && net.isIP(normalized)) {
+      address = normalized;
+    } else if (normalized && normalized !== 'localhost') {
+      address = family === 6 ? '::1' : '127.0.0.1';
+    }
+    if (callback) {
+      queueMicrotask(() => callback(null, address, family));
+      return;
+    }
+    return Promise.resolve({ address, family });
+  },
+  resolve(hostname, rrtype, callback) {
+    if (typeof rrtype === 'function') {
+      callback = rrtype;
+      rrtype = 'A';
+    }
+    const records = rrtype === 'AAAA' ? ['::1'] : ['127.0.0.1'];
+    if (callback) {
+      queueMicrotask(() => callback(null, records));
+      return;
+    }
+    return Promise.resolve(records);
+  },
+  resolve4(hostname, callback) {
+    if (callback) {
+      queueMicrotask(() => callback(null, ['127.0.0.1']));
+      return;
+    }
+    return Promise.resolve(['127.0.0.1']);
+  },
+  resolve6(hostname, callback) {
+    if (callback) {
+      queueMicrotask(() => callback(null, ['::1']));
+      return;
+    }
+    return Promise.resolve(['::1']);
+  },
   reverse: notAvailable('dns', 'reverse'),
+  getServers() { return []; },
+  setServers() {},
+  lookupService(address, port, callback) {
+    if (callback) {
+      queueMicrotask(() => callback(null, 'localhost', String(port || '0')));
+      return;
+    }
+    return Promise.resolve({ hostname: 'localhost', service: String(port || '0') });
+  },
+  Resolver: class Resolver {
+    lookup(...args) { return dns.lookup(...args); }
+    resolve(...args) { return dns.resolve(...args); }
+    resolve4(...args) { return dns.resolve4(...args); }
+    resolve6(...args) { return dns.resolve6(...args); }
+    reverse(...args) { return dns.reverse(...args); }
+    setServers() {}
+    getServers() { return []; }
+  },
   promises: {
-    lookup: notAvailable('dns.promises', 'lookup'),
-    resolve: notAvailable('dns.promises', 'resolve'),
-    resolve4: notAvailable('dns.promises', 'resolve4'),
-    resolve6: notAvailable('dns.promises', 'resolve6'),
+    lookup(hostname, options) { return dns.lookup(hostname, options); },
+    resolve(hostname, rrtype) { return dns.resolve(hostname, rrtype); },
+    resolve4(hostname) { return dns.resolve4(hostname); },
+    resolve6(hostname) { return dns.resolve6(hostname); },
+    reverse: notAvailable('dns.promises', 'reverse'),
+    getServers() { return []; },
+    setServers() {},
+    lookupService(address, port) { return dns.lookupService(address, port); },
+    Resolver: class Resolver {
+      lookup(...args) { return dns.lookup(...args); }
+      resolve(...args) { return dns.resolve(...args); }
+      resolve4(...args) { return dns.resolve4(...args); }
+      resolve6(...args) { return dns.resolve6(...args); }
+      reverse(...args) { return dns.reverse(...args); }
+      setServers() {}
+      getServers() { return []; }
+    },
   },
 };
 

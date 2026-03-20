@@ -625,10 +625,23 @@ class Process extends EventEmitter {
       },
     });
     this.argv = ['node', 'script.js'];
+    this.argv0 = 'node';
+    this.execArgv = [];
+    this.execPath = '/usr/local/bin/node';
     this.pid = 1;
     this.ppid = 0;
     this.title = 'edgejs';
     this.exitCode = 0;
+    this.features = {};
+    this.release = { name: 'node' };
+    this.config = { variables: {} };
+    this.sourceMapsEnabled = false;
+    this.allowedNodeEnvironmentFlags = new Set();
+    this.moduleLoadList = [];
+    this.report = {
+      getReport() { return { header: { event: 'edgejs-browser-runtime' } }; },
+      writeReport() { return ''; },
+    };
 
     this._cwd = '/';
 
@@ -716,6 +729,26 @@ class Process extends EventEmitter {
     this.emit('exit', this.exitCode);
   }
 
+  abort() {
+    const err = new Error('process.abort() is not available in browser runtime');
+    err.code = 'ERR_NOT_IMPLEMENTED';
+    throw err;
+  }
+
+  kill(pid, signal) {
+    if (pid === 0 || pid === this.pid || pid === undefined) return true;
+    const err = new Error(`kill ESRCH: no such process, ${pid}`);
+    err.code = 'ESRCH';
+    throw err;
+  }
+
+  openStdin() {
+    return this.stdin;
+  }
+
+  ref() { return this; }
+  unref() { return this; }
+
   nextTick(fn, ...args) {
     if (typeof fn !== 'function') {
       throw new TypeError('Callback must be a function');
@@ -739,6 +772,12 @@ class Process extends EventEmitter {
   // Compatibility stubs
   umask() { return 0o022; }
   uptime() { return performance.now() / 1000; }
+  availableMemory() {
+    return this.memoryUsage().heapTotal || 0;
+  }
+  constrainedMemory() {
+    return 0;
+  }
   memoryUsage() {
     // Use real Wasm heap stats when available via _wasmInstance
     const wasm = this._wasmInstance;
@@ -777,6 +816,63 @@ class Process extends EventEmitter {
   }
   cpuUsage() {
     return { user: 0, system: 0 };
+  }
+  threadCpuUsage() {
+    return { user: 0, system: 0 };
+  }
+  resourceUsage() {
+    return {
+      userCPUTime: 0,
+      systemCPUTime: 0,
+      maxRSS: 0,
+      sharedMemorySize: 0,
+      unsharedDataSize: 0,
+      unsharedStackSize: 0,
+      minorPageFault: 0,
+      majorPageFault: 0,
+      swappedOut: 0,
+      fsRead: 0,
+      fsWrite: 0,
+      ipcSent: 0,
+      ipcReceived: 0,
+      signalsCount: 0,
+      voluntaryContextSwitches: 0,
+      involuntaryContextSwitches: 0,
+    };
+  }
+  getActiveResourcesInfo() {
+    return [];
+  }
+  setSourceMapsEnabled(enabled) {
+    this.sourceMapsEnabled = Boolean(enabled);
+  }
+  hasUncaughtExceptionCaptureCallback() {
+    return false;
+  }
+  setUncaughtExceptionCaptureCallback() {}
+  loadEnvFile() {
+    return false;
+  }
+  getBuiltinModule(name) {
+    if (typeof globalThis.__edgeRuntime?._getBuiltinOverride === 'function') {
+      return globalThis.__edgeRuntime._getBuiltinOverride(name) ||
+        globalThis.__edgeRuntime._getBuiltinOverride(String(name).replace(/^node:/, ''));
+    }
+    return undefined;
+  }
+  getuid() { return 1000; }
+  geteuid() { return 1000; }
+  getgid() { return 1000; }
+  getegid() { return 1000; }
+  getgroups() { return [1000]; }
+  setuid() {}
+  seteuid() {}
+  setgid() {}
+  setegid() {}
+  setgroups() {}
+  initgroups() {}
+  reallyExit(code) {
+    this.exit(code);
   }
 }
 

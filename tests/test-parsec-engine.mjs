@@ -40,7 +40,9 @@ async function main() {
     await writeFile(
       path.join(appDir, 'src/index.js'),
       [
-        "import { join } from 'node:path';",
+        "#!/usr/bin/env node",
+        "const { join } = require('path');",
+        'if (process.browser) console.log("browser-mode");',
         "console.log(join('/tmp', 'x'));",
       ].join('\n'),
       'utf8',
@@ -51,7 +53,12 @@ async function main() {
       { outputDir: path.join(outputRoot, 'raw') },
     );
     assert(existsSync(metadata.stage1.bundle.outputFile), 'optimized blob should exist');
-    assert(metadata.stage1.analysis.nodeBuiltinsUsed.includes('path'), 'analysis should detect node:path usage');
+    assert(metadata.stage1.analysis.nodeBuiltinsUsed.includes('path'), 'analysis should detect path usage');
+    assert(metadata.stage1.rewrite.changedFileCount > 0, 'rewrite stage should report changed files');
+    const rewritten = await readFile(path.join(metadata.stage1.preparedDir, 'src/index.js'), 'utf8');
+    assert(rewritten.includes("require('node:path')"), 'rewrite should normalize require specifier to node:path');
+    assert(!rewritten.startsWith('#!'), 'rewrite should strip shebang');
+    assert(rewritten.includes('if (true)'), 'rewrite should replace process.browser checks');
   });
 
   await test('zip input is unpacked and bundled', async () => {
@@ -94,6 +101,9 @@ async function main() {
     await writeFile(path.join(repoDir, 'src/main.rs'), 'fn main() { println!("hi"); }', 'utf8');
     await writeFile(path.join(repoDir, 'package.json'), JSON.stringify({ main: 'index.js' }), 'utf8');
     await writeFile(path.join(repoDir, 'index.js'), "require('node:child_process'); console.log('repo');", 'utf8');
+    await mkdir(path.join(repoDir, 'native', 'subcrate'), { recursive: true });
+    await writeFile(path.join(repoDir, 'native', 'subcrate', 'Cargo.toml'), '[package]\nname="subdemo"\nversion="0.1.0"\n', 'utf8');
+    await writeFile(path.join(repoDir, 'native', 'subcrate', 'src.rs'), 'fn main() {}', 'utf8');
 
     const metadata = await engine.run(
       { type: 'github', input: repoDir },
@@ -105,6 +115,11 @@ async function main() {
     assert(candidates.some((candidate) => candidate.language === 'rust'), 'rust should be detected as wasm candidate');
     const helpers = metadata.stage2.result?.helperWasm || [];
     assert(helpers.some((helper) => helper.id === 'proc-control'), 'helper wasm should include proc-control');
+    const componentsByLanguage = metadata.stage2.result?.componentsByLanguage || {};
+    const rustComponents = componentsByLanguage.rust || [];
+    assert(rustComponents.length >= 1, 'selective lift should detect rust components');
+    const perComponentAttempts = metadata.stage2.result?.compileAttempts?.filter((attempt) => attempt.component);
+    assert((perComponentAttempts || []).length >= 1, 'compile attempts should be scoped to specific components');
   });
 
   await rm(sandbox, { recursive: true, force: true });
