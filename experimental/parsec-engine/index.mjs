@@ -683,6 +683,13 @@ function createLoadPlan(outputDir, stage1Result) {
       wasmRuntime: 'edgejs',
       notes: 'Run bundle directly inside browser EdgeJS runtime.',
     };
+  const problematicNodeBuiltinsUsed = [
+    ...new Set([
+      ...(stage1Result.analysis?.problematicNodeBuiltinsUsed || []),
+      ...(stage1Result.preparedAnalysis?.problematicNodeBuiltinsUsed || []),
+      ...(stage1Result.rewrite?.problematicBuiltinsRewritten || []),
+    ]),
+  ].sort();
 
   return {
     schemaVersion: 1,
@@ -704,7 +711,7 @@ function createLoadPlan(outputDir, stage1Result) {
     analysis: {
       nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
       externalPackagesUsed: stage1Result.preparedAnalysis.externalPackagesUsed || [],
-      problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis.problematicNodeBuiltinsUsed || [],
+      problematicNodeBuiltinsUsed,
       easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || { ready: true, score: 100, blockers: [] },
       hardHardSignals: stage1Result.preparedAnalysis.hardHardSignals || {},
       backendPlan: stage1Result.preparedAnalysis.backendPlan || {},
