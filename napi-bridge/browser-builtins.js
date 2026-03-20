@@ -1190,6 +1190,7 @@ import inspectorModule from './inspector.js';
 import nodePtyShim from './node-pty-shim.js';
 import diagnosticsChannelModule from './diagnostics-channel.js';
 import undiciStub from './undici-stub.js';
+import { expandBuiltinsToNodeApiSurface, isNodeApiSurfaceModule } from './node-api-surface.js';
 
 export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
   // Build fs module with promises sub-object for node:fs/promises
@@ -1287,17 +1288,14 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'node-pty': nodePtyShim,
   };
 
-  // Register all builtins + node: prefixed aliases
-  for (const [name, impl] of Object.entries(builtins)) {
+  const completeBuiltins = expandBuiltinsToNodeApiSurface(builtins);
+
+  // Register all builtins + node: prefixed aliases.
+  for (const [name, impl] of Object.entries(completeBuiltins)) {
     if (edgeInstance._registerBuiltinOverride) {
       edgeInstance._registerBuiltinOverride(name, impl);
-      // Also register with node: prefix for ESM-style imports
-      if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
-          name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder' ||
-          name === 'diagnostics_channel' ||
-          name === 'readline/promises' || name === 'timers/promises' || name === 'stream/consumers' ||
-          name === 'inspector/promises' || name === 'assert/strict' || name === 'path/posix' ||
-          name === 'fs/promises') {
+      // Register node: aliases for the complete builtin surface list.
+      if (isNodeApiSurfaceModule(name)) {
         edgeInstance._registerBuiltinOverride('node:' + name, impl);
       }
     }
@@ -1307,15 +1305,14 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
   if (edgeInstance._memfsRequire) {
     _setRequire(edgeInstance._memfsRequire);
   }
-  _setBuiltinList(Object.keys(builtins));
+  _setBuiltinList(Object.keys(completeBuiltins));
   // Also populate the sync builtin cache for createRequire
-  for (const [name, impl] of Object.entries(builtins)) {
+  for (const [name, impl] of Object.entries(completeBuiltins)) {
     _setBuiltinModule(name, impl);
-    if (!name.includes('-') && !name.includes('/') || name === 'child_process' ||
-        name === 'async_hooks' || name === 'worker_threads' || name === 'string_decoder') {
+    if (isNodeApiSurfaceModule(name)) {
       _setBuiltinModule('node:' + name, impl);
     }
   }
 
-  return builtins;
+  return completeBuiltins;
 }

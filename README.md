@@ -47,6 +47,43 @@ source $EMSDK/emsdk_env.sh
 cd tests && node test-basic.js
 ```
 
+## Tooling Additions
+
+### 1) Full Node API Surface Toolchain
+
+To avoid one-by-one builtin breakage, generate a complete Node core module
+surface (CJS + ESM wrappers + import-map entries):
+
+```bash
+node scripts/build-node-api-surface.mjs
+```
+
+This produces:
+- `napi-bridge/node-api-surface.generated.js` (module/export manifest)
+- `napi-bridge/generated-node-api/*.js` (ESM wrappers)
+- `web/node-api-importmap.generated.json` (drop-in import-map entries)
+
+The runtime also auto-expands builtin overrides using this manifest via
+`napi-bridge/node-api-surface.js`.
+
+### 2) Parsec Engine (Two-Stage Pipeline)
+
+Run the parser/prep/packaging engine from CLI:
+
+```bash
+node scripts/parsec-engine.mjs --type raw-js --input ./my-app --output ./dist/parsec
+```
+
+Supported input types:
+- `npm` (package name or local package path)
+- `raw-js` (single file, directory, or file map)
+- `zip` (zip archive path)
+- `github` (repo URL or local repo path)
+
+Behavior:
+1. **Stage 1**: Ingest + static analysis + entry detection + optimized ESM blob build.
+2. **Stage 2** (`github` input): Start wasm-lift planning/execution using language backend detection, helper wasm matching, and optional LLM advisor hooks.
+
 ## Architecture
 
 ```

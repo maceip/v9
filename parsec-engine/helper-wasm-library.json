@@ -1,0 +1,28 @@
+{
+  "helpers": [
+    {
+      "id": "proc-control",
+      "capabilities": ["fork", "spawn", "execve", "waitpid"],
+      "modulePath": "helpers/proc-control.wasm",
+      "description": "Process control helpers layered over EdgeJS wasm syscalls."
+    },
+    {
+      "id": "vm-memory",
+      "capabilities": ["mmap", "munmap", "mprotect"],
+      "modulePath": "helpers/vm-memory.wasm",
+      "description": "Virtual memory helpers for native addons and runtimes."
+    },
+    {
+      "id": "pty-terminal",
+      "capabilities": ["openpty", "isatty", "ioctl"],
+      "modulePath": "helpers/pty-terminal.wasm",
+      "description": "Pseudo-terminal compatibility for CLI and REPL tools."
+    },
+    {
+      "id": "net-sockets",
+      "capabilities": ["socket", "connect", "bind", "listen", "accept", "poll"],
+      "modulePath": "helpers/net-sockets.wasm",
+      "description": "Socket compatibility helpers for network-heavy packages."
+    }
+  ]
+}
