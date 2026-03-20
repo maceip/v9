@@ -197,6 +197,17 @@ async function main() {
     const adapter = await readFile(metadata.stage1.sharedNetworkAdapterFile, 'utf8');
     assert(adapter.includes('__PARSEC_SHARED_NETWORK__'),
       'shared adapter should target global shared network layer');
+    assert(adapter.includes('PARSEC_NETWORK_REQUIRED_METHODS'),
+      'shared adapter should expose required contract methods');
+    assert(adapter.includes('validateParsecSharedNetworkLayer'),
+      'shared adapter should validate installed layer contract');
+    assert(existsSync(metadata.stage1.sharedNetworkBootstrapFile),
+      'shared network bootstrap file should be generated');
+    const bootstrap = await readFile(metadata.stage1.sharedNetworkBootstrapFile, 'utf8');
+    assert(bootstrap.includes('ensurePersistentParsecSharedNetworkLayer'),
+      'bootstrap should expose persistent shared layer initializer');
+    assert(bootstrap.includes('bootstrapParsecLoadPlan'),
+      'bootstrap should expose load-plan bootstrap helper');
 
     const bundle = await readFile(metadata.stage1.bundle.outputFile, 'utf8');
     assert(bundle.includes('__PARSEC_SHARED_NETWORK__'),
@@ -206,10 +217,16 @@ async function main() {
 
     const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
     assert(loadPlan.sharedNetwork.enabled === true, 'load plan should mark shared network enabled');
+    assert(loadPlan.sharedNetwork.contract.version === 1,
+      'load plan should expose shared network contract version');
     assert(loadPlan.sharedNetwork.rewrittenBuiltins.includes('http'),
       'load plan should include rewritten network builtins');
     assert(typeof loadPlan.sharedNetwork.adapterFile === 'string' && loadPlan.sharedNetwork.adapterFile.includes('parsec-shared-network-adapter.js'),
       'load plan should reference shared adapter file');
+    assert(typeof loadPlan.sharedNetwork.bootstrapFile === 'string' && loadPlan.sharedNetwork.bootstrapFile.includes('parsec-loader-bootstrap.js'),
+      'load plan should reference shared bootstrap file');
+    assert(loadPlan.sharedNetwork.bootstrapFunction === 'bootstrapParsecLoadPlan',
+      'load plan should expose shared bootstrap function');
   });
 
   await test('wasm input validates and packages raw wasm artifact', async () => {
