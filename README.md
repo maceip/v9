@@ -75,7 +75,6 @@ disabled by default to avoid reintroducing old stub-only wrappers.
 
 Parsec is the recommended path for turning npm packages, repo snapshots, and raw
 WASM inputs into reproducible browser-loadable bundles plus loader metadata.
-
 Run the parser/prep/packaging engine from CLI:
 
 ```bash
