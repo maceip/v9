@@ -8,10 +8,14 @@
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#e8e4de" media="(prefers-color-scheme: light)">
 
-  <!-- Goldman font for navbar "v9" name -->
+  <!-- Inline SVG favicon (Zap icon) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><polygon points='22,4 10,22 19,22 16,36 30,16 21,16' fill='%239bff00' stroke='%2300034a' stroke-width='1.5'/></svg>">
+
+  <!-- Goldman + IBM Plex Mono — loaded async to avoid blocking render -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preload" href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript>
 
   <!-- Friz Quadrata for non-terminal text -->
   <style>
@@ -414,10 +418,11 @@
       width: 100%; height: 100%;
       border: none;
       opacity: 0;
+      pointer-events: none;
       transition: opacity 0.5s ease;
       z-index: 5;
     }
-    #cli-frame.visible { opacity: 1; }
+    #cli-frame.visible { opacity: 1; pointer-events: auto; }
 
     /* ── Idle state: terminal in distance ── */
     #terminal-wrap.idle {

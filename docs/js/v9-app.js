@@ -23,7 +23,6 @@ const progressTotal = 5; // Number of loading stages
 const navbar = document.getElementById('navbar');
 const navFluidCanvas = document.getElementById('nav-fluid');
 const progressBar = document.getElementById('progress-bar');
-const viewport = document.getElementById('viewport');
 const fog = document.getElementById('fog');
 const spotlight = document.getElementById('spotlight');
 const termWrap = document.getElementById('terminal-wrap');
@@ -33,6 +32,10 @@ const termOverlay = document.getElementById('terminal-overlay');
 const bootText = document.getElementById('boot-text');
 const cliFrame = document.getElementById('cli-frame');
 
+// ── Declare glass early so it's accessible everywhere ──
+let glass = null;
+let fluid = null;
+
 // ── Theme detection ──
 const isDark = window.matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
@@ -41,7 +44,7 @@ function applyTheme() {
   } else {
     document.documentElement.classList.add('light');
   }
-  if (typeof glass !== 'undefined' && glass) glass.isDark = isDark.matches;
+  if (glass) glass.isDark = isDark.matches;
 }
 isDark.addEventListener('change', applyTheme);
 applyTheme();
@@ -58,7 +61,6 @@ function setProgress(n) {
 setProgress(1); // HTML loaded
 
 // ── Navbar fluid flourish ──
-let fluid = null;
 try {
   fluid = new NavFluid(navFluidCanvas);
   setProgress(2);
@@ -71,7 +73,6 @@ navbar.addEventListener('mouseenter', () => {
   if (fluid) { fluid.start(); navbar.classList.add('fluid-active'); }
 });
 navbar.addEventListener('mouseleave', () => {
-  // Let it run for a bit to dissipate
   navbar.classList.remove('fluid-active');
   setTimeout(() => { if (fluid && !navbar.classList.contains('fluid-active')) fluid.stop(); }, 2000);
 });
@@ -84,7 +85,6 @@ navbar.addEventListener('mousemove', (e) => {
 });
 
 // ── Glass scene ──
-let glass = null;
 try {
   glass = new GlassScene(glassCanvas);
   glass.isDark = isDark.matches;
@@ -111,9 +111,9 @@ const zoom = new ZoomController(termWrap, {
   },
   onProgress: (p) => {
     // Fade fog as we zoom in
-    fog.style.opacity = 1.0 - p;
+    fog.style.opacity = String(1.0 - p);
     // Increase spotlight
-    spotlight.style.opacity = 0.6 + p * 0.4;
+    spotlight.style.opacity = String(0.6 + p * 0.4);
     // Clear glass blur
     if (glass) {
       glass.fog = 1.0 - p;
@@ -124,12 +124,14 @@ const zoom = new ZoomController(termWrap, {
 setProgress(4);
 
 // ── Click/tap to activate terminal ──
-termWrap.addEventListener('click', handleActivate);
-termWrap.addEventListener('touchend', handleActivate);
+// Use event delegation on the terminal wrapper to handle clicks on any child
+termWrap.addEventListener('click', handleActivate, true);
+termWrap.addEventListener('touchend', handleActivate, true);
 
 function handleActivate(e) {
   if (state !== 'IDLE') return;
   e.preventDefault();
+  e.stopPropagation();
   state = 'ZOOMING';
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
@@ -186,7 +188,7 @@ async function startBoot() {
 
     // Check mark for completed lines
     if (i < bootLines.length - 1) {
-      span.textContent += ' ✓';
+      span.textContent += ' \u2713';
       await sleep(200);
     } else {
       // Last line — add blinking cursor
@@ -209,35 +211,33 @@ async function loadCLI() {
   // Stop background rendering to save GPU
   if (glass) glass.stop();
 
-  // Build the iframe src — point to the existing web/index.html
-  // On GitHub Pages, the CLI files live at the repo root alongside docs/
-  // For now, load from the same origin at /web/index.html with the bundle param
-  // If running locally, adjust the base URL
-  const base = getBaseURL();
-  const src = `${base}/web/index.html?bundle=/dist/claude-code-cli.js`;
-
-  cliFrame.src = src;
-  cliFrame.classList.add('visible');
-
-  // Hide boot text after iframe loads
-  cliFrame.addEventListener('load', () => {
-    bootText.style.display = 'none';
-  }, { once: true });
+  // Build the iframe src.
+  // On GitHub Pages the docs/ folder IS the site root, so web/ is not served.
+  // We load the CLI from the raw repo content or a deployed URL.
+  // For the live site, we point to the repo's web/index.html via GitHub Pages
+  // by including web/ in docs/ or using a CDN. For now, we use the repo's
+  // raw content URL as a fallback when web/ isn't colocated.
+  const webUrl = resolveWebURL();
+  if (webUrl) {
+    cliFrame.src = webUrl;
+    cliFrame.classList.add('visible');
+    cliFrame.addEventListener('load', () => {
+      bootText.style.display = 'none';
+    }, { once: true });
+  }
+  // If no web URL available, the boot screen stays visible with "ready" status
 }
 
-function getBaseURL() {
-  // If served from GitHub Pages (docs/ folder), the web/ folder is at the repo root
-  // GitHub Pages serves from docs/, so we need to go up one level
-  // If the page URL contains /docs/, strip it
+function resolveWebURL() {
   const loc = window.location;
-  // Local dev: just use origin
+  // Local dev server — web/ is at the repo root
   if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
-    return loc.origin;
+    return `${loc.origin}/web/index.html?bundle=/dist/claude-code-cli.js`;
   }
-  // GitHub Pages: the site root IS the docs/ folder, so web/ is not directly accessible
-  // In this case, we'd need the web files to be deployed or referenced via raw.githubusercontent.com
-  // For now, return origin (assumes web/ is accessible)
-  return loc.origin;
+  // GitHub Pages — web/ files aren't deployed in docs/
+  // Return null; the boot screen "ready" state is the final state on Pages
+  // until web/ content is deployed alongside docs/
+  return null;
 }
 
 // ── Icons ──
@@ -258,7 +258,7 @@ document.addEventListener('mousemove', (e) => {
 
 // ── Keyboard shortcut: Escape to zoom out ──
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && state === 'RUNNING') {
+  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING')) {
     state = 'IDLE';
     cliFrame.classList.remove('visible');
     cliFrame.src = '';
