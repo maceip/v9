@@ -32,6 +32,7 @@ const BUNDLES = {
   'Gemini CLI': '/dist/gemini-cli.js',
   'Cline': '/dist/cline-cli.js',
   'Cody': '/dist/cody-cli.js',
+  'Amp': '/dist/amp-cli.js',
 };
 const TIMEOUT = 60_000; // 60s per CLI
 const API_KEY = 'sk-test-fake-key-for-smoke-test';
@@ -185,6 +186,9 @@ async function testCLI(browser, name, bundlePath) {
       }
       if (cliName === 'Cody') {
         return text.includes('Cody') || text.includes('cody') || text.includes('Sourcegraph');
+      }
+      if (cliName === 'Amp') {
+        return text.includes('Amp') || text.includes('amp') || text.includes('Sourcegraph') || text.includes('ampcode');
       }
       return false;
     }, name);

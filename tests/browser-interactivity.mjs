@@ -38,6 +38,7 @@ const BUNDLES = {
   'Gemini CLI': '/dist/gemini-cli.js',
   'Cline': '/dist/cline-cli.js',
   'Cody': '/dist/cody-cli.js',
+  'Amp': '/dist/amp-cli.js',
 };
 
 let passed = 0;

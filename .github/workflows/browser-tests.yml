@@ -48,6 +48,13 @@ jobs:
           cp /tmp/cody/package/dist/index.js $GITHUB_WORKSPACE/dist/cody-cli-raw.js
           cd $GITHUB_WORKSPACE && sh scripts/bundle-cody.sh
 
+          # Amp
+          npm pack @sourcegraph/amp --pack-destination /tmp 2>/dev/null || true
+          if [ -f /tmp/sourcegraph-amp-*.tgz ]; then
+            cd /tmp && mkdir -p amp && cd amp && tar xzf ../sourcegraph-amp-*.tgz
+            cp /tmp/amp/package/dist/main.js $GITHUB_WORKSPACE/dist/amp-cli.js
+          fi
+
       - name: Install Puppeteer browsers
         run: npx puppeteer browsers install chrome
 
@@ -97,6 +104,13 @@ jobs:
           cd /tmp && mkdir -p cody && cd cody && tar xzf ../sourcegraph-cody-*.tgz
           cp /tmp/cody/package/dist/index.js $GITHUB_WORKSPACE/dist/cody-cli-raw.js
           cd $GITHUB_WORKSPACE && sh scripts/bundle-cody.sh
+
+          # Amp
+          npm pack @sourcegraph/amp --pack-destination /tmp 2>/dev/null || true
+          if [ -f /tmp/sourcegraph-amp-*.tgz ]; then
+            cd /tmp && mkdir -p amp && cd amp && tar xzf ../sourcegraph-amp-*.tgz
+            cp /tmp/amp/package/dist/main.js $GITHUB_WORKSPACE/dist/amp-cli.js
+          fi
 
       - name: Install Puppeteer browsers
         run: npx puppeteer browsers install chrome
