@@ -49,7 +49,10 @@ function cloneModuleExports(moduleExports) {
     return Object.assign(moduleExports, moduleExports);
   }
   if (typeof moduleExports === 'object') {
-    return { ...moduleExports };
+    // Preserve prototype-provided methods (e.g., processBridge class methods)
+    // while still allowing us to attach missing stub exports as own props.
+    const clone = Object.create(moduleExports);
+    return Object.assign(clone, moduleExports);
   }
   return {};
 }
