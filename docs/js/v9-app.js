@@ -333,13 +333,18 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// ── Mouse parallax for background icons ──
-document.addEventListener('mousemove', (e) => {
-  if (glass) {
-    glass.mouse.x = e.clientX / window.innerWidth;
-    glass.mouse.y = 1.0 - e.clientY / window.innerHeight;
-  }
-});
+// ── Mouse/touch warp for glass shader ──
+function updateGlassMouse(clientX, clientY) {
+  if (!glass) return;
+  // Map to glass canvas coords (relative to terminal screen)
+  const rect = termScreen.getBoundingClientRect();
+  glass.mouse.x = (clientX - rect.left) / rect.width;
+  glass.mouse.y = 1.0 - (clientY - rect.top) / rect.height;
+}
+document.addEventListener('mousemove', (e) => updateGlassMouse(e.clientX, e.clientY));
+document.addEventListener('touchmove', (e) => {
+  if (e.touches[0]) updateGlassMouse(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: true });
 
 // ── Reset to idle state ──
 let dismissCount = 0;

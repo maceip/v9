@@ -67,9 +67,29 @@ void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);
 
+  // ── Mouse warp distortion ──
+  // Distance from mouse creates a gravitational lens / ripple effect
+  vec2 mousePos = uMouse * 2.0 - 1.0;
+  vec2 toMouse = uv - mousePos * aspect;
+  float mouseDist = length(toMouse);
+  float warpStrength = 0.15;
+  // Radial warp: pushes pixels away from cursor in a smooth falloff
+  float warp = exp(-mouseDist * mouseDist * 4.0) * warpStrength;
+  // Swirl: rotates pixels around cursor
+  float swirlAngle = warp * 2.5;
+  float cs = cos(swirlAngle);
+  float sn = sin(swirlAngle);
+  vec2 warped = uv + toMouse * warp * 0.5;
+  // Apply swirl rotation around mouse point
+  vec2 fromMouse = warped - mousePos * aspect;
+  warped = mousePos * aspect + vec2(
+    fromMouse.x * cs - fromMouse.y * sn,
+    fromMouse.x * sn + fromMouse.y * cs
+  );
+
   // ── Background: tumble diagonal line — animated drift ──
   float drift = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
-  float line = uv.y - uv.x * 0.28 + drift;
+  float line = warped.y - warped.x * 0.28 + drift;
   vec3 bg = palette(line, uDark);
 
   // ── Liquid glass distortion ──
@@ -87,11 +107,15 @@ void main() {
   vec2 uvG = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(2.0, 2.0);
   vec2 uvB = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(3.0, 1.0);
 
-  // Sample background with per-channel offset
+  // Sample background with per-channel offset + mouse warp applied
   float driftCA = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
-  float lineR = (uvR * 2.0 - 1.0).y - (uvR * 2.0 - 1.0).x * 0.28 + driftCA;
-  float lineG = (uvG * 2.0 - 1.0).y - (uvG * 2.0 - 1.0).x * 0.28 + driftCA;
-  float lineB = (uvB * 2.0 - 1.0).y - (uvB * 2.0 - 1.0).x * 0.28 + driftCA;
+  // Apply same mouse warp to CA-offset UVs
+  vec2 warpedR = (uvR * 2.0 - 1.0) + toMouse * warp * 0.5;
+  vec2 warpedG = (uvG * 2.0 - 1.0) + toMouse * warp * 0.5;
+  vec2 warpedB = (uvB * 2.0 - 1.0) + toMouse * warp * 0.5;
+  float lineR = warpedR.y - warpedR.x * 0.28 + driftCA;
+  float lineG = warpedG.y - warpedG.x * 0.28 + driftCA;
+  float lineB = warpedB.y - warpedB.x * 0.28 + driftCA;
 
   vec3 glassCol = vec3(
     palette(lineR, uDark).r,
