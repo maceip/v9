@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>ScreenShare</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="8" width="30" height="18" rx="3" fill="#9bff00" />
+    <path d="M15 18h10" fill="none" />
+    <path d="M21 12l4 6-4 6" fill="none" />
+    <line x1="20" y1="26" x2="20" y2="31" />
+    <line x1="15" y1="31" x2="25" y2="31" />
+  </g>
+</svg>

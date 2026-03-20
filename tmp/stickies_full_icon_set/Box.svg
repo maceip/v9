@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Box</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="20,6 31,12 20,18 9,12" fill="#ffffff" />
+    <path d="M9 12v12l11 6 11-6V12" fill="#9bff00" />
+    <path d="M20 18v12" fill="none" />
+  </g>
+</svg>

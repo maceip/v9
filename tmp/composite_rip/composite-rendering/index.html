@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Composite Rendering &mdash; WebGL Transitions</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    canvas.dragging { cursor: grabbing; }
+    canvas.pointer { cursor: pointer; }
+    #info {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.4); font-family: 'SF Mono', 'Consolas', monospace;
+      font-size: 11px; pointer-events: none; text-align: center;
+      letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    #transition-bar {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 10; font-family: 'SF Mono', 'Consolas', monospace;
+    }
+    #transition-bar button {
+      padding: 5px 12px; border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.5); cursor: pointer;
+      font-size: 10px; border-radius: 3px; font-family: inherit;
+      transition: all 0.25s; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    #transition-bar button:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    #transition-bar button.active { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.4); color: #fff; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="info">drag to scroll &bull; click card to zoom &bull; esc to return</div>
+  <div id="transition-bar">
+    <button data-transition="fade">Fade</button>
+    <button data-transition="wipe" class="active">Wipe</button>
+    <button data-transition="diagonal">Diagonal</button>
+    <button data-transition="smoothDiagonal">Smooth</button>
+    <button data-transition="noiseDissolve">Noise</button>
+    <button data-transition="rgbShift">RGB</button>
+    <button data-transition="barrelZoom">Barrel</button>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

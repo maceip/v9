@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Wifi</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 16c7-7 19-7 26 0" fill="none" />
+    <path d="M11 20c5-5 13-5 18 0" fill="none" />
+    <path d="M15 24c3-3 7-3 10 0" fill="none" />
+    <circle cx="20" cy="29" r="2.2" fill="#9bff00" />
+  </g>
+</svg>

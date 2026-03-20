@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Scan</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 8H8v4M28 8h4v4M12 32H8v-4M28 32h4v-4" fill="none" />
+    <circle cx="20" cy="20" r="6" fill="#9bff00" />
+  </g>
+</svg>

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stickies Icon Set — 59 icons</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; background: #fafaf9; color: #1c1917; padding: 32px; }
+h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+.subtitle { font-size: 13px; color: #78716c; margin-bottom: 32px; }
+.controls { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+.controls input { padding: 8px 12px; border: 1px solid #d6d3d1; border-radius: 6px; font-family: inherit; font-size: 13px; width: 260px; background: #fff; }
+.controls input:focus { outline: none; border-color: #a8a29e; }
+.controls label { font-size: 12px; color: #78716c; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.controls input[type="range"] { width: 100px; }
+.count { font-size: 12px; color: #a8a29e; margin-left: auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 2px; }
+.icon-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px 12px 14px; background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; transition: all 0.15s; cursor: pointer; position: relative; }
+.icon-card:hover { border-color: #a8a29e; background: #f5f5f4; }
+.icon-card.copied { border-color: #16a34a; }
+.icon-card .svg-wrap { width: var(--icon-size, 32px); height: var(--icon-size, 32px); display: flex; align-items: center; justify-content: center; }
+.icon-card .svg-wrap img { width: 100%; height: 100%; }
+.icon-card .name { font-size: 10px; color: #78716c; text-align: center; word-break: break-all; line-height: 1.3; }
+.icon-card .badge { position: absolute; top: 4px; right: 4px; font-size: 8px; padding: 1px 4px; border-radius: 3px; background: #f5f5f4; color: #a8a29e; border: 1px solid #e7e5e4; }
+.icon-card .badge.brand { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.toast { position: fixed; bottom: 24px; right: 24px; background: #1c1917; color: #fafaf9; padding: 10px 16px; border-radius: 8px; font-size: 12px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.dark body { background: #1c1917; color: #e7e5e4; }
+.dark .icon-card { background: #292524; border-color: #44403c; }
+.dark .icon-card:hover { background: #44403c; border-color: #78716c; }
+.dark .icon-card .name { color: #a8a29e; }
+.dark .controls input { background: #292524; border-color: #44403c; color: #e7e5e4; }
+.dark .icon-card .badge { background: #292524; color: #78716c; border-color: #44403c; }
+.dark .icon-card .badge.brand { background: #451a03; color: #fbbf24; border-color: #78350f; }
+.dark .icon-card .svg-wrap img { filter: invert(1); }
+.dark .icon-card .badge.brand + .svg-wrap img { filter: invert(0.85); }
+.empty { grid-column: 1 / -1; text-align: center; padding: 48px; color: #a8a29e; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>stickies_full_icon_set</h1>
+<p class="subtitle">59 icons — click any to copy filename</p>
+
+<div class="controls">
+	<input type="text" id="search" placeholder="Filter icons..." autofocus>
+	<label>
+		Size
+		<input type="range" id="size" min="16" max="64" value="32">
+		<span id="size-val">32px</span>
+	</label>
+	<label>
+		<input type="checkbox" id="dark-toggle"> Dark
+	</label>
+	<span class="count" id="count">59 icons</span>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const ICONS = [
+	{ name: 'Activity', file: 'Activity.svg', brand: false },
+	{ name: 'AlertTriangle', file: 'AlertTriangle.svg', brand: false },
+	{ name: 'ArrowDownUp', file: 'ArrowDownUp.svg', brand: false },
+	{ name: 'ArrowRight', file: 'ArrowRight.svg', brand: false },
+	{ name: 'BookOpen', file: 'BookOpen.svg', brand: false },
+	{ name: 'Box', file: 'Box.svg', brand: false },
+	{ name: 'Bug', file: 'Bug.svg', brand: false },
+	{ name: 'Check', file: 'Check.svg', brand: false },
+	{ name: 'ChevronRight', file: 'ChevronRight.svg', brand: false },
+	{ name: 'CircleCheck', file: 'CircleCheck.svg', brand: false },
+	{ name: 'CircleDot', file: 'CircleDot.svg', brand: false },
+	{ name: 'ClipboardCheck', file: 'ClipboardCheck.svg', brand: false },
+	{ name: 'Clock', file: 'Clock.svg', brand: false },
+	{ name: 'Code', file: 'Code.svg', brand: false },
+	{ name: 'Copy', file: 'Copy.svg', brand: false },
+	{ name: 'Cpu', file: 'Cpu.svg', brand: false },
+	{ name: 'Database', file: 'Database.svg', brand: false },
+	{ name: 'ExternalLink', file: 'ExternalLink.svg', brand: false },
+	{ name: 'Eye', file: 'Eye.svg', brand: false },
+	{ name: 'EyeOff', file: 'EyeOff.svg', brand: false },
+	{ name: 'FileText', file: 'FileText.svg', brand: false },
+	{ name: 'Fingerprint', file: 'Fingerprint.svg', brand: false },
+	{ name: 'FlaskConical', file: 'FlaskConical.svg', brand: false },
+	{ name: 'GitBranch', file: 'GitBranch.svg', brand: false },
+	{ name: 'Github', file: 'Github.svg', brand: false },
+	{ name: 'Globe', file: 'Globe.svg', brand: false },
+	{ name: 'HardDrive', file: 'HardDrive.svg', brand: false },
+	{ name: 'Info', file: 'Info.svg', brand: false },
+	{ name: 'Laptop', file: 'Laptop.svg', brand: false },
+	{ name: 'Layers', file: 'Layers.svg', brand: false },
+	{ name: 'Loader2Icon', file: 'Loader2Icon.svg', brand: false },
+	{ name: 'Lock', file: 'Lock.svg', brand: false },
+	{ name: 'Menu', file: 'Menu.svg', brand: false },
+	{ name: 'Minus', file: 'Minus.svg', brand: false },
+	{ name: 'Monitor', file: 'Monitor.svg', brand: false },
+	{ name: 'Network', file: 'Network.svg', brand: false },
+	{ name: 'Pause', file: 'Pause.svg', brand: false },
+	{ name: 'Play', file: 'Play.svg', brand: false },
+	{ name: 'Plus', file: 'Plus.svg', brand: false },
+	{ name: 'Puzzle', file: 'Puzzle.svg', brand: false },
+	{ name: 'Radio', file: 'Radio.svg', brand: false },
+	{ name: 'RefreshCw', file: 'RefreshCw.svg', brand: false },
+	{ name: 'Scan', file: 'Scan.svg', brand: false },
+	{ name: 'ScreenShare', file: 'ScreenShare.svg', brand: false },
+	{ name: 'Server', file: 'Server.svg', brand: false },
+	{ name: 'Shield', file: 'Shield.svg', brand: false },
+	{ name: 'SlidersHorizontal', file: 'SlidersHorizontal.svg', brand: false },
+	{ name: 'Smartphone', file: 'Smartphone.svg', brand: false },
+	{ name: 'Tablet', file: 'Tablet.svg', brand: false },
+	{ name: 'Terminal', file: 'Terminal.svg', brand: false },
+	{ name: 'TestTube', file: 'TestTube.svg', brand: false },
+	{ name: 'TriangleAlert', file: 'TriangleAlert.svg', brand: false },
+	{ name: 'Unplug', file: 'Unplug.svg', brand: false },
+	{ name: 'Wifi', file: 'Wifi.svg', brand: false },
+	{ name: 'WifiOff', file: 'WifiOff.svg', brand: false },
+	{ name: 'Wrench', file: 'Wrench.svg', brand: false },
+	{ name: 'X', file: 'X.svg', brand: false },
+	{ name: 'Zap', file: 'Zap.svg', brand: false },
+	{ name: 'siChromewebstore', file: 'siChromewebstore.svg', brand: true },
+	{ name: 'siGithub', file: 'siGithub.svg', brand: true },
+	{ name: 'siGooglechrome', file: 'siGooglechrome.svg', brand: true },
+];
+
+const grid = document.getElementById('grid');
+const search = document.getElementById('search');
+const sizeSlider = document.getElementById('size');
+const sizeVal = document.getElementById('size-val');
+const countEl = document.getElementById('count');
+const darkToggle = document.getElementById('dark-toggle');
+const toast = document.getElementById('toast');
+
+function render(filter = '') {
+	const q = filter.toLowerCase();
+	const filtered = ICONS.filter(i => i.name.toLowerCase().includes(q));
+	grid.innerHTML = filtered.length === 0
+		? '<div class="empty">No icons match your search</div>'
+		: filtered.map(i => `
+			<div class="icon-card" data-name="${i.name}" onclick="copyName('${i.name}', this)">
+				${i.brand ? '<span class="badge brand">brand</span>' : ''}
+				<div class="svg-wrap"><img src="${i.file}" alt="${i.name}" loading="lazy"></div>
+				<div class="name">${i.name}</div>
+			</div>
+		`).join('');
+	countEl.textContent = filtered.length + ' icon' + (filtered.length !== 1 ? 's' : '');
+}
+
+function copyName(name, el) {
+	navigator.clipboard.writeText(name).then(() => {
+		el.classList.add('copied');
+		setTimeout(() => el.classList.remove('copied'), 600);
+		toast.textContent = 'Copied: ' + name;
+		toast.classList.add('show');
+		setTimeout(() => toast.classList.remove('show'), 1200);
+	});
+}
+
+search.addEventListener('input', () => render(search.value));
+
+sizeSlider.addEventListener('input', () => {
+	document.documentElement.style.setProperty('--icon-size', sizeSlider.value + 'px');
+	sizeVal.textContent = sizeSlider.value + 'px';
+});
+
+darkToggle.addEventListener('change', () => {
+	document.documentElement.classList.toggle('dark', darkToggle.checked);
+});
+
+render();
+</script>
+</body>
+</html>
