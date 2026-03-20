@@ -98,7 +98,7 @@ Behavior:
 
 For `wasm` input, Stage 1 runs loader-focused validation (`WebAssembly.compile` + import/export extraction), packages the raw wasm artifact, and emits `parsec-load-plan.json` / `parsec-package-manifest.json` for runtime loader verification.
 
-When `--virtualize-network-layer` is enabled, Parsec emits `parsec-shared-network-adapter.js` and rewrites networking builtins to shared adapters backed by `globalThis.__PARSEC_SHARED_NETWORK__`, allowing multiple packaged apps to share one persistent network/proxy layer.
+When `--virtualize-network-layer` is enabled, Parsec emits `parsec-shared-network-adapter.js` + `parsec-loader-bootstrap.js`, rewrites networking builtins to shared adapters backed by `globalThis.__PARSEC_SHARED_NETWORK__`, and exposes a persistent-session bootstrap helper (`bootstrapParsecLoadPlan`) so multiple packaged apps can share one network/proxy layer.
 
 ## Architecture
 

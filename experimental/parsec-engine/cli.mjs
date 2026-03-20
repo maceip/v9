@@ -82,6 +82,12 @@ async function main() {
   console.log(`- backendTarget: ${metadata.stage1.backendTarget}`);
   console.log(`- packageStrategy: ${metadata.stage1.packageStrategy}`);
   console.log(`- virtualizeNetworkLayer: ${Boolean(metadata.stage1.virtualizeNetworkLayer)}`);
+  if (metadata.stage1.sharedNetworkAdapterFile) {
+    console.log(`- sharedNetworkAdapter: ${metadata.stage1.sharedNetworkAdapterFile}`);
+  }
+  if (metadata.stage1.sharedNetworkBootstrapFile) {
+    console.log(`- sharedNetworkBootstrap: ${metadata.stage1.sharedNetworkBootstrapFile}`);
+  }
   console.log(`- cacheKey: ${metadata.stage1.cacheKey}`);
   if (metadata.stage2) {
     console.log(`- stage2 task: ${metadata.stage2.taskId || metadata.stage2.id} (${metadata.stage2.status})`);
