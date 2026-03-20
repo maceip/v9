@@ -456,6 +456,8 @@ function rm(args) {
 }
 
 // Bug #20: Use public MEMFS API instead of private _resolve()
+// Fix: Use _activeMemfs.rmdir() directly instead of fsModule.rmdirSync()
+// which operates on the default singleton memfs, not the active runtime memfs.
 function rmRecursive(dirPath) {
   const entries = _activeMemfs.readdir(dirPath);
   for (const name of entries) {
@@ -463,9 +465,8 @@ function rmRecursive(dirPath) {
     if (isDir(full)) rmRecursive(full);
     else _activeMemfs.unlink(full);
   }
-  // Remove the now-empty directory via public rmdir-like unlink
-  // MEMFS doesn't have rmdir, so use the fs module's rmdirSync
-  try { fsModule.rmdirSync(dirPath); } catch { /* ignore */ }
+  // Remove the now-empty directory via the active runtime's MEMFS instance
+  try { _activeMemfs.rmdir(dirPath); } catch { /* ignore */ }
 }
 
 // ─── cp ──────────────────────────────────────────────────────────────

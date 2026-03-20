@@ -3054,6 +3054,27 @@ export async function initEdgeJS(options = {}) {
       require: _memfsRequire,
       module: null,
 
+      // ── Sync/replication plane ─────────────────────────────────────
+      // Exposed separately from fs API for external sync engines.
+
+      /** Capture filesystem metadata snapshot (COW-friendly: hashes, not byte clones). */
+      fsSnapshot() { return _sharedMemfs.snapshot(); },
+
+      /** Capture full snapshot with byte content (for initial sync/restore). */
+      fsSnapshotFull() { return _sharedMemfs.snapshotFull(); },
+
+      /** Get journal entries since seq. Returns { gap, entries, gapFrom?, gapTo? }. */
+      fsJournalSince(seq) { return _sharedMemfs.getJournalSince(seq); },
+
+      /** Subscribe to filesystem mutations. Returns unsubscribe function. */
+      fsWatch(callback) { return _sharedMemfs.onMutation(callback); },
+
+      /** Begin a transactional batch of mutations. Returns txid. */
+      fsBeginTx() { return _sharedMemfs.beginTx(); },
+
+      /** Commit the current transaction. */
+      fsCommitTx() { return _sharedMemfs.commitTx(); },
+
       pushStdin(data) {
         _sharedProcessBridge.stdin.push(typeof data === 'string' ? data : String(data));
       },
@@ -3587,6 +3608,27 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
 
     /** Access the virtual filesystem (Node.js-compatible API backed by MEMFS) */
     fs: _sharedBridgeFs,
+
+    // ── Sync/replication plane ─────────────────────────────────────
+    // Exposed separately from fs API for external sync engines.
+
+    /** Capture filesystem metadata snapshot (COW-friendly: hashes, not byte clones). */
+    fsSnapshot() { return _sharedMemfs.snapshot(); },
+
+    /** Capture full snapshot with byte content (for initial sync/restore). */
+    fsSnapshotFull() { return _sharedMemfs.snapshotFull(); },
+
+    /** Get journal entries since seq. Returns { gap, entries, gapFrom?, gapTo? }. */
+    fsJournalSince(seq) { return _sharedMemfs.getJournalSince(seq); },
+
+    /** Subscribe to filesystem mutations. Returns unsubscribe function. */
+    fsWatch(callback) { return _sharedMemfs.onMutation(callback); },
+
+    /** Begin a transactional batch of mutations. Returns txid. */
+    fsBeginTx() { return _sharedMemfs.beginTx(); },
+
+    /** Commit the current transaction. */
+    fsCommitTx() { return _sharedMemfs.commitTx(); },
 
     /** Push data into process.stdin (for terminal keyboard input) */
     pushStdin(data) {
