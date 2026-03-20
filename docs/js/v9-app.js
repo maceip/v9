@@ -41,7 +41,7 @@ function applyTheme() {
   } else {
     document.documentElement.classList.add('light');
   }
-  if (glass) glass.isDark = isDark.matches;
+  if (typeof glass !== 'undefined' && glass) glass.isDark = isDark.matches;
 }
 isDark.addEventListener('change', applyTheme);
 applyTheme();
