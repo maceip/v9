@@ -66,7 +66,14 @@ async function getTerminalText(page) {
   });
 }
 
-async function sendKeys(page, keys, delayMs = 50) {
+async function sendKeys(page, keys, delayMs = 100) {
+  // Focus the xterm terminal element so keyboard events reach it
+  await page.evaluate(() => {
+    const textarea = document.querySelector('.xterm-helper-textarea') || document.querySelector('textarea');
+    if (textarea) textarea.focus();
+  });
+  await sleep(100);
+
   for (const key of keys) {
     if (key === 'ArrowUp') await page.keyboard.press('ArrowUp');
     else if (key === 'ArrowDown') await page.keyboard.press('ArrowDown');
@@ -74,7 +81,13 @@ async function sendKeys(page, keys, delayMs = 50) {
     else if (key === 'Escape') await page.keyboard.press('Escape');
     else if (key === 'Tab') await page.keyboard.press('Tab');
     else if (key === 'Backspace') await page.keyboard.press('Backspace');
-    else await page.keyboard.type(key, { delay: 20 });
+    else {
+      // Also push directly to stdin in case xterm doesn't capture
+      await page.evaluate((ch) => {
+        if (typeof globalThis._stdinPush === 'function') globalThis._stdinPush(ch);
+      }, key);
+      await page.keyboard.type(key, { delay: 20 });
+    }
     await sleep(delayMs);
   }
 }
@@ -211,10 +224,20 @@ async function testClaudeConversation(browser) {
     const textAfterOnboarding = await getTerminalText(page);
     log('📋', `After onboarding: ${textAfterOnboarding.length} chars`);
 
-    // Step 4: Type the prompt
+    // Step 4: Type the prompt — push directly to stdin AND via keyboard
     const prompt = 'write me a paragraph on god';
     log('⏳', `Typing prompt: "${prompt}"`);
-    await page.keyboard.type(prompt, { delay: 30 });
+    // Focus xterm
+    await page.evaluate(() => {
+      const ta = document.querySelector('.xterm-helper-textarea') || document.querySelector('textarea');
+      if (ta) ta.focus();
+    });
+    // Push each char to stdin directly
+    for (const ch of prompt) {
+      await page.evaluate((c) => { if (globalThis._stdinPush) globalThis._stdinPush(c); }, ch);
+      await page.keyboard.type(ch, { delay: 20 });
+      await sleep(30);
+    }
     await sleep(1000);
 
     // Verify the prompt appears in the terminal
@@ -228,6 +251,7 @@ async function testClaudeConversation(browser) {
 
     // Step 5: Press Enter to submit
     log('⏳', 'Submitting prompt...');
+    await page.evaluate(() => { if (globalThis._stdinPush) globalThis._stdinPush('\r'); });
     await sendKeys(page, ['Enter']);
 
     // Step 6: Wait for streaming response (up to 60 seconds)
