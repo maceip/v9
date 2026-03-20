@@ -35,6 +35,13 @@ export function _setBuiltinModule(name, mod) {
   _builtinCache[name] = mod;
 }
 let _registeredModules = [];
+let _sourceMapsSupport = {
+  enabled: false,
+  nodeModules: false,
+  generatedCode: false,
+};
+
+const _compileCacheDir = '/tmp/edgejs-compile-cache';
 
 export function _setRequire(requireFn) {
   _memfsRequire = requireFn;
@@ -103,6 +110,98 @@ export function isBuiltin(name) {
   return _registeredModules.includes(stripped);
 }
 
+export class SourceMap {
+  constructor(payload = {}) {
+    this.payload = payload;
+  }
+  findEntry(lineOffset, columnOffset) {
+    return {
+      generatedLine: lineOffset,
+      generatedColumn: columnOffset,
+      originalLine: lineOffset,
+      originalColumn: columnOffset,
+      source: null,
+      name: null,
+    };
+  }
+}
+
+export const constants = Object.freeze({
+  compileCacheStatus: Object.freeze({
+    DISABLED: 0,
+    ENABLED: 1,
+    FAILED: 2,
+  }),
+});
+
+export const globalPaths = ['/node_modules'];
+
+export function syncBuiltinESMExports() {
+  // No-op: builtin module identity is already shared in this runtime.
+}
+
+export function runMain(mainPath) {
+  if (typeof mainPath === 'string' && _memfsRequire) {
+    return _memfsRequire(mainPath, '/');
+  }
+  return undefined;
+}
+
+export function enableCompileCache(cacheDir = _compileCacheDir) {
+  return {
+    status: constants.compileCacheStatus.ENABLED,
+    directory: cacheDir,
+    message: 'compile cache shim enabled',
+  };
+}
+
+export function flushCompileCache() {
+  return;
+}
+
+export function getCompileCacheDir() {
+  return _compileCacheDir;
+}
+
+export function findPackageJSON(specifier, base = '/') {
+  if (typeof specifier !== 'string') return undefined;
+  if (specifier.endsWith('/package.json')) return specifier;
+  if (specifier.startsWith('.') || specifier.startsWith('/')) {
+    return `${base.replace(/\/$/, '')}/${specifier.replace(/^\.\//, '')}/package.json`;
+  }
+  return `/node_modules/${specifier}/package.json`;
+}
+
+export function findSourceMap() {
+  return null;
+}
+
+export function getSourceMapsSupport() {
+  return { ..._sourceMapsSupport };
+}
+
+export function setSourceMapsSupport(enabled, options = {}) {
+  _sourceMapsSupport = {
+    enabled: Boolean(enabled),
+    nodeModules: Boolean(options.nodeModules),
+    generatedCode: Boolean(options.generatedCode),
+  };
+}
+
+export function register() {
+  return { unregister() {} };
+}
+
+export function registerHooks() {
+  return { unregister() {} };
+}
+
+export function stripTypeScriptTypes(code) {
+  if (typeof code !== 'string') return '';
+  // Compatibility behavior: return input unchanged when no TS strip engine exists.
+  return code;
+}
+
 // Module class stub
 export class Module {
   constructor(id, parent) {
@@ -121,11 +220,27 @@ Module.builtinModules = builtinModules;
 Module.isBuiltin = isBuiltin;
 Module._resolveFilename = (request) => request;
 Module._cache = {};
+Module.globalPaths = globalPaths;
 
 export default {
+  SourceMap,
+  constants,
   createRequire,
   builtinModules,
   isBuiltin,
+  enableCompileCache,
+  findPackageJSON,
+  findSourceMap,
+  flushCompileCache,
+  getCompileCacheDir,
+  getSourceMapsSupport,
+  globalPaths,
+  register,
+  registerHooks,
+  runMain,
+  setSourceMapsSupport,
+  stripTypeScriptTypes,
+  syncBuiltinESMExports,
   Module,
   _setRequire,
   _setBuiltinList,

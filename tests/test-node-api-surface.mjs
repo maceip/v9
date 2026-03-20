@@ -100,6 +100,32 @@ test('network-adjacent shims expose callable compatibility APIs', () => {
   assert(typeof tls.connect === 'function', 'tls.connect should be callable');
 });
 
+test('module shim exposes compatibility APIs without stub throws', () => {
+  const mod = localRequire('module');
+  assert(typeof mod.createRequire === 'function', 'module.createRequire should be callable');
+  assert(typeof mod.syncBuiltinESMExports === 'function', 'module.syncBuiltinESMExports should be callable');
+  assert(typeof mod.findPackageJSON === 'function', 'module.findPackageJSON should be callable');
+  assert(typeof mod.getSourceMapsSupport === 'function', 'module.getSourceMapsSupport should be callable');
+  assert(typeof mod.setSourceMapsSupport === 'function', 'module.setSourceMapsSupport should be callable');
+  mod.syncBuiltinESMExports();
+  mod.setSourceMapsSupport(true, { nodeModules: true });
+  const sm = mod.getSourceMapsSupport();
+  assert(sm.enabled === true, 'source maps support should update through module shim');
+});
+
+test('process shim exposes high-frequency APIs without stubs', () => {
+  const proc = localRequire('process');
+  assert(typeof proc.binding === 'function', 'process.binding should exist');
+  assert(typeof proc.getBuiltinModule === 'function', 'process.getBuiltinModule should exist');
+  assert(typeof proc.availableMemory === 'function', 'process.availableMemory should exist');
+  assert(typeof proc.resourceUsage === 'function', 'process.resourceUsage should exist');
+  assert(typeof proc.assert === 'function', 'process.assert should exist');
+  proc.assert(true);
+  const usage = proc.resourceUsage();
+  assert(typeof usage === 'object' && usage !== null, 'resourceUsage should return object');
+  assert(typeof proc.binding('fs') === 'object', 'binding shim should return object');
+});
+
 test('registerBrowserBuiltins return object is expanded', () => {
   assert(Object.prototype.hasOwnProperty.call(builtins, 'cluster'), 'returned builtins should include cluster');
   assert(Object.prototype.hasOwnProperty.call(builtins, 'trace_events'), 'returned builtins should include trace_events');

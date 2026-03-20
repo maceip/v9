@@ -642,6 +642,13 @@ class Process extends EventEmitter {
       getReport() { return { header: { event: 'edgejs-browser-runtime' } }; },
       writeReport() { return ''; },
     };
+    this.domain = null;
+    this.debugPort = 9229;
+    this.finalization = {
+      register() {},
+      registerBeforeExit() {},
+      unregister() {},
+    };
 
     this._cwd = '/';
 
@@ -739,6 +746,28 @@ class Process extends EventEmitter {
     if (pid === 0 || pid === this.pid || pid === undefined) return true;
     const err = new Error(`kill ESRCH: no such process, ${pid}`);
     err.code = 'ESRCH';
+    throw err;
+  }
+
+  assert(value, message) {
+    if (!value) {
+      throw new Error(message || 'Assertion failed');
+    }
+  }
+
+  binding(name) {
+    return {};
+  }
+
+  dlopen() {
+    const err = new Error('process.dlopen() is not available in browser runtime');
+    err.code = 'ERR_NOT_IMPLEMENTED';
+    throw err;
+  }
+
+  execve() {
+    const err = new Error('process.execve() is not available in browser runtime');
+    err.code = 'ERR_NOT_IMPLEMENTED';
     throw err;
   }
 
