@@ -1,11 +1,23 @@
 // Auto-generated ESM wrapper for node:https
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('https');
-export default _module;
-export const Agent = _module.Agent;
-export const Server = _module.Server;
-export const createServer = _module.createServer;
-export const get = _module.get;
-export const globalAgent = _module.globalAgent;
-export const request = _module.request;
+let _defaultExport = getNodeApiModule('https');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('https');
+  _defaultExport = mod;
+  Agent = mod.Agent;
+  Server = mod.Server;
+  createServer = mod.createServer;
+  get = mod.get;
+  globalAgent = mod.globalAgent;
+  request = mod.request;
+}
+export let Agent;
+export let Server;
+export let createServer;
+export let get;
+export let globalAgent;
+export let request;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('https', _syncNodeApiModuleBindings);

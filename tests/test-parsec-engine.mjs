@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
-import { createParsecEngine } from '../parsec-engine/index.mjs';
+import { createParsecEngine } from '../experimental/parsec-engine/index.mjs';
 
 console.log('=== Parsec Engine Tests ===\n');
 

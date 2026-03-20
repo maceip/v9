@@ -1,8 +1,17 @@
 // Auto-generated ESM wrapper for node:tty
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('tty');
-export default _module;
-export const ReadStream = _module.ReadStream;
-export const WriteStream = _module.WriteStream;
-export const isatty = _module.isatty;
+let _defaultExport = getNodeApiModule('tty');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('tty');
+  _defaultExport = mod;
+  ReadStream = mod.ReadStream;
+  WriteStream = mod.WriteStream;
+  isatty = mod.isatty;
+}
+export let ReadStream;
+export let WriteStream;
+export let isatty;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('tty', _syncNodeApiModuleBindings);

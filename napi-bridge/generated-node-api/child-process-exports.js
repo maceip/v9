@@ -1,13 +1,27 @@
 // Auto-generated ESM wrapper for node:child_process
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('child_process');
-export default _module;
-export const ChildProcess = _module.ChildProcess;
-export const exec = _module.exec;
-export const execFile = _module.execFile;
-export const execFileSync = _module.execFileSync;
-export const execSync = _module.execSync;
-export const fork = _module.fork;
-export const spawn = _module.spawn;
-export const spawnSync = _module.spawnSync;
+let _defaultExport = getNodeApiModule('child_process');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('child_process');
+  _defaultExport = mod;
+  ChildProcess = mod.ChildProcess;
+  exec = mod.exec;
+  execFile = mod.execFile;
+  execFileSync = mod.execFileSync;
+  execSync = mod.execSync;
+  fork = mod.fork;
+  spawn = mod.spawn;
+  spawnSync = mod.spawnSync;
+}
+export let ChildProcess;
+export let exec;
+export let execFile;
+export let execFileSync;
+export let execSync;
+export let fork;
+export let spawn;
+export let spawnSync;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('child_process', _syncNodeApiModuleBindings);

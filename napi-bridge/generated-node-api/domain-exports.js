@@ -1,9 +1,19 @@
 // Auto-generated ESM wrapper for node:domain
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('domain');
-export default _module;
-export const Domain = _module.Domain;
-export const active = _module.active;
-export const create = _module.create;
-export const createDomain = _module.createDomain;
+let _defaultExport = getNodeApiModule('domain');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('domain');
+  _defaultExport = mod;
+  Domain = mod.Domain;
+  active = mod.active;
+  create = mod.create;
+  createDomain = mod.createDomain;
+}
+export let Domain;
+export let active;
+export let create;
+export let createDomain;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('domain', _syncNodeApiModuleBindings);

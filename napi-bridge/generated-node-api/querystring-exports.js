@@ -1,12 +1,25 @@
 // Auto-generated ESM wrapper for node:querystring
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('querystring');
-export default _module;
-export const decode = _module.decode;
-export const encode = _module.encode;
-export const escape = _module.escape;
-export const parse = _module.parse;
-export const stringify = _module.stringify;
-export const unescape = _module.unescape;
-export const unescapeBuffer = _module.unescapeBuffer;
+let _defaultExport = getNodeApiModule('querystring');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('querystring');
+  _defaultExport = mod;
+  decode = mod.decode;
+  encode = mod.encode;
+  escape = mod.escape;
+  parse = mod.parse;
+  stringify = mod.stringify;
+  unescape = mod.unescape;
+  unescapeBuffer = mod.unescapeBuffer;
+}
+export let decode;
+export let encode;
+export let escape;
+export let parse;
+export let stringify;
+export let unescape;
+export let unescapeBuffer;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('querystring', _syncNodeApiModuleBindings);

@@ -129,11 +129,18 @@ function writeWrappers(modules, exportMap) {
     const exports = (exportMap[moduleName] || []).filter((name) => name !== 'default' && isIdentifier(name));
     const lines = [
       `// Auto-generated ESM wrapper for node:${moduleName}`,
-      "import { getNodeApiModule } from '../node-api-surface.js';",
+      "import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';",
       '',
-      `const _module = getNodeApiModule('${moduleName}');`,
-      'export default _module;',
-      ...exports.map((name) => `export const ${name} = _module.${name};`),
+      `let _defaultExport = getNodeApiModule('${moduleName}');`,
+      `function _syncNodeApiModuleBindings() {`,
+      `  const mod = getNodeApiModule('${moduleName}');`,
+      '  _defaultExport = mod;',
+      ...exports.map((name) => `  ${name} = mod.${name};`),
+      '}',
+      ...exports.map((name) => `export let ${name};`),
+      'export { _defaultExport as default };',
+      '_syncNodeApiModuleBindings();',
+      `subscribeNodeApiModule('${moduleName}', _syncNodeApiModuleBindings);`,
       '',
     ];
     writeFileSync(wrapperPath, lines.join('\n'), 'utf8');

@@ -1,15 +1,31 @@
 // Auto-generated ESM wrapper for node:timers
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('timers');
-export default _module;
-export const active = _module.active;
-export const clearImmediate = _module.clearImmediate;
-export const clearInterval = _module.clearInterval;
-export const clearTimeout = _module.clearTimeout;
-export const enroll = _module.enroll;
-export const promises = _module.promises;
-export const setImmediate = _module.setImmediate;
-export const setInterval = _module.setInterval;
-export const setTimeout = _module.setTimeout;
-export const unenroll = _module.unenroll;
+let _defaultExport = getNodeApiModule('timers');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('timers');
+  _defaultExport = mod;
+  active = mod.active;
+  clearImmediate = mod.clearImmediate;
+  clearInterval = mod.clearInterval;
+  clearTimeout = mod.clearTimeout;
+  enroll = mod.enroll;
+  promises = mod.promises;
+  setImmediate = mod.setImmediate;
+  setInterval = mod.setInterval;
+  setTimeout = mod.setTimeout;
+  unenroll = mod.unenroll;
+}
+export let active;
+export let clearImmediate;
+export let clearInterval;
+export let clearTimeout;
+export let enroll;
+export let promises;
+export let setImmediate;
+export let setInterval;
+export let setTimeout;
+export let unenroll;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('timers', _syncNodeApiModuleBindings);

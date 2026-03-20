@@ -3,6 +3,8 @@ import { builtinModules, createRequire, isBuiltin } from '../napi-bridge/module-
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as processEsm from '../napi-bridge/generated-node-api/process-exports.js';
+import * as moduleEsm from '../napi-bridge/generated-node-api/module-exports.js';
 
 console.log('=== Node API Surface Tests ===\n');
 
@@ -113,6 +115,16 @@ test('module shim exposes compatibility APIs without stub throws', () => {
   assert(sm.enabled === true, 'source maps support should update through module shim');
 });
 
+test('generated ESM wrappers and CJS require share same registry objects', () => {
+  const proc = localRequire('process');
+  const mod = localRequire('module');
+  assert(typeof processEsm.assert === 'function', 'ESM process wrapper should expose assert');
+  processEsm.assert(true);
+  assert(processEsm.default === proc, 'ESM process default should match CJS process object');
+  assert(moduleEsm.default === mod, 'ESM module default should match CJS module object');
+  assert(moduleEsm.createRequire === mod.createRequire, 'createRequire should be shared between ESM and CJS');
+});
+
 test('process shim exposes high-frequency APIs without stubs', () => {
   const proc = localRequire('process');
   assert(typeof proc.binding === 'function', 'process.binding should exist');
@@ -147,6 +159,9 @@ test('web import map uses generated wrappers for core modules', () => {
     'web import map should route child_process through generated-node-api');
   assert(html.includes('../napi-bridge/generated-node-api/module-exports.js'),
     'web import map should route module through generated-node-api');
+  const legacyExportsPathPattern = /"\w[^"]*"\s*:\s*"\.\.\/napi-bridge\/(?!generated-node-api\/)[^"]*-exports\.js"/g;
+  assert(!legacyExportsPathPattern.test(html),
+    'web import map should not reference legacy *-exports.js wrappers');
 });
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);

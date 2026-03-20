@@ -1,13 +1,27 @@
 // Auto-generated ESM wrapper for node:inspector
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('inspector');
-export default _module;
-export const Network = _module.Network;
-export const NetworkResources = _module.NetworkResources;
-export const Session = _module.Session;
-export const close = _module.close;
-export const console = _module.console;
-export const open = _module.open;
-export const url = _module.url;
-export const waitForDebugger = _module.waitForDebugger;
+let _defaultExport = getNodeApiModule('inspector');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('inspector');
+  _defaultExport = mod;
+  Network = mod.Network;
+  NetworkResources = mod.NetworkResources;
+  Session = mod.Session;
+  close = mod.close;
+  console = mod.console;
+  open = mod.open;
+  url = mod.url;
+  waitForDebugger = mod.waitForDebugger;
+}
+export let Network;
+export let NetworkResources;
+export let Session;
+export let close;
+export let console;
+export let open;
+export let url;
+export let waitForDebugger;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('inspector', _syncNodeApiModuleBindings);
