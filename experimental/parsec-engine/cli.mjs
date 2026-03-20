@@ -25,7 +25,7 @@ function usage() {
     'Parsec engine CLI',
     '',
     'Usage:',
-    '  node experimental/parsec-engine/cli.mjs --type <npm|raw-js|zip|github> --input <value> [options]',
+    '  node experimental/parsec-engine/cli.mjs --type <npm|raw-js|zip|github|wasm> --input <value> [options]',
     '',
     'Options:',
     '  --entry <path>           Preferred entry file path inside source tree',

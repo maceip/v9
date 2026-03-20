@@ -159,6 +159,42 @@ async function main() {
       'load plan should include split output file list');
   });
 
+  await test('wasm input validates and packages raw wasm artifact', async () => {
+    const wasmDir = path.join(sandbox, 'wasm-app');
+    await mkdir(wasmDir, { recursive: true });
+    const wasmBytes = Buffer.from([
+      0x00, 0x61, 0x73, 0x6d,
+      0x01, 0x00, 0x00, 0x00,
+      0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+      0x03, 0x02, 0x01, 0x00,
+      0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00,
+      0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
+    ]);
+    const wasmPath = path.join(wasmDir, 'module.wasm');
+    await writeFile(wasmPath, wasmBytes);
+
+    const metadata = await engine.run(
+      { type: 'wasm', input: wasmPath },
+      { outputDir: path.join(outputRoot, 'wasm') },
+    );
+
+    assert(metadata.stage1.inputKind === 'wasm', 'stage1 should mark wasm input kind');
+    assert(metadata.stage1.wasmValidation?.valid === true, 'wasm validation should succeed');
+    assert(metadata.stage1.wasmValidation.exports.some((entry) => entry.name === 'run'),
+      'wasm validation should capture exported run function');
+    assert(existsSync(metadata.stage1.bundle.outputFile), 'packaged wasm output should exist');
+    assert(metadata.stage1.bundle.outputFile.endsWith('.wasm'),
+      'packaged output should be a wasm file');
+
+    const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
+    assert(loadPlan.inputKind === 'wasm', 'load plan should mark wasm input kind');
+    assert(loadPlan.load.type === 'wasm', 'load plan should use wasm load mode');
+    assert(typeof loadPlan.load.instantiateExample === 'string' && loadPlan.load.instantiateExample.includes('WebAssembly.instantiateStreaming'),
+      'load plan should provide wasm instantiate example');
+    assert(loadPlan.analysis.wasmValidation?.valid === true,
+      'load plan should include wasm validation details');
+  });
+
   await test('zip input is unpacked and bundled', async () => {
     const zipPath = path.join(sandbox, 'app.zip');
     const zipData = zipSync({
