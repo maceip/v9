@@ -228,10 +228,8 @@ async function loadCLI() {
     cliFrame.addEventListener('load', () => {
       bootText.style.display = 'none';
     }, { once: true });
-  } else {
-    // No CLI available — show a live terminal prompt
-    initTerminalPrompt();
   }
+  // No CLI URL — boot screen stays at "ready" with blinking cursor.
 }
 
 async function resolveWebURL() {
@@ -244,88 +242,6 @@ async function resolveWebURL() {
     } catch (e) { /* network error */ }
   }
   return null;
-}
-
-// ── Live terminal prompt (fallback when no CLI iframe) ──
-function initTerminalPrompt() {
-  // Remove boot cursor
-  const existingCursor = bootText.querySelector('.boot-cursor');
-  if (existingCursor) existingCursor.remove();
-
-  // Add prompt line
-  const promptLine = document.createElement('div');
-  promptLine.className = 'boot-line visible';
-  promptLine.style.marginTop = '16px';
-
-  const promptSpan = document.createElement('span');
-  promptSpan.style.color = 'var(--accent)';
-  promptSpan.textContent = '$ ';
-  promptLine.appendChild(promptSpan);
-
-  const inputSpan = document.createElement('span');
-  inputSpan.id = 'term-input';
-  promptLine.appendChild(inputSpan);
-
-  const cursor = document.createElement('span');
-  cursor.className = 'boot-cursor';
-  promptLine.appendChild(cursor);
-
-  bootText.appendChild(promptLine);
-
-  // Terminal response area
-  const responseArea = document.createElement('div');
-  responseArea.id = 'term-response';
-  responseArea.style.cssText = 'margin-top:8px;font-family:IBM Plex Mono,monospace;font-size:14px;color:var(--fg);line-height:1.6;white-space:pre-wrap;opacity:0.8;';
-  bootText.appendChild(responseArea);
-
-  // Accept keyboard input
-  let inputBuffer = '';
-  const termInput = document.getElementById('term-input');
-  const termResponse = document.getElementById('term-response');
-
-  function handleKey(e) {
-    if (state !== 'RUNNING') return;
-    if (e.key === 'Enter') {
-      const cmd = inputBuffer.trim();
-      inputBuffer = '';
-      termInput.textContent = '';
-      processCommand(cmd, termResponse);
-    } else if (e.key === 'Backspace') {
-      inputBuffer = inputBuffer.slice(0, -1);
-      termInput.textContent = inputBuffer;
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      inputBuffer += e.key;
-      termInput.textContent = inputBuffer;
-    }
-  }
-  document.addEventListener('keydown', handleKey);
-  // Store ref so we can clean up
-  termWrap._termKeyHandler = handleKey;
-}
-
-const termResponses = {
-  'help': 'Available commands: help, about, version, clear, demo',
-  'about': 'v9 — EdgeJS browser runtime\\nClaude Code in your browser.\\nBuilt with WebGL, spring physics, and predictive back gestures.',
-  'version': 'v9.0.0-preview (GitHub Pages)\\nRuntime: EdgeJS 0.1.0\\nShader: tumble_r3f + liquid glass',
-  'clear': '__CLEAR__',
-  'demo': 'Starting demo...\\n\\n> Initializing EdgeJS sandbox\\n> Loading WASM modules\\n> Claude Code CLI ready\\n\\nType `help` for available commands.',
-  '': '',
-};
-
-function processCommand(cmd, responseEl) {
-  const lower = cmd.toLowerCase();
-  const response = termResponses[lower];
-  if (response === '__CLEAR__') {
-    responseEl.textContent = '';
-    return;
-  }
-  if (response !== undefined) {
-    responseEl.textContent += (responseEl.textContent ? '\\n' : '') + '$ ' + cmd + '\\n' + response.replace(/\\\\n/g, '\\n') + '\\n';
-  } else if (cmd) {
-    responseEl.textContent += (responseEl.textContent ? '\\n' : '') + '$ ' + cmd + '\\ncommand not found: ' + cmd + '\\nType `help` for available commands.\\n';
-  }
-  // Auto-scroll
-  responseEl.scrollTop = responseEl.scrollHeight;
 }
 
 // ── Helpers ──
@@ -358,11 +274,6 @@ function resetToIdle() {
   termOverlay.style.opacity = '';
   bootText.style.display = '';
   bootText.innerHTML = '';
-  // Clean up keyboard handler if present
-  if (termWrap._termKeyHandler) {
-    document.removeEventListener('keydown', termWrap._termKeyHandler);
-    termWrap._termKeyHandler = null;
-  }
   termWrap.classList.remove('zoomed');
   termWrap.classList.add('idle');
   termWrap.style.transform = '';

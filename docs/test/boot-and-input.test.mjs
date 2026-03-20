@@ -1,17 +1,16 @@
 /**
  * Puppeteer test harness — validates:
  * 1. Page loads without JS errors
- * 2. Terminal is visible in idle state with glass animation running
- * 3. Tap/click zooms terminal to full screen (no excessive wobble)
+ * 2. Terminal visible in idle state with glass animation
+ * 3. Tap/click zooms terminal (no wobble)
  * 4. Boot sequence completes with all status lines
- * 5. "ready" state shows a working prompt
- * 6. Terminal accepts keyboard input and responds
- * 7. White frame border visible in dark mode
- * 8. Escape resets to idle
+ * 5. "ready" state shows blinking cursor
+ * 6. White frame border visible in dark mode
+ * 7. Escape resets to idle
  */
 
 import puppeteer from 'puppeteer-core';
-import { execSync, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -27,8 +26,8 @@ let errors = [];
 let passed = 0;
 let failed = 0;
 
-function ok(name) { passed++; console.log(`  ✓ ${name}`); }
-function fail(name, err) { failed++; console.log(`  ✗ ${name}: ${err}`); }
+function ok(name) { passed++; console.log(`  \u2713 ${name}`); }
+function fail(name, err) { failed++; console.log(`  \u2717 ${name}: ${err}`); }
 
 async function assert(name, fn) {
   try {
@@ -40,7 +39,6 @@ async function assert(name, fn) {
 }
 
 async function setup() {
-  // Start HTTP server
   server = spawn('python3', ['-m', 'http.server', String(PORT), '--directory', DOCS_DIR], {
     stdio: 'pipe',
   });
@@ -52,7 +50,7 @@ async function setup() {
     args: ['--no-sandbox', '--disable-gpu', '--disable-web-security'],
   });
   page = await browser.newPage();
-  await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 2.5 }); // Pixel 9 Pro
+  await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 2.5 });
 
   // Emulate dark mode
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
@@ -75,7 +73,7 @@ async function sleep(ms) {
 }
 
 async function run() {
-  console.log('\n🧪 v9 Boot & Input Test Harness\n');
+  console.log('\n\ud83e\uddea v9 Test Harness\n');
 
   await setup();
 
@@ -103,19 +101,14 @@ async function run() {
       if (!hasIdle) throw new Error('Missing idle class');
     });
 
-    await assert('Glass canvas is rendering (has dimensions)', async () => {
-      const dims = await page.$eval('#glass-canvas', el => ({
-        w: el.width, h: el.height
-      }));
+    await assert('Glass canvas is rendering', async () => {
+      const dims = await page.$eval('#glass-canvas', el => ({ w: el.width, h: el.height }));
       if (dims.w === 0 || dims.h === 0) throw new Error(`Canvas dims: ${dims.w}x${dims.h}`);
     });
 
     // ── Dark mode white frame border ──
     await assert('Frame has white/bright border in dark mode', async () => {
-      const borderColor = await page.$eval('#terminal-frame', el => {
-        return getComputedStyle(el).borderColor;
-      });
-      // Should be near-white (rgba(255,255,255,0.85) or similar)
+      const borderColor = await page.$eval('#terminal-frame', el => getComputedStyle(el).borderColor);
       const match = borderColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (!match) throw new Error(`Border color: ${borderColor}`);
       const [, r, g, b] = match.map(Number);
@@ -125,7 +118,7 @@ async function run() {
     // ── Click to zoom ──
     console.log('\n  Clicking terminal to zoom in...');
     await page.click('#terminal-wrap');
-    await sleep(3000); // Wait for zoom + boot sequence
+    await sleep(3000);
 
     await assert('Terminal zoomed (idle class removed)', async () => {
       const hasIdle = await page.$eval('#terminal-wrap', el => el.classList.contains('idle'));
@@ -138,7 +131,6 @@ async function run() {
     });
 
     // ── Boot sequence ──
-    // Wait for boot to complete (typewriter takes a few seconds)
     await sleep(6000);
 
     await assert('Boot overlay is visible', async () => {
@@ -156,68 +148,9 @@ async function run() {
       if (!text.includes('ready')) throw new Error(`Boot text: ${text.slice(0, 100)}`);
     });
 
-    // ── Terminal prompt (after ready) ──
-    await sleep(2000); // Wait for prompt to appear after "ready"
-
-    // Wait longer for async resolveWebURL + initTerminalPrompt
-    await sleep(4000);
-
-    await assert('Terminal prompt $ is visible', async () => {
-      const text = await page.$eval('#boot-text', el => el.textContent);
-      if (!text.includes('$')) throw new Error(`No $ prompt. Text: "${text.slice(0, 200)}"`);
-    });
-
-    await assert('Blinking cursor is present', async () => {
+    await assert('Blinking cursor is present after boot', async () => {
       const cursor = await page.$('.boot-cursor');
       if (!cursor) throw new Error('No blinking cursor found');
-    });
-
-    // ── Keyboard input ──
-    console.log('\n  Testing keyboard input...');
-
-    await assert('Can type "help" and see response', async () => {
-      await page.keyboard.type('help');
-      await sleep(200);
-      const inputText = await page.$eval('#term-input', el => el.textContent);
-      if (inputText !== 'help') throw new Error(`Input shows: "${inputText}"`);
-
-      await page.keyboard.press('Enter');
-      await sleep(500);
-
-      const response = await page.$eval('#term-response', el => el.textContent);
-      if (!response.includes('Available commands')) throw new Error(`Response: "${response.slice(0, 100)}"`);
-    });
-
-    await assert('Can type "version" and see response', async () => {
-      await page.keyboard.type('version');
-      await sleep(200);
-      await page.keyboard.press('Enter');
-      await sleep(500);
-
-      const response = await page.$eval('#term-response', el => el.textContent);
-      if (!response.includes('v9.0.0')) throw new Error(`Response: "${response.slice(0, 100)}"`);
-    });
-
-    await assert('Unknown command shows error', async () => {
-      await page.keyboard.type('foobar');
-      await sleep(200);
-      await page.keyboard.press('Enter');
-      await sleep(500);
-
-      const response = await page.$eval('#term-response', el => el.textContent);
-      if (!response.includes('command not found: foobar')) throw new Error(`Response: "${response.slice(0, 200)}"`);
-    });
-
-    await assert('Backspace works', async () => {
-      await page.keyboard.type('hel');
-      await sleep(100);
-      await page.keyboard.press('Backspace');
-      await sleep(100);
-      const inputText = await page.$eval('#term-input', el => el.textContent);
-      if (inputText !== 'he') throw new Error(`Input after backspace: "${inputText}"`);
-      // Clear it
-      await page.keyboard.press('Backspace');
-      await page.keyboard.press('Backspace');
     });
 
     // ── Escape resets to idle ──
@@ -235,7 +168,7 @@ async function run() {
       if (hasVisible) throw new Error('Overlay still visible');
     });
 
-    // ── No new JS errors after all interactions ──
+    // ── No JS errors ──
     await assert('No JS errors during entire session', async () => {
       const realErrors = errors.filter(e => !e.includes('net::'));
       if (realErrors.length > 0) throw new Error(realErrors.join('; '));
@@ -245,10 +178,9 @@ async function run() {
     await teardown();
   }
 
-  // ── Summary ──
-  console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
   console.log(`  Results: ${passed} passed, ${failed} failed`);
-  console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+  console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n`);
 
   process.exit(failed > 0 ? 1 : 0);
 }
