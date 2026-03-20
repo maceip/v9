@@ -5,6 +5,22 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as processEsm from '../napi-bridge/generated-node-api/process-exports.js';
 import * as moduleEsm from '../napi-bridge/generated-node-api/module-exports.js';
+import * as pathEsm from '../napi-bridge/generated-node-api/path-exports.js';
+import * as fsEsm from '../napi-bridge/generated-node-api/fs-exports.js';
+import * as childProcessEsm from '../napi-bridge/generated-node-api/child-process-exports.js';
+import * as netEsm from '../napi-bridge/generated-node-api/net-exports.js';
+import * as dnsEsm from '../napi-bridge/generated-node-api/dns-exports.js';
+import * as tlsEsm from '../napi-bridge/generated-node-api/tls-exports.js';
+import * as streamEsm from '../napi-bridge/generated-node-api/stream-exports.js';
+import * as bufferEsm from '../napi-bridge/generated-node-api/buffer-exports.js';
+import * as urlEsm from '../napi-bridge/generated-node-api/url-exports.js';
+import * as utilEsm from '../napi-bridge/generated-node-api/util-exports.js';
+import * as eventsEsm from '../napi-bridge/generated-node-api/events-exports.js';
+import * as timersEsm from '../napi-bridge/generated-node-api/timers-exports.js';
+import * as osEsm from '../napi-bridge/generated-node-api/os-exports.js';
+import * as cryptoEsm from '../napi-bridge/generated-node-api/crypto-exports.js';
+import * as httpEsm from '../napi-bridge/generated-node-api/http-exports.js';
+import * as httpsEsm from '../napi-bridge/generated-node-api/https-exports.js';
 
 console.log('=== Node API Surface Tests ===\n');
 
@@ -123,6 +139,56 @@ test('generated ESM wrappers and CJS require share same registry objects', () =>
   assert(processEsm.default === proc, 'ESM process default should match CJS process object');
   assert(moduleEsm.default === mod, 'ESM module default should match CJS module object');
   assert(moduleEsm.createRequire === mod.createRequire, 'createRequire should be shared between ESM and CJS');
+});
+
+test('litany: generated wrappers match CJS defaults across core modules', () => {
+  const wrapperChecks = [
+    ['process', processEsm],
+    ['module', moduleEsm],
+    ['path', pathEsm],
+    ['fs', fsEsm],
+    ['child_process', childProcessEsm],
+    ['net', netEsm],
+    ['dns', dnsEsm],
+    ['tls', tlsEsm],
+    ['stream', streamEsm],
+    ['buffer', bufferEsm],
+    ['url', urlEsm],
+    ['util', utilEsm],
+    ['events', eventsEsm],
+    ['timers', timersEsm],
+    ['os', osEsm],
+    ['crypto', cryptoEsm],
+    ['http', httpEsm],
+    ['https', httpsEsm],
+  ];
+
+  for (const [moduleName, esmNamespace] of wrapperChecks) {
+    const cjsModule = localRequire(moduleName);
+    assert(
+      esmNamespace.default === cjsModule,
+      `generated ESM default for ${moduleName} should reference CJS registry object`,
+    );
+  }
+});
+
+test('litany: high-traffic named exports stay aligned between ESM and CJS', () => {
+  assert(pathEsm.join === localRequire('path').join, 'path.join should stay aligned');
+  assert(fsEsm.readFile === localRequire('fs').readFile, 'fs.readFile should stay aligned');
+  assert(childProcessEsm.spawn === localRequire('child_process').spawn, 'child_process.spawn should stay aligned');
+  assert(netEsm.createConnection === localRequire('net').createConnection, 'net.createConnection should stay aligned');
+  assert(dnsEsm.lookup === localRequire('dns').lookup, 'dns.lookup should stay aligned');
+  assert(tlsEsm.connect === localRequire('tls').connect, 'tls.connect should stay aligned');
+  assert(streamEsm.Readable === localRequire('stream').Readable, 'stream.Readable should stay aligned');
+  assert(bufferEsm.Buffer === localRequire('buffer').Buffer, 'buffer.Buffer should stay aligned');
+  assert(urlEsm.pathToFileURL === localRequire('url').pathToFileURL, 'url.pathToFileURL should stay aligned');
+  assert(utilEsm.format === localRequire('util').format, 'util.format should stay aligned');
+  assert(eventsEsm.EventEmitter === localRequire('events').EventEmitter, 'events.EventEmitter should stay aligned');
+  assert(timersEsm.setTimeout === localRequire('timers').setTimeout, 'timers.setTimeout should stay aligned');
+  assert(osEsm.cpus === localRequire('os').cpus, 'os.cpus should stay aligned');
+  assert(cryptoEsm.createHash === localRequire('crypto').createHash, 'crypto.createHash should stay aligned');
+  assert(httpEsm.request === localRequire('http').request, 'http.request should stay aligned');
+  assert(httpsEsm.request === localRequire('https').request, 'https.request should stay aligned');
 });
 
 test('process shim exposes high-frequency APIs without stubs', () => {
