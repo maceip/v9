@@ -17,7 +17,7 @@ import { initIcons } from './icons.js';
 // ── State ──
 let state = 'IDLE';
 let progressLoaded = 0;
-const progressTotal = 5; // Number of loading stages
+const progressTotal = 4; // Loading stages before boot (boot adds final step)
 
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
@@ -116,15 +116,22 @@ const zoom = new ZoomController(termWrap, {
     spotlight.style.opacity = String(0.6 + p * 0.4);
     // Clear glass blur
     if (glass) {
-      glass.fog = 1.0 - p;
-      glass.glassBlur = 1.0 - p * 0.7;
+      glass.fog = 0.55 * (1.0 - p);
+      glass.glassBlur = 0.8 * (1.0 - p * 0.9);
+    }
+    // Start fading in the terminal overlay early (at 70% zoom) to prevent black flash
+    if (p > 0.7) {
+      const fade = (p - 0.7) / 0.3;
+      termOverlay.style.opacity = String(fade);
     }
   }
 });
+
+// ── Icons ── (step 4 = 100% in idle)
+initIcons();
 setProgress(4);
 
 // ── Click/tap to activate terminal ──
-// Use event delegation on the terminal wrapper to handle clicks on any child
 termWrap.addEventListener('click', handleActivate, true);
 termWrap.addEventListener('touchend', handleActivate, true);
 
@@ -149,16 +156,18 @@ const bootLines = [
 ];
 
 async function startBoot() {
+  // Overlay already partially faded in during zoom; make fully visible
   termOverlay.classList.add('visible');
+  termOverlay.style.opacity = '';
   bootText.innerHTML = '';
 
-  // Stop glass animation after transition
+  // Stop glass animation after overlay is opaque
   setTimeout(() => {
     if (glass) {
       glass.fog = 0;
       glass.glassBlur = 0;
     }
-  }, 300);
+  }, 200);
 
   // Typewriter each boot line
   for (let i = 0; i < bootLines.length; i++) {
@@ -240,9 +249,6 @@ function resolveWebURL() {
   return null;
 }
 
-// ── Icons ──
-initIcons();
-
 // ── Helpers ──
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -256,25 +262,123 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 
+// ── Reset to idle state ──
+function resetToIdle() {
+  state = 'IDLE';
+  cliFrame.classList.remove('visible');
+  cliFrame.src = '';
+  termOverlay.classList.remove('visible');
+  termOverlay.style.opacity = '';
+  bootText.style.display = '';
+  bootText.innerHTML = '';
+  termWrap.classList.remove('zoomed', 'swiping', 'snap-back', 'dismissing');
+  termWrap.classList.add('idle');
+  termWrap.style.transform = '';
+  if (glass) { glass.fog = 0.55; glass.glassBlur = 0.8; glass.start(); }
+  zoom.zoomOut();
+  fog.style.opacity = '1';
+  spotlight.style.opacity = '0.6';
+  setProgress(0);
+  progressBar.style.opacity = '1';
+}
+
 // ── Keyboard shortcut: Escape to zoom out ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING')) {
-    state = 'IDLE';
-    cliFrame.classList.remove('visible');
-    cliFrame.src = '';
-    termOverlay.classList.remove('visible');
-    bootText.style.display = '';
-    bootText.innerHTML = '';
-    termWrap.classList.remove('zoomed');
-    termWrap.classList.add('idle');
-    if (glass) { glass.fog = 1.0; glass.glassBlur = 1.0; glass.start(); }
-    zoom.zoomOut();
-    fog.style.opacity = '1';
-    spotlight.style.opacity = '0.6';
-    setProgress(0);
-    progressBar.style.opacity = '1';
+    resetToIdle();
   }
 });
+
+// ── Predictive back: swipe-to-dismiss with stretch + snap-back ──
+const dismissedTray = document.getElementById('dismissed-tray');
+let swipe = null;
+const SWIPE_THRESHOLD = 120;  // px to dismiss
+const STRETCH_FACTOR = 0.35;  // rubber-band stretch ratio
+
+termWrap.addEventListener('touchstart', (e) => {
+  if (state !== 'RUNNING' && state !== 'BOOTING') return;
+  const t = e.touches[0];
+  swipe = { sx: t.clientX, sy: t.clientY, dx: 0, dy: 0, active: false };
+}, { passive: true });
+
+termWrap.addEventListener('touchmove', (e) => {
+  if (!swipe || (state !== 'RUNNING' && state !== 'BOOTING')) return;
+  const t = e.touches[0];
+  swipe.dx = t.clientX - swipe.sx;
+  swipe.dy = t.clientY - swipe.sy;
+
+  // Only activate after 10px movement
+  if (!swipe.active && (Math.abs(swipe.dx) > 10 || Math.abs(swipe.dy) > 10)) {
+    swipe.active = true;
+    termWrap.classList.add('swiping');
+  }
+
+  if (swipe.active) {
+    // Rubber-band: stretch diminishes with distance
+    const stretchX = swipe.dx * STRETCH_FACTOR;
+    const stretchY = swipe.dy * STRETCH_FACTOR;
+    const dist = Math.sqrt(stretchX * stretchX + stretchY * stretchY);
+    const scaleDown = Math.max(0.85, 1 - dist / 1500);
+    termWrap.style.transform = `translate(${stretchX}px, ${stretchY}px) scale(${scaleDown})`;
+  }
+}, { passive: true });
+
+termWrap.addEventListener('touchend', () => {
+  if (!swipe || !swipe.active) { swipe = null; return; }
+  termWrap.classList.remove('swiping');
+
+  const dist = Math.sqrt(swipe.dx * swipe.dx + swipe.dy * swipe.dy);
+
+  if (dist > SWIPE_THRESHOLD) {
+    // Dismiss — fling in swipe direction
+    const angle = Math.atan2(swipe.dy, swipe.dx);
+    const flingX = Math.cos(angle) * 600;
+    const flingY = Math.sin(angle) * 600;
+    termWrap.classList.add('dismissing');
+    termWrap.style.transform = `translate(${flingX}px, ${flingY}px) scale(0.3)`;
+
+    setTimeout(() => {
+      // Add tile to dismissed tray
+      addDismissedTile();
+      resetToIdle();
+    }, 300);
+  } else {
+    // Snap back — spring wobble
+    termWrap.classList.add('snap-back');
+    termWrap.style.transform = 'translate(0, 0) scale(1)';
+    setTimeout(() => {
+      termWrap.classList.remove('snap-back');
+      termWrap.style.transform = '';
+    }, 450);
+  }
+  swipe = null;
+}, { passive: true });
+
+let dismissedCount = 0;
+function addDismissedTile() {
+  dismissedCount++;
+  const tile = document.createElement('div');
+  tile.className = 'dismissed-tile';
+  tile.textContent = `v9`;
+  tile.title = `Session ${dismissedCount}`;
+  tile.addEventListener('click', () => {
+    // Restore: remove tile and activate terminal
+    tile.remove();
+    if (state === 'IDLE') {
+      handleActivate(new Event('click'));
+    }
+  });
+  dismissedTray.appendChild(tile);
+
+  // Animate in
+  tile.style.transform = 'translateY(60px) scale(0.5)';
+  tile.style.opacity = '0';
+  requestAnimationFrame(() => {
+    tile.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease';
+    tile.style.transform = '';
+    tile.style.opacity = '';
+  });
+}
 
 // ── Resize handler ──
 window.addEventListener('resize', () => {

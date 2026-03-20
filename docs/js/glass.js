@@ -67,8 +67,9 @@ void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);
 
-  // ── Background: tumble diagonal line ──
-  float line = uv.y - uv.x * 0.28 + 0.06 * sin(uTime * 0.2);
+  // ── Background: tumble diagonal line — animated drift ──
+  float drift = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
+  float line = uv.y - uv.x * 0.28 + drift;
   vec3 bg = palette(line, uDark);
 
   // ── Liquid glass distortion ──
@@ -87,9 +88,10 @@ void main() {
   vec2 uvB = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(3.0, 1.0);
 
   // Sample background with per-channel offset
-  float lineR = (uvR * 2.0 - 1.0).y - (uvR * 2.0 - 1.0).x * 0.28 + 0.06 * sin(uTime * 0.2);
-  float lineG = (uvG * 2.0 - 1.0).y - (uvG * 2.0 - 1.0).x * 0.28 + 0.06 * sin(uTime * 0.2);
-  float lineB = (uvB * 2.0 - 1.0).y - (uvB * 2.0 - 1.0).x * 0.28 + 0.06 * sin(uTime * 0.2);
+  float driftCA = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
+  float lineR = (uvR * 2.0 - 1.0).y - (uvR * 2.0 - 1.0).x * 0.28 + driftCA;
+  float lineG = (uvG * 2.0 - 1.0).y - (uvG * 2.0 - 1.0).x * 0.28 + driftCA;
+  float lineB = (uvB * 2.0 - 1.0).y - (uvB * 2.0 - 1.0).x * 0.28 + driftCA;
 
   vec3 glassCol = vec3(
     palette(lineR, uDark).r,
@@ -113,7 +115,7 @@ void main() {
   // ── Fog ──
   vec3 fogColor = mix(vec3(0.91, 0.89, 0.87), vec3(0.04, 0.04, 0.06), uDark);
   float fogNoise = noise(vUv * 4.0 + uTime * 0.05) * 0.15;
-  float fogAmount = uFog * (0.7 + fogNoise);
+  float fogAmount = uFog * (0.5 + fogNoise);
 
   // Radial fog: thicker at edges, thinner at center
   float radialFog = length(vUv - 0.5) * 0.6;
@@ -128,8 +130,8 @@ export class GlassScene {
   constructor(canvas) {
     this.canvas = canvas;
     this._raf = null;
-    this.fog = 1.0;       // Start fully foggy
-    this.glassBlur = 1.0;  // Start frosted
+    this.fog = 0.55;       // Partly foggy — let tumble animation show through
+    this.glassBlur = 0.8;  // Mostly frosted but not opaque
     this.isDark = true;
     this.mouse = { x: 0.5, y: 0.5 };
 
