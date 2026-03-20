@@ -1230,6 +1230,8 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'timers': timersModule,
     'timers/promises': timersPromisesModule,
     'stream/consumers': streamConsumers,
+    'stream/web': { ReadableStream: globalThis.ReadableStream, WritableStream: globalThis.WritableStream, TransformStream: globalThis.TransformStream },
+    'stream/promises': { pipeline: (...a) => new Promise((r,j) => { pipeline(...a.slice(0,-1), e => e ? j(e) : r()); }), finished: (...a) => new Promise((r,j) => { finished(...a.slice(0,-1), e => e ? j(e) : r()); }) },
     'worker_threads': workerThreadsModule,
     'assert': assertModule,
     'assert/strict': assertModule.strict || assertModule,
@@ -1271,6 +1273,14 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'querystring': { parse: (s) => Object.fromEntries(new URLSearchParams(s)), stringify: (o) => new URLSearchParams(o).toString(), encode: (o) => new URLSearchParams(o).toString(), decode: (s) => Object.fromEntries(new URLSearchParams(s)), escape: encodeURIComponent, unescape: decodeURIComponent },
     'perf_hooks': Object.assign({}, { performance: globalThis.performance, PerformanceObserver: globalThis.PerformanceObserver || class {}, monitorEventLoopDelay: () => ({ enable(){}, disable(){}, min:0, max:0, mean:0, percentile(){return 0;} }), createHistogram: () => ({}) }),
     'diagnostics_channel': (() => { try { const m = import.meta; /* dynamic import won't work here */ } catch {} class Ch { constructor(n) { this.name=n; this._subscribers=[]; this._parentWrap=undefined; } get hasSubscribers() { return this._subscribers.length>0; } subscribe(fn) { this._subscribers.push(fn); } unsubscribe(fn) { this._subscribers=this._subscribers.filter(s=>s!==fn); } publish(m) { for(const fn of this._subscribers) fn(m,this.name); } bindStore(){} unbindStore(){} runStores(d,fn,...a){return fn(...a);} } const chs=new Map(); const ch=(n)=>{if(!chs.has(n))chs.set(n,new Ch(n));return chs.get(n);}; return { Channel:Ch, channel:ch, hasSubscribers:(n)=>chs.has(n)&&chs.get(n).hasSubscribers, subscribe:(n,fn)=>ch(n).subscribe(fn), unsubscribe:(n,fn)=>ch(n).unsubscribe(fn), tracingChannel:(n)=>({start:ch(n+':start'),end:ch(n+':end'),asyncStart:ch(n+':asyncStart'),asyncEnd:ch(n+':asyncEnd'),error:ch(n+':error'),hasSubscribers:false,subscribe(){},unsubscribe(){},traceSync(fn,c,t,...a){return fn.apply(t,a);},tracePromise(fn,c,t,...a){return fn.apply(t,a);},traceCallback(fn){return fn;}}), TracingChannel:class{constructor(){} subscribe(){} unsubscribe(){}} }; })(),
+
+    // ── Third-party stubs (npm packages that CLIs try to require) ──
+    'bufferutil': { mask() {}, unmask() {} },
+    'utf-8-validate': { isValidUTF8: () => true },
+    'supports-color': { stdout: { level: 3, hasBasic: true, has256: true, has16m: true }, stderr: { level: 3, hasBasic: true, has256: true, has16m: true } },
+    'encoding': {},
+    'domain': { create: () => ({ run(fn) { fn(); }, on() {}, add() {}, remove() {}, bind: (fn) => fn, intercept: (fn) => fn, enter() {}, exit() {} }), active: null },
+    'typescript': { version: '5.0.0', ScriptTarget: {}, ModuleKind: {}, createSourceFile: () => ({}) },
 
     // ── Third-party shims ──
     'undici': undiciStub,

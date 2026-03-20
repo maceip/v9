@@ -45,4 +45,15 @@ export class Hook { constructor() {} unhook() {} }
 // stack-utils
 export class StackUtils { constructor() {} clean() { return ''; } parse() { return []; } parseLine() { return null; } static nodeInternals() { return [/node:/]; } }
 
+// bufferutil / utf-8-validate — WebSocket native addons (browser WebSocket handles this)
+export const BufferUtil = { mask() {}, unmask() {} };
+
+// supports-color
+export const supportsColor = { stdout: { level: 3, hasBasic: true, has256: true, has16m: true }, stderr: { level: 3, hasBasic: true, has256: true, has16m: true } };
+export function createSupportsColor() { return supportsColor; }
+
+// domain (deprecated Node.js module)
+export function create() { return { run(fn) { fn(); }, on() {}, add() {}, remove() {}, bind(fn) { return fn; }, intercept(fn) { return fn; }, enter() {}, exit() {} }; }
+export const active = null;
+
 export const __esModule = true;

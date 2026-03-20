@@ -60,10 +60,15 @@ export const net = {
 export const tls = {
   connect: notAvailable('tls', 'connect'),
   createServer: notAvailable('tls', 'createServer'),
-  createSecureContext: notAvailable('tls', 'createSecureContext'),
+  createSecureContext(opts) { return { context: {}, ca: opts?.ca || [], cert: opts?.cert || null, key: opts?.key || null }; },
+  getCiphers() { return ['TLS_AES_256_GCM_SHA384']; },
   TLSSocket: Socket,
+  rootCertificates: [],
   DEFAULT_MIN_VERSION: 'TLSv1.2',
   DEFAULT_MAX_VERSION: 'TLSv1.3',
+  DEFAULT_ECDH_CURVE: 'auto',
+  CLIENT_RENEG_LIMIT: 3,
+  CLIENT_RENEG_WINDOW: 600,
 };
 
 // ─── dns ────────────────────────────────────────────────────────────
