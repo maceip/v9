@@ -39,7 +39,7 @@
       --nav-border: #1a1a28;
       --nav-highlight: rgba(255,255,255,0.03);
       --frame-bg: #0b0b12;
-      --frame-border: #18182a;
+      --frame-border: rgba(255,255,255,0.85);
       --frame-joint: rgba(255,255,255,0.06);
       --frame-highlight: rgba(255,255,255,0.015);
       --glass-tint: rgba(120,140,180,0.06);
@@ -296,10 +296,10 @@
     }
     #terminal-wrap.zoomed { cursor: default; }
 
-    /* Terminal frame — CNC machined metal chassis */
+    /* Terminal frame — CNC machined metal chassis, white border in dark (iRobot) */
     #terminal-frame {
       position: absolute; inset: 0;
-      border: 2px solid var(--frame-border);
+      border: 2.5px solid var(--frame-border);
       border-radius: 8px;
       background:
         linear-gradient(180deg,
@@ -314,6 +314,8 @@
         inset 0 2px 0 rgba(255,255,255,0.04),
         inset 0 -1px 0 rgba(0,0,0,0.4),
         inset 0 -2px 4px rgba(0,0,0,0.1),
+        0 0 12px rgba(255,255,255,0.08),
+        0 0 30px rgba(255,255,255,0.04),
         0 2px 8px rgba(0,0,0,0.3),
         0 6px 24px rgba(0,0,0,0.35),
         0 12px 48px rgba(0,0,0,0.2);

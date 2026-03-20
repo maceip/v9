@@ -117,8 +117,8 @@ const zoom = new ZoomController(termWrap, {
     spotlight.style.opacity = String(0.6 + p * 0.4);
     // Clear glass blur
     if (glass) {
-      glass.fog = 0.55 * (1.0 - p);
-      glass.glassBlur = 0.8 * (1.0 - p * 0.9);
+      glass.fog = 0.25 * (1.0 - p);
+      glass.glassBlur = 0.4 * (1.0 - p * 0.9);
     }
     // Start fading in the terminal overlay early (at 70% zoom) to prevent black flash
     if (p > 0.7) {
@@ -221,33 +221,111 @@ async function loadCLI() {
   // Stop background rendering to save GPU
   if (glass) glass.stop();
 
-  // Build the iframe src.
-  // On GitHub Pages the docs/ folder IS the site root, so web/ is not served.
-  // We load the CLI from the raw repo content or a deployed URL.
-  // For the live site, we point to the repo's web/index.html via GitHub Pages
-  // by including web/ in docs/ or using a CDN. For now, we use the repo's
-  // raw content URL as a fallback when web/ isn't colocated.
-  const webUrl = resolveWebURL();
+  const webUrl = await resolveWebURL();
   if (webUrl) {
     cliFrame.src = webUrl;
     cliFrame.classList.add('visible');
     cliFrame.addEventListener('load', () => {
       bootText.style.display = 'none';
     }, { once: true });
+  } else {
+    // No CLI available — show a live terminal prompt
+    initTerminalPrompt();
   }
-  // If no web URL available, the boot screen stays visible with "ready" status
 }
 
-function resolveWebURL() {
+async function resolveWebURL() {
   const loc = window.location;
-  // Local dev server — web/ is at the repo root
   if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
-    return `${loc.origin}/web/index.html?bundle=/dist/claude-code-cli.js`;
+    const url = `${loc.origin}/web/index.html`;
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      if (res.ok) return `${url}?bundle=/dist/claude-code-cli.js`;
+    } catch (e) { /* network error */ }
   }
-  // GitHub Pages — web/ files aren't deployed in docs/
-  // Return null; the boot screen "ready" state is the final state on Pages
-  // until web/ content is deployed alongside docs/
   return null;
+}
+
+// ── Live terminal prompt (fallback when no CLI iframe) ──
+function initTerminalPrompt() {
+  // Remove boot cursor
+  const existingCursor = bootText.querySelector('.boot-cursor');
+  if (existingCursor) existingCursor.remove();
+
+  // Add prompt line
+  const promptLine = document.createElement('div');
+  promptLine.className = 'boot-line visible';
+  promptLine.style.marginTop = '16px';
+
+  const promptSpan = document.createElement('span');
+  promptSpan.style.color = 'var(--accent)';
+  promptSpan.textContent = '$ ';
+  promptLine.appendChild(promptSpan);
+
+  const inputSpan = document.createElement('span');
+  inputSpan.id = 'term-input';
+  promptLine.appendChild(inputSpan);
+
+  const cursor = document.createElement('span');
+  cursor.className = 'boot-cursor';
+  promptLine.appendChild(cursor);
+
+  bootText.appendChild(promptLine);
+
+  // Terminal response area
+  const responseArea = document.createElement('div');
+  responseArea.id = 'term-response';
+  responseArea.style.cssText = 'margin-top:8px;font-family:IBM Plex Mono,monospace;font-size:14px;color:var(--fg);line-height:1.6;white-space:pre-wrap;opacity:0.8;';
+  bootText.appendChild(responseArea);
+
+  // Accept keyboard input
+  let inputBuffer = '';
+  const termInput = document.getElementById('term-input');
+  const termResponse = document.getElementById('term-response');
+
+  function handleKey(e) {
+    if (state !== 'RUNNING') return;
+    if (e.key === 'Enter') {
+      const cmd = inputBuffer.trim();
+      inputBuffer = '';
+      termInput.textContent = '';
+      processCommand(cmd, termResponse);
+    } else if (e.key === 'Backspace') {
+      inputBuffer = inputBuffer.slice(0, -1);
+      termInput.textContent = inputBuffer;
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      inputBuffer += e.key;
+      termInput.textContent = inputBuffer;
+    }
+  }
+  document.addEventListener('keydown', handleKey);
+  // Store ref so we can clean up
+  termWrap._termKeyHandler = handleKey;
+}
+
+const termResponses = {
+  'help': 'Available commands: help, about, version, clear, demo',
+  'about': 'v9 — EdgeJS browser runtime\\nClaude Code in your browser.\\nBuilt with WebGL, spring physics, and predictive back gestures.',
+  'version': 'v9.0.0-preview (GitHub Pages)\\nRuntime: EdgeJS 0.1.0\\nShader: tumble_r3f + liquid glass',
+  'clear': '__CLEAR__',
+  'demo': 'Starting demo...\\n\\n> Initializing EdgeJS sandbox\\n> Loading WASM modules\\n> Claude Code CLI ready\\n\\nType `help` for available commands.',
+  '': '',
+};
+
+function processCommand(cmd, responseEl) {
+  const lower = cmd.toLowerCase();
+  const response = termResponses[lower];
+  if (response === '__CLEAR__') {
+    responseEl.textContent = '';
+    return;
+  }
+  if (response !== undefined) {
+    responseEl.textContent += (responseEl.textContent ? '\\n' : '') + '$ ' + cmd + '\\n' + response.replace(/\\\\n/g, '\\n') + '\\n';
+  } else if (cmd) {
+    responseEl.textContent += (responseEl.textContent ? '\\n' : '') + '$ ' + cmd + '\\ncommand not found: ' + cmd + '\\nType `help` for available commands.\\n';
+  }
+  // Auto-scroll
+  responseEl.scrollTop = responseEl.scrollHeight;
 }
 
 // ── Helpers ──
@@ -264,19 +342,32 @@ document.addEventListener('mousemove', (e) => {
 });
 
 // ── Reset to idle state ──
+let dismissCount = 0;
+
 function resetToIdle() {
   state = 'IDLE';
+  dismissCount++;
   cliFrame.classList.remove('visible');
   cliFrame.src = '';
   termOverlay.classList.remove('visible');
   termOverlay.style.opacity = '';
   bootText.style.display = '';
   bootText.innerHTML = '';
+  // Clean up keyboard handler if present
+  if (termWrap._termKeyHandler) {
+    document.removeEventListener('keydown', termWrap._termKeyHandler);
+    termWrap._termKeyHandler = null;
+  }
   termWrap.classList.remove('zoomed');
   termWrap.classList.add('idle');
   termWrap.style.transform = '';
-  if (glass) { glass.fog = 0.55; glass.glassBlur = 0.8; glass.start(); }
+  if (glass) { glass.fog = 0.25; glass.glassBlur = 0.4; glass.start(); }
+
+  // Each dismiss makes idle terminal slightly smaller (stacks)
+  const shrink = Math.min(dismissCount * 0.04, 0.15);
+  zoom.setShrink(shrink);
   zoom.zoomOut();
+
   fog.style.opacity = '1';
   spotlight.style.opacity = '0.6';
   setProgress(0);

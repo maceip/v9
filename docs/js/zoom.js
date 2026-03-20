@@ -22,12 +22,13 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters — smooth approach, minimal overshoot
-    this.stiffness = 0.032;
-    this.damping = 0.92;
-    this.threshold = 0.0005;
+    // Spring parameters — overdamped, smooth approach with zero overshoot
+    this.stiffness = 0.045;
+    this.damping = 0.78;
+    this.threshold = 0.001;
 
     // State — read idle params from responsive breakpoints
+    this._shrink = 0; // additional scale reduction after dismissals
     const idle = getIdleParams();
     this.idleScale = idle.scale;
     this.idleY = idle.y;
@@ -42,6 +43,11 @@ export class ZoomController {
     this._apply();
   }
 
+  /** Make idle state smaller (called after dismiss) */
+  setShrink(amount) {
+    this._shrink = amount;
+  }
+
   /** Trigger zoom to full viewport (scale=1, y=0) */
   zoomIn() {
     this.target.scale = 1.0;
@@ -50,13 +56,13 @@ export class ZoomController {
     this._startLoop();
   }
 
-  /** Zoom back out to idle */
+  /** Zoom back out to idle (smaller after each dismiss) */
   zoomOut() {
     const idle = getIdleParams();
-    this.idleScale = idle.scale;
-    this.idleY = idle.y;
-    this.target.scale = idle.scale;
-    this.target.y = idle.y;
+    this.idleScale = Math.max(0.2, idle.scale - this._shrink);
+    this.idleY = idle.y + this._shrink * 10;
+    this.target.scale = this.idleScale;
+    this.target.y = this.idleY;
     this._done = false;
     this._startLoop();
   }

@@ -130,8 +130,8 @@ export class GlassScene {
   constructor(canvas) {
     this.canvas = canvas;
     this._raf = null;
-    this.fog = 0.55;       // Partly foggy — let tumble animation show through
-    this.glassBlur = 0.8;  // Mostly frosted but not opaque
+    this.fog = 0.25;       // Light fog — animation clearly visible
+    this.glassBlur = 0.4;  // Light frost — shapes and motion visible
     this.isDark = true;
     this.mouse = { x: 0.5, y: 0.5 };
 
