@@ -45,10 +45,25 @@ async function launchBrowser() {
     }
   }
   const launch = puppeteer.default?.launch || puppeteer.launch;
-  return launch({
+
+  // Auto-detect Chrome/Chromium executable
+  const knownPaths = [
+    '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+  ];
+  const { existsSync } = await import('node:fs');
+  const executablePath = knownPaths.find(p => existsSync(p));
+
+  const opts = {
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'],
-  });
+  };
+  if (executablePath) opts.executablePath = executablePath;
+
+  return launch(opts);
 }
 
 // ── Main ──
