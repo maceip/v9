@@ -80,6 +80,19 @@ try {
   await page.goto(`${server.baseUrl}/`, { waitUntil: 'domcontentloaded' });
 
   const result = await page.evaluate(async (baseUrl) => {
+    // Browser smoke imports bridge modules directly (without web/index.html),
+    // so provide minimal import-map entries required by bridge dependencies.
+    if (!document.querySelector('script[type="importmap"]')) {
+      const importMap = document.createElement('script');
+      importMap.type = 'importmap';
+      importMap.textContent = JSON.stringify({
+        imports: {
+          fflate: `${baseUrl}/node_modules/fflate/esm/browser.js`,
+        },
+      });
+      document.head.appendChild(importMap);
+    }
+
     const loadScript = (src) =>
       new Promise((resolve, reject) => {
         const script = document.createElement('script');
