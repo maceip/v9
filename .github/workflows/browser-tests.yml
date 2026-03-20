@@ -1,0 +1,140 @@
+name: Browser CLI Tests
+
+on:
+  push:
+    branches: [master, codex-worksstream]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  smoke-test:
+    name: CLI Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build SDK bundle
+        run: sh scripts/bundle-sdk.sh
+
+      - name: Prepare CLI bundles
+        run: |
+          mkdir -p dist
+          # Claude Code
+          npm pack @anthropic-ai/claude-code --pack-destination /tmp
+          cd /tmp && tar xzf anthropic-ai-claude-code-*.tgz
+          cp /tmp/package/cli.js $GITHUB_WORKSPACE/dist/claude-code-cli.js
+
+          # Gemini CLI
+          cd $GITHUB_WORKSPACE && sh scripts/bundle-gemini.sh
+          cp dist/gemini-cli-bundle.js dist/gemini-cli.js
+
+          # Cline
+          npm pack cline --pack-destination /tmp
+          cd /tmp && mkdir -p cline && cd cline && tar xzf ../cline-*.tgz
+          cp /tmp/cline/package/dist/cli.mjs $GITHUB_WORKSPACE/dist/cline-cli.js
+
+          # Cody
+          npm pack @sourcegraph/cody --pack-destination /tmp
+          cd /tmp && mkdir -p cody && cd cody && tar xzf ../sourcegraph-cody-*.tgz
+          cp /tmp/cody/package/dist/index.js $GITHUB_WORKSPACE/dist/cody-cli-raw.js
+          cd $GITHUB_WORKSPACE && sh scripts/bundle-cody.sh
+
+      - name: Install Puppeteer browsers
+        run: npx puppeteer browsers install chrome
+
+      - name: Run smoke tests
+        run: node tests/browser-cli-smoke.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: tests/screenshot-*.png
+
+  interactivity-test:
+    name: Interactivity + Conversation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: smoke-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build SDK bundle
+        run: sh scripts/bundle-sdk.sh
+
+      - name: Prepare CLI bundles
+        run: |
+          mkdir -p dist
+          npm pack @anthropic-ai/claude-code --pack-destination /tmp
+          cd /tmp && tar xzf anthropic-ai-claude-code-*.tgz
+          cp /tmp/package/cli.js $GITHUB_WORKSPACE/dist/claude-code-cli.js
+
+          cd $GITHUB_WORKSPACE && sh scripts/bundle-gemini.sh
+          cp dist/gemini-cli-bundle.js dist/gemini-cli.js
+
+          npm pack cline --pack-destination /tmp
+          cd /tmp && mkdir -p cline && cd cline && tar xzf ../cline-*.tgz
+          cp /tmp/cline/package/dist/cli.mjs $GITHUB_WORKSPACE/dist/cline-cli.js
+
+          npm pack @sourcegraph/cody --pack-destination /tmp
+          cd /tmp && mkdir -p cody && cd cody && tar xzf ../sourcegraph-cody-*.tgz
+          cp /tmp/cody/package/dist/index.js $GITHUB_WORKSPACE/dist/cody-cli-raw.js
+          cd $GITHUB_WORKSPACE && sh scripts/bundle-cody.sh
+
+      - name: Install Puppeteer browsers
+        run: npx puppeteer browsers install chrome
+
+      - name: Run interactivity tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node tests/browser-interactivity.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interactivity-screenshots
+          path: tests/interactivity-*.png
+
+  conformance:
+    name: Module Conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run conformance tests
+        run: |
+          for f in tests/conformance/test-*.mjs; do
+            echo "--- $(basename $f) ---"
+            node "$f" || exit 1
+          done
+
+      - name: Run unit tests
+        run: |
+          node tests/test-basic.mjs
+          node tests/test-napi-bridge.mjs
