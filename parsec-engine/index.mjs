@@ -17,6 +17,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const IGNORED_DIRS = new Set(['.git', '.hg', '.svn', 'node_modules', 'dist', 'build', 'target', '.next']);
 const JS_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
 const DEFAULT_STAGE_ROOT = path.join(os.tmpdir(), 'parsec-engine-jobs');
+const NODE_BUILTIN_SET = new Set(NODE_API_SURFACE_MODULES);
+const EASY_HARD_REWRITE_PROFILE = {
+  name: 'easy-hard',
+  normalizeBuiltinSpecifiers: true,
+  stripShebang: true,
+  rewriteProcessBrowser: true,
+};
 
 function toPosix(p) {
   return p.split(path.sep).join('/');
@@ -26,6 +33,78 @@ function sanitizeZipPath(entry) {
   const normalized = path.posix.normalize(entry);
   if (normalized.startsWith('../') || normalized === '..' || path.isAbsolute(normalized)) return null;
   return normalized;
+}
+
+function normalizeBuiltinSpecifier(specifier) {
+  const clean = specifier.startsWith('node:') ? specifier.slice(5) : specifier;
+  if (!NODE_BUILTIN_SET.has(clean)) return specifier;
+  return `node:${clean}`;
+}
+
+function applySpecifierRewrite(source, regex, operationName, operations, profile) {
+  return source.replace(regex, (full, prefix, specifier, suffix) => {
+    if (!profile.normalizeBuiltinSpecifiers) return full;
+    const normalized = normalizeBuiltinSpecifier(specifier);
+    if (normalized === specifier) return full;
+    operations.push({
+      op: operationName,
+      from: specifier,
+      to: normalized,
+    });
+    return `${prefix}${normalized}${suffix}`;
+  });
+}
+
+function rewriteJavaScriptSource(source, relativePath, profile = EASY_HARD_REWRITE_PROFILE) {
+  let rewritten = source;
+  const operations = [];
+
+  if (profile.stripShebang && rewritten.startsWith('#!')) {
+    const firstLineEnd = rewritten.indexOf('\n');
+    rewritten = firstLineEnd >= 0 ? rewritten.slice(firstLineEnd + 1) : '';
+    operations.push({ op: 'strip-shebang' });
+  }
+
+  rewritten = applySpecifierRewrite(
+    rewritten,
+    /(\bimport\s+(?:[^'"`]*?\s+from\s*)?['"])([^'"]+)(['"])/g,
+    'rewrite-import-specifier',
+    operations,
+    profile,
+  );
+  rewritten = applySpecifierRewrite(
+    rewritten,
+    /(\bexport\s+(?:\*|\{[^}]*\})\s+from\s*['"])([^'"]+)(['"])/g,
+    'rewrite-export-specifier',
+    operations,
+    profile,
+  );
+  rewritten = applySpecifierRewrite(
+    rewritten,
+    /(\bimport\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-dynamic-import-specifier',
+    operations,
+    profile,
+  );
+  rewritten = applySpecifierRewrite(
+    rewritten,
+    /(\brequire\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-require-specifier',
+    operations,
+    profile,
+  );
+
+  if (profile.rewriteProcessBrowser && /\bprocess\.browser\b/.test(rewritten)) {
+    rewritten = rewritten.replace(/\bprocess\.browser\b/g, 'true');
+    operations.push({ op: 'rewrite-process-browser' });
+  }
+
+  return {
+    code: rewritten,
+    changed: rewritten !== source,
+    operations,
+    file: relativePath,
+  };
 }
 
 function parseImportsFromSource(source) {
@@ -115,10 +194,16 @@ async function analyzeSourceTree(sourceDir) {
   const files = await listFilesRecursive(sourceDir);
   const extensions = {};
   const imports = new Set();
+  const nativeAddonSignals = new Set();
 
   for (const fullPath of files) {
     const ext = path.extname(fullPath).toLowerCase();
     extensions[ext] = (extensions[ext] || 0) + 1;
+    const base = path.basename(fullPath);
+    if (base === 'binding.gyp' || base === 'Cargo.toml' || base === 'CMakeLists.txt' ||
+        base === 'Makefile' || base.endsWith('.node')) {
+      nativeAddonSignals.add(base);
+    }
 
     if (!JS_EXTENSIONS.has(ext)) continue;
     const source = await readFile(fullPath, 'utf8');
@@ -138,6 +223,7 @@ async function analyzeSourceTree(sourceDir) {
     extensionHistogram: extensions,
     nodeBuiltinsUsed,
     externalPackagesUsed,
+    nativeAddonSignals: [...nativeAddonSignals].sort(),
   };
 }
 
@@ -209,6 +295,60 @@ async function ingestGithubInput(repoInput, targetDir) {
   await cp(localPath, targetDir, { recursive: true });
 }
 
+async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REWRITE_PROFILE) {
+  await ensureDir(preparedDir);
+  const files = await listFilesRecursive(sourceDir);
+  const changedFiles = [];
+  const opHistogram = {};
+  let jsFileCount = 0;
+
+  for (const fullPath of files) {
+    const relPath = path.relative(sourceDir, fullPath);
+    const outputPath = path.join(preparedDir, relPath);
+    await ensureDir(path.dirname(outputPath));
+
+    const ext = path.extname(fullPath).toLowerCase();
+    if (!JS_EXTENSIONS.has(ext)) {
+      await cp(fullPath, outputPath);
+      continue;
+    }
+
+    jsFileCount++;
+    const source = await readFile(fullPath, 'utf8');
+    const rewriteResult = rewriteJavaScriptSource(source, toPosix(relPath), profile);
+    await writeFile(outputPath, rewriteResult.code, 'utf8');
+
+    if (rewriteResult.changed) {
+      changedFiles.push({
+        file: rewriteResult.file,
+        operations: rewriteResult.operations,
+      });
+      for (const operation of rewriteResult.operations) {
+        opHistogram[operation.op] = (opHistogram[operation.op] || 0) + 1;
+      }
+    }
+  }
+
+  return {
+    profile: profile.name || 'custom',
+    totalFiles: files.length,
+    jsFileCount,
+    changedFileCount: changedFiles.length,
+    changedFiles,
+    operationHistogram: opHistogram,
+  };
+}
+
+function getBundleBanner() {
+  return [
+    "import process from 'node:process';",
+    "import { Buffer } from 'node:buffer';",
+    'globalThis.global ??= globalThis;',
+    'globalThis.process ??= process;',
+    'globalThis.Buffer ??= Buffer;',
+  ].join('\n');
+}
+
 async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
   await ensureDir(outDir);
   const outFile = path.join(outDir, 'app.optimized.js');
@@ -218,20 +358,34 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
     bundle: true,
     format: 'esm',
     minify: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
     sourcemap: 'external',
     target: ['es2020'],
     platform: 'browser',
     external: nodeBuiltinsUsed.flatMap((name) => [name, `node:${name}`]),
+    banner: { js: getBundleBanner() },
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+      'process.env.BROWSER': 'true',
+      __PARSEC_RUNTIME__: 'true',
+    },
+    mainFields: ['browser', 'module', 'main'],
+    conditions: ['browser', 'module'],
     logLevel: 'silent',
     metafile: true,
     legalComments: 'none',
     treeShaking: true,
+    keepNames: false,
     write: true,
   });
+  const outputStats = result.metafile?.outputs?.[outFile] || null;
   return {
     outputFile: outFile,
     outputMapFile: `${outFile}.map`,
     metafile: result.metafile || null,
+    bytes: outputStats?.bytes || null,
   };
 }
 
@@ -293,6 +447,43 @@ function detectLanguageCandidates(analysis, backendConfig, sourceDir) {
   return candidates.sort((a, b) => b.score - a.score);
 }
 
+async function collectComponentRoots(sourceDir, markerNames) {
+  const files = await listFilesRecursive(sourceDir);
+  const roots = new Set();
+  for (const file of files) {
+    if (markerNames.includes(path.basename(file))) {
+      roots.add(path.dirname(file));
+    }
+  }
+  return [...roots].sort();
+}
+
+async function detectLanguageComponents(sourceDir, language) {
+  let roots = [];
+  if (language === 'rust') roots = await collectComponentRoots(sourceDir, ['Cargo.toml']);
+  if (language === 'c-cpp') roots = await collectComponentRoots(sourceDir, ['CMakeLists.txt', 'Makefile']);
+  if (language === 'zig') roots = await collectComponentRoots(sourceDir, ['build.zig']);
+  if (language === 'go') roots = await collectComponentRoots(sourceDir, ['go.mod']);
+  if (language === 'assemblyscript') roots = await collectComponentRoots(sourceDir, ['asconfig.json']);
+
+  if (roots.length === 0) {
+    roots = [sourceDir];
+  }
+
+  const components = [];
+  for (const cwd of roots) {
+    const componentFiles = await listFilesRecursive(cwd);
+    const easy = componentFiles.length <= 500 && !componentFiles.some((file) => file.endsWith('.node'));
+    components.push({
+      id: toPosix(path.relative(sourceDir, cwd) || '.'),
+      cwd,
+      fileCount: componentFiles.length,
+      easy,
+    });
+  }
+  return components;
+}
+
 export class ParsecEngine {
   constructor(options = {}) {
     this.stageRoot = options.stageRoot || DEFAULT_STAGE_ROOT;
@@ -308,9 +499,11 @@ export class ParsecEngine {
     const jobId = inputSpec.jobId || randomUUID();
     const jobRoot = path.join(this.stageRoot, jobId);
     const sourceDir = path.join(jobRoot, 'source');
+    const preparedDir = path.join(jobRoot, 'prepared');
     const outputDir = options.outputDir || path.join(jobRoot, 'output');
     const manifestsDir = path.join(jobRoot, 'manifests');
     await ensureDir(sourceDir);
+    await ensureDir(preparedDir);
     await ensureDir(outputDir);
     await ensureDir(manifestsDir);
 
@@ -322,11 +515,18 @@ export class ParsecEngine {
       throw new Error('No JS/TS entry point found during stage 1 preparation.');
     }
 
-    const bundleResult = await buildOptimizedBlob(entryPath, outputDir, analysis.nodeBuiltinsUsed || []);
+    const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir);
+    const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
+    const preparedAnalysis = await analyzeSourceTree(preparedDir);
+    const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || []);
     const stage1Result = {
       sourceDir,
+      preparedDir,
       entryPath,
+      preparedEntryPath,
       analysis,
+      preparedAnalysis,
+      rewrite: rewriteResult,
       bundle: bundleResult,
     };
 
@@ -341,8 +541,8 @@ export class ParsecEngine {
     if (inputSpec.type === 'github') {
       const stage2Task = await this.startWasmLiftTask({
         jobId,
-        sourceDir,
-        analysis,
+        sourceDir: preparedDir,
+        analysis: preparedAnalysis,
         outputDir,
       });
       metadata.stage2 = { taskId: stage2Task.id, status: stage2Task.status };
@@ -394,55 +594,80 @@ export class ParsecEngine {
       const helperCatalog = await loadHelperCatalog();
       const candidates = detectLanguageCandidates(analysis, backendConfig, sourceDir);
       const helperWasm = selectWasmHelpers(analysis.nodeBuiltinsUsed || [], helperCatalog);
+      const componentsByLanguage = {};
+      for (const candidate of candidates) {
+        componentsByLanguage[candidate.language] = await detectLanguageComponents(sourceDir, candidate.language);
+      }
       const llmAdvice = await this.llmAdvisor({
         sourceDir,
         analysis,
         candidates,
         helperWasm,
+        componentsByLanguage,
       });
 
       const attempts = [];
       for (const candidate of candidates) {
-        const compilePlan = [];
-        for (const command of candidate.compileCommands || []) {
-          const [bin, ...args] = command;
-          const env = { ...process.env, ...(candidate.environment || {}) };
-          const startedAt = Date.now();
-          try {
-            const { stdout, stderr } = await execFile(bin, args, {
-              cwd: sourceDir,
-              env,
-              timeout: 120_000,
-              maxBuffer: 4 * 1024 * 1024,
-            });
-            compilePlan.push({
-              command: [bin, ...args].join(' '),
-              ok: true,
-              durationMs: Date.now() - startedAt,
-              stdout: String(stdout || '').slice(0, 5000),
-              stderr: String(stderr || '').slice(0, 5000),
-            });
-            break;
-          } catch (error) {
-            compilePlan.push({
-              command: [bin, ...args].join(' '),
-              ok: false,
-              durationMs: Date.now() - startedAt,
-              error: error.message,
-              stdout: String(error.stdout || '').slice(0, 5000),
-              stderr: String(error.stderr || '').slice(0, 5000),
-            });
-          }
+        const components = componentsByLanguage[candidate.language] || [];
+        const selectedComponents = components.filter((component) => component.easy);
+        if (selectedComponents.length === 0) {
+          attempts.push({
+            language: candidate.language,
+            notes: candidate.notes,
+            skipped: true,
+            reason: 'No easy components qualified for selective wasm lift.',
+            components,
+            commands: [],
+          });
+          continue;
         }
-        attempts.push({
-          language: candidate.language,
-          notes: candidate.notes,
-          commands: compilePlan,
-        });
+
+        for (const component of selectedComponents) {
+          const compilePlan = [];
+          for (const command of candidate.compileCommands || []) {
+            const [bin, ...args] = command;
+            const env = { ...process.env, ...(candidate.environment || {}) };
+            const startedAt = Date.now();
+            try {
+              const { stdout, stderr } = await execFile(bin, args, {
+                cwd: component.cwd,
+                env,
+                timeout: 120_000,
+                maxBuffer: 4 * 1024 * 1024,
+              });
+              compilePlan.push({
+                command: [bin, ...args].join(' '),
+                cwd: component.cwd,
+                ok: true,
+                durationMs: Date.now() - startedAt,
+                stdout: String(stdout || '').slice(0, 5000),
+                stderr: String(stderr || '').slice(0, 5000),
+              });
+              break;
+            } catch (error) {
+              compilePlan.push({
+                command: [bin, ...args].join(' '),
+                cwd: component.cwd,
+                ok: false,
+                durationMs: Date.now() - startedAt,
+                error: error.message,
+                stdout: String(error.stdout || '').slice(0, 5000),
+                stderr: String(error.stderr || '').slice(0, 5000),
+              });
+            }
+          }
+          attempts.push({
+            language: candidate.language,
+            notes: candidate.notes,
+            component,
+            commands: compilePlan,
+          });
+        }
       }
 
       task.result = {
         candidates,
+        componentsByLanguage,
         helperWasm,
         llmAdvice,
         compileAttempts: attempts,

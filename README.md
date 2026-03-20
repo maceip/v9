@@ -81,8 +81,8 @@ Supported input types:
 - `github` (repo URL or local repo path)
 
 Behavior:
-1. **Stage 1**: Ingest + static analysis + entry detection + optimized ESM blob build.
-2. **Stage 2** (`github` input): Start wasm-lift planning/execution using language backend detection, helper wasm matching, and optional LLM advisor hooks.
+1. **Stage 1**: Ingest + static analysis + **source-to-source rewrite** (builtin specifier normalization, shebang stripping, browser rewrites) + aggressive ESM bundling/minification.
+2. **Stage 2** (`github` input): Start **selective wasm lifting** using language backend detection, helper wasm matching, and per-component compile attempts for "easy" subcomponents first.
 
 ## Architecture
 

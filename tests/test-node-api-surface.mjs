@@ -90,6 +90,16 @@ test('default export is present for synthetic modules', () => {
   assert(vm.default === vm, 'synthetic modules should expose default self-export');
 });
 
+test('network-adjacent shims expose callable compatibility APIs', () => {
+  const dns = localRequire('dns');
+  const net = localRequire('net');
+  const tls = localRequire('tls');
+  assert(typeof dns.lookup === 'function', 'dns.lookup should be callable');
+  assert(typeof dns.promises.lookup === 'function', 'dns.promises.lookup should be callable');
+  assert(typeof net.createConnection === 'function', 'net.createConnection should be callable');
+  assert(typeof tls.connect === 'function', 'tls.connect should be callable');
+});
+
 test('registerBrowserBuiltins return object is expanded', () => {
   assert(Object.prototype.hasOwnProperty.call(builtins, 'cluster'), 'returned builtins should include cluster');
   assert(Object.prototype.hasOwnProperty.call(builtins, 'trace_events'), 'returned builtins should include trace_events');
@@ -100,6 +110,17 @@ test('generated import map includes expanded ESM entries', () => {
   const importMap = JSON.parse(readFileSync(importMapPath, 'utf8'));
   assert(importMap.imports.cluster, 'generated map should include cluster');
   assert(importMap.imports['node:cluster'], 'generated map should include node:cluster');
+});
+
+test('web import map uses generated wrappers for core modules', () => {
+  const htmlPath = join(testDir, '..', 'web', 'index.html');
+  const html = readFileSync(htmlPath, 'utf8');
+  assert(html.includes('../napi-bridge/generated-node-api/process-exports.js'),
+    'web import map should route process through generated-node-api');
+  assert(html.includes('../napi-bridge/generated-node-api/child-process-exports.js'),
+    'web import map should route child_process through generated-node-api');
+  assert(html.includes('../napi-bridge/generated-node-api/module-exports.js'),
+    'web import map should route module through generated-node-api');
 });
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
