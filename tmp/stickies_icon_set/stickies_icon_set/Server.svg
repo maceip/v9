@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <rect fill="#00034a" stroke="#00034a" x="6" y="5" width="28" height="9" rx="4" stroke-width="1"/>
+    <rect fill="#00034a" stroke="#00034a" x="6" y="16" width="28" height="9" rx="4" stroke-width="1"/>
+    <rect fill="#00034a" stroke="#00034a" x="6" y="27" width="28" height="8" rx="4" stroke-width="1"/>
+    <rect fill="#9bff00" stroke="#00034a" x="7.5" y="6.5" width="25" height="6" rx="3" stroke-width="1"/>
+    <rect fill="#9bff00" stroke="#00034a" x="7.5" y="17.5" width="25" height="6" rx="3" stroke-width="1"/>
+    <rect fill="#9bff00" stroke="#00034a" x="7.5" y="28.5" width="25" height="5" rx="2.5" stroke-width="1"/>
+    <circle fill="#ffffff" stroke="#00034a" cx="12" cy="9.5" r="1" stroke-width="1"/>
+    <circle fill="#ffffff" stroke="#00034a" cx="12" cy="20.5" r="1" stroke-width="1"/>
+    <circle fill="#ffffff" stroke="#00034a" cx="12" cy="31" r="1" stroke-width="1"/>
+  </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
+</svg>

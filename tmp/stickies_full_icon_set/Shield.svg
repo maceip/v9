@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Shield</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 5l12 4v8c0 8-5 14-12 18C13 31 8 25 8 17V9z" fill="#9bff00" />
+    <path d="M15 19l3 3 7-8" fill="none" />
+  </g>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>SlidersHorizontal</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="7" y1="12" x2="33" y2="12" />
+    <circle cx="15" cy="12" r="3" fill="#9bff00" />
+    <line x1="7" y1="20" x2="33" y2="20" />
+    <circle cx="25" cy="20" r="3" fill="#ffffff" />
+    <line x1="7" y1="28" x2="33" y2="28" />
+    <circle cx="18" cy="28" r="3" fill="#9bff00" />
+  </g>
+</svg>

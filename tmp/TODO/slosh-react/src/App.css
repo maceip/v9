@@ -1,0 +1,78 @@
+/* Fonts */
+@font-face {
+  font-family: 'steelfish-eb';
+  src: url('./assets/fonts/steelfish-eb.woff2') format('woff2');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'FKGrotesk';
+  src: url('./assets/fonts/FKGroteskMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Note: FKGroteskMono-Medium.woff2 not available, using Regular for all weights */
+@font-face {
+  font-family: 'FKGrotesk-Medium';
+  src: url('./assets/fonts/FKGroteskMono-Regular.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+}
+
+/* Selection */
+::selection {
+  background: #00A86B;
+  color: white;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Focus styles */
+button:focus,
+a:focus {
+  outline: 2px solid #00A86B;
+  outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

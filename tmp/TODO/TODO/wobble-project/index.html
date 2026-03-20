@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wobble Scroll Effect</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #060506;
+      color: #f0f2f2;
+      font-family: 'Basis', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* ── Tab switcher ── */
+    .tabs {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 100; display: flex; gap: 4px;
+      background: rgba(255,255,255,0.06); border-radius: 8px; padding: 4px;
+    }
+    .tab {
+      padding: 8px 20px; border: none; border-radius: 6px;
+      background: transparent; color: rgba(255,255,255,0.5);
+      font: inherit; font-size: 13px; cursor: pointer; transition: all 0.2s;
+    }
+    .tab.active { background: rgba(255,255,255,0.12); color: #fff; }
+
+    /* ── Horizontal 3D mode ── */
+    #horizontal-mode { display: block; }
+    #horizontal-mode canvas {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    }
+    .project-title {
+      position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+      z-index: 10; font-size: 16px; font-weight: 400;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      color: rgba(255,255,255,0.7); pointer-events: none;
+    }
+    .scroll-indicator {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; gap: 8px; pointer-events: none;
+    }
+    .scroll-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255,255,255,0.25); transition: all 0.3s ease;
+    }
+    .scroll-dot.active { background: rgba(255,255,255,0.9); transform: scale(1.4); }
+
+    /* ── Vertical wobble mode ── */
+    #vertical-mode { display: none; height: 100vh; overflow: hidden; }
+    .vscroll-viewport { height: 100vh; overflow: hidden; position: relative; }
+    .vscroll-content {
+      will-change: transform;
+      padding: 0 max(40px, 8vw);
+    }
+    .vsection {
+      min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; position: relative;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .vsection-inner {
+      max-width: 720px; width: 100%;
+      will-change: transform;
+      transition: none; /* driven by JS */
+    }
+    .vsection h2 {
+      font-size: clamp(2.5rem, 6vw, 5rem); font-weight: 400;
+      line-height: 1.05; letter-spacing: -0.02em;
+      margin-bottom: 1.5rem;
+    }
+    .vsection p {
+      font-size: 1.1rem; line-height: 1.6;
+      color: rgba(240,242,242,0.6); max-width: 520px;
+    }
+    .vsection .label {
+      font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(240,242,242,0.3); margin-bottom: 1rem;
+    }
+    .speed-bar {
+      position: fixed; right: 20px; top: 50%; transform: translateY(-50%);
+      width: 3px; height: 120px; background: rgba(255,255,255,0.06);
+      border-radius: 2px; z-index: 10; overflow: hidden;
+    }
+    .speed-fill {
+      position: absolute; bottom: 0; width: 100%;
+      background: rgba(255,255,255,0.5); border-radius: 2px;
+      transition: height 0.15s ease;
+    }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <button class="tab active" data-mode="horizontal">Horizontal Carousel</button>
+    <button class="tab" data-mode="vertical">Vertical Wobble</button>
+  </div>
+
+  <!-- Horizontal 3D carousel -->
+  <div id="horizontal-mode">
+    <div class="project-title" id="project-title">Garden Eight</div>
+    <div class="scroll-indicator" id="scroll-dots">
+      <div class="scroll-dot active"></div>
+      <div class="scroll-dot"></div>
+      <div class="scroll-dot"></div>
+      <div class="scroll-dot"></div>
+      <div class="scroll-dot"></div>
+    </div>
+  </div>
+
+  <!-- Vertical smooth scroll with wobble -->
+  <div id="vertical-mode">
+    <div class="speed-bar"><div class="speed-fill" id="speed-fill"></div></div>
+    <div class="vscroll-viewport" id="vscroll-viewport">
+      <div class="vscroll-content" id="vscroll-content">
+        <section class="vsection">
+          <div class="vsection-inner">
+            <div class="label">01 / Introduction</div>
+            <h2>Wobble Scroll</h2>
+            <p>Scroll down to experience the wobble effect. When you stop scrolling, content overshoots its target position and settles back with elastic motion. The effect comes from a lerp-based smooth scroll that chases a GSAP-tweened snap target.</p>
+          </div>
+        </section>
+        <section class="vsection">
+          <div class="vsection-inner">
+            <div class="label">02 / Mechanism</div>
+            <h2>Lerp vs Tween</h2>
+            <p>Every frame, the visual position lerps toward the target at ease 0.2. When scrolling stops, GSAP snaps the target. The visual position overshoots as it chases the suddenly-moved target, creating the wobble.</p>
+          </div>
+        </section>
+        <section class="vsection">
+          <div class="vsection-inner">
+            <div class="label">03 / Speed Distortion</div>
+            <h2>Velocity Effects</h2>
+            <p>Scroll velocity is tracked and can drive visual distortion — skew, scale, chromatic aberration. The speed value smooths through a 2-sample array with ease 0.025, creating organic acceleration and deceleration.</p>
+          </div>
+        </section>
+        <section class="vsection">
+          <div class="vsection-inner">
+            <div class="label">04 / Parameters</div>
+            <h2>Tunable Values</h2>
+            <p>ease: 0.2 · wheelRatio: 80 · snapTimeout: 100ms · snapDuration: 1s · speedEase: 0.1. These are the exact values extracted from the original kentatoshikura.com minified source.</p>
+          </div>
+        </section>
+        <section class="vsection">
+          <div class="vsection-inner">
+            <div class="label">05 / Infinite</div>
+            <h2>Keep Scrolling</h2>
+            <p>The vertical scroll is unbounded. Content wraps or extends. The wobble effect is always present — fast scrolls create dramatic overshoot, slow scrolls create gentle settling.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/vertical-wobble.js"></script>
+</body>
+</html>

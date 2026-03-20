@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <title>Layers</title>
+  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <polygon points="20,7 33,14 20,21 7,14" fill="#ffffff" />
+    <polygon points="20,14 33,21 20,28 7,21" fill="#9bff00" />
+    <polygon points="20,21 31,27 20,33 9,27" fill="#9bff00" />
+  </g>
+</svg>
