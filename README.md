@@ -89,10 +89,13 @@ Supported input types:
 - `raw-js` (single file, directory, or file map)
 - `zip` (zip archive path)
 - `github` (repo URL or local repo path)
+- `wasm` (raw `.wasm` file or directory containing wasm artifacts)
 
 Behavior:
 1. **Stage 1**: Ingest + static analysis + **source-to-source rewrite** (builtin specifier normalization, shebang stripping, browser rewrites) + aggressive ESM bundling/minification.
 2. **Stage 2** (`github` input): Start **selective wasm lifting** using language backend detection, helper wasm matching, and per-component compile attempts for "easy" subcomponents first.
+
+For `wasm` input, Stage 1 runs loader-focused validation (`WebAssembly.compile` + import/export extraction), packages the raw wasm artifact, and emits `parsec-load-plan.json` / `parsec-package-manifest.json` for runtime loader verification.
 
 ## Architecture
 

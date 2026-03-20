@@ -274,6 +274,47 @@ async function detectEntryPoint(sourceDir, preferredEntry) {
   return jsCandidates[0].fullPath;
 }
 
+async function detectWasmEntry(sourceDir, preferredEntry) {
+  if (preferredEntry) {
+    const absolute = path.isAbsolute(preferredEntry) ? preferredEntry : path.join(sourceDir, preferredEntry);
+    if (existsSync(absolute) && path.extname(absolute).toLowerCase() === '.wasm') {
+      return absolute;
+    }
+  }
+
+  const allFiles = await listFilesRecursive(sourceDir);
+  const wasmCandidates = allFiles
+    .filter((fullPath) => path.extname(fullPath).toLowerCase() === '.wasm')
+    .sort();
+  if (wasmCandidates.length === 0) return null;
+  return wasmCandidates[0];
+}
+
+async function validateWasmArtifact(wasmPath) {
+  const bytes = await readFile(wasmPath);
+  let compiled;
+  try {
+    compiled = await WebAssembly.compile(bytes);
+  } catch (error) {
+    throw new Error(`Invalid wasm module at ${wasmPath}: ${error.message}`);
+  }
+  const imports = WebAssembly.Module.imports(compiled).map((entry) => ({
+    module: entry.module,
+    name: entry.name,
+    kind: entry.kind,
+  }));
+  const exports = WebAssembly.Module.exports(compiled).map((entry) => ({
+    name: entry.name,
+    kind: entry.kind,
+  }));
+  return {
+    valid: true,
+    bytes: bytes.byteLength,
+    imports,
+    exports,
+  };
+}
+
 async function analyzeSourceTree(sourceDir) {
   const files = await listFilesRecursive(sourceDir);
   const extensions = {};
@@ -407,6 +448,23 @@ async function unpackZipInput(zipPath, targetDir) {
     await ensureDir(path.dirname(outputPath));
     await writeFile(outputPath, content);
   }
+}
+
+async function ingestWasmInput(input, targetDir) {
+  if (typeof input !== 'string') {
+    throw new Error('wasm input must be a file path or directory path');
+  }
+
+  const fullPath = path.resolve(input);
+  const info = await stat(fullPath);
+  if (info.isDirectory()) {
+    await cp(fullPath, targetDir, { recursive: true });
+    return;
+  }
+  if (path.extname(fullPath).toLowerCase() !== '.wasm') {
+    throw new Error(`wasm input must point to a .wasm file, got: ${fullPath}`);
+  }
+  await cp(fullPath, path.join(targetDir, path.basename(fullPath)));
 }
 
 async function ingestNpmPackage(packageSpec, targetDir) {
@@ -656,10 +714,12 @@ function buildParsecCacheKey(stage1Result, options = {}) {
     packageStrategy: options.packageStrategy || 'single',
     pruneProblematicBuiltins: Boolean(options.pruneProblematicBuiltins),
     entry: toPosix(path.relative(stage1Result.preparedDir, stage1Result.preparedEntryPath)),
-    nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
-    problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis.problematicNodeBuiltinsUsed || [],
-    operationHistogram: stage1Result.rewrite.operationHistogram || {},
-    easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || {},
+    inputKind: stage1Result.inputKind || 'javascript',
+    nodeBuiltinsUsed: stage1Result.preparedAnalysis?.nodeBuiltinsUsed || [],
+    problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis?.problematicNodeBuiltinsUsed || [],
+    operationHistogram: stage1Result.rewrite?.operationHistogram || {},
+    easyHardReadiness: stage1Result.preparedAnalysis?.easyHardReadiness || {},
+    wasmValidation: stage1Result.wasmValidation || null,
   };
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
@@ -693,8 +753,9 @@ function createLoadPlan(outputDir, stage1Result) {
 
   return {
     schemaVersion: 1,
-    runtime: 'edgejs-browser',
-    profile: stage1Result.rewrite.profile,
+    runtime: stage1Result.inputKind === 'wasm' ? 'wasm-loader-validation' : 'edgejs-browser',
+    profile: stage1Result.rewrite?.profile || null,
+    inputKind: stage1Result.inputKind || 'javascript',
     backend: {
       target: backendTarget,
       execution,
@@ -709,17 +770,26 @@ function createLoadPlan(outputDir, stage1Result) {
         .map((filePath) => toPosix(path.relative(outputDir, filePath))),
     },
     analysis: {
-      nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
-      externalPackagesUsed: stage1Result.preparedAnalysis.externalPackagesUsed || [],
+      nodeBuiltinsUsed: stage1Result.preparedAnalysis?.nodeBuiltinsUsed || [],
+      externalPackagesUsed: stage1Result.preparedAnalysis?.externalPackagesUsed || [],
       problematicNodeBuiltinsUsed,
-      easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || { ready: true, score: 100, blockers: [] },
-      hardHardSignals: stage1Result.preparedAnalysis.hardHardSignals || {},
-      backendPlan: stage1Result.preparedAnalysis.backendPlan || {},
+      easyHardReadiness: stage1Result.preparedAnalysis?.easyHardReadiness || { ready: true, score: 100, blockers: [] },
+      hardHardSignals: stage1Result.preparedAnalysis?.hardHardSignals || {},
+      backendPlan: stage1Result.preparedAnalysis?.backendPlan || {},
+      wasmValidation: stage1Result.wasmValidation || null,
     },
-    load: {
-      type: 'esm',
-      importStatement: bundleFile ? `import './${bundleFile}';` : null,
-    },
+    load: stage1Result.inputKind === 'wasm'
+      ? {
+        type: 'wasm',
+        wasmPath: bundleFile,
+        instantiateExample: bundleFile
+          ? `await WebAssembly.instantiateStreaming(fetch('./${bundleFile}'), {});`
+          : null,
+      }
+      : {
+        type: 'esm',
+        importStatement: bundleFile ? `import './${bundleFile}';` : null,
+      },
     packageManifest: stage1Result.packageManifestFile
       ? toPosix(path.relative(outputDir, stage1Result.packageManifestFile))
       : null,
@@ -859,40 +929,90 @@ export class ParsecEngine {
     await this.#ingestInput(inputSpec, sourceDir);
 
     const analysis = await analyzeSourceTree(sourceDir);
-    const entryPath = await detectEntryPoint(sourceDir, inputSpec.entry);
-    if (!entryPath) {
-      throw new Error('No JS/TS entry point found during stage 1 preparation.');
-    }
+    let stage1Result;
+    if (inputSpec.type === 'wasm') {
+      if (packageStrategy !== 'single') {
+        throw new Error('wasm input currently supports only packageStrategy=single');
+      }
+      const entryPath = await detectWasmEntry(sourceDir, inputSpec.entry);
+      if (!entryPath) {
+        throw new Error('No .wasm artifact found during stage 1 preparation.');
+      }
+      const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir, {
+        ...EASY_HARD_REWRITE_PROFILE,
+        pruneProblematicBuiltins: false,
+      });
+      const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
+      const preparedAnalysis = await analyzeSourceTree(preparedDir);
+      const wasmValidation = await validateWasmArtifact(preparedEntryPath);
+      const wasmOutputPath = path.join(outputDir, path.basename(preparedEntryPath));
+      await cp(preparedEntryPath, wasmOutputPath);
+      const bundleResult = {
+        outputFile: wasmOutputPath,
+        outputMapFile: null,
+        outputDir,
+        packageStrategy: 'single',
+        outputFiles: [wasmOutputPath],
+        chunkFiles: [],
+        metafile: null,
+        bytes: wasmValidation.bytes,
+      };
+      const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(bundleResult, outputDir);
+      stage1Result = {
+        inputKind: 'wasm',
+        sourceDir,
+        preparedDir,
+        entryPath,
+        preparedEntryPath,
+        analysis,
+        preparedAnalysis,
+        rewrite: rewriteResult,
+        wasmValidation,
+        bundle: bundleResult,
+        backendTarget,
+        packageStrategy: 'single',
+        pruneProblematicBuiltins: false,
+        packageManifest,
+        packageManifestFile,
+      };
+    } else {
+      const entryPath = await detectEntryPoint(sourceDir, inputSpec.entry);
+      if (!entryPath) {
+        throw new Error('No JS/TS entry point found during stage 1 preparation.');
+      }
 
-    const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir, {
-      ...EASY_HARD_REWRITE_PROFILE,
-      pruneProblematicBuiltins,
-      problematicBuiltins,
-    });
-    const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
-    const preparedAnalysis = await analyzeSourceTree(preparedDir);
-    const problematicBuiltinModules = rewriteResult.problematicBuiltinsRewritten || [];
-    const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || [], {
-      packageStrategy,
-      backendTarget,
-      problematicBuiltinModules,
-    });
-    const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(bundleResult, outputDir);
-    const stage1Result = {
-      sourceDir,
-      preparedDir,
-      entryPath,
-      preparedEntryPath,
-      analysis,
-      preparedAnalysis,
-      rewrite: rewriteResult,
-      bundle: bundleResult,
-      backendTarget,
-      packageStrategy,
-      pruneProblematicBuiltins,
-      packageManifest,
-      packageManifestFile,
-    };
+      const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir, {
+        ...EASY_HARD_REWRITE_PROFILE,
+        pruneProblematicBuiltins,
+        problematicBuiltins,
+      });
+      const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
+      const preparedAnalysis = await analyzeSourceTree(preparedDir);
+      const problematicBuiltinModules = rewriteResult.problematicBuiltinsRewritten || [];
+      const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || [], {
+        packageStrategy,
+        backendTarget,
+        problematicBuiltinModules,
+      });
+      const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(bundleResult, outputDir);
+      stage1Result = {
+        inputKind: 'javascript',
+        sourceDir,
+        preparedDir,
+        entryPath,
+        preparedEntryPath,
+        analysis,
+        preparedAnalysis,
+        rewrite: rewriteResult,
+        wasmValidation: null,
+        bundle: bundleResult,
+        backendTarget,
+        packageStrategy,
+        pruneProblematicBuiltins,
+        packageManifest,
+        packageManifestFile,
+      };
+    }
     const cacheKey = buildParsecCacheKey(stage1Result, {
       backendTarget,
       packageStrategy,
@@ -919,7 +1039,7 @@ export class ParsecEngine {
       const stage2Task = await this.startWasmLiftTask({
         jobId,
         sourceDir: preparedDir,
-        analysis: preparedAnalysis,
+        analysis: stage1Result.preparedAnalysis,
         outputDir,
       });
       metadata.stage2 = { taskId: stage2Task.id, status: stage2Task.status };
@@ -937,6 +1057,10 @@ export class ParsecEngine {
     const { type, input } = inputSpec;
     if (type === 'raw-js') {
       await copyRawInputToDir(input, sourceDir);
+      return;
+    }
+    if (type === 'wasm') {
+      await ingestWasmInput(input, sourceDir);
       return;
     }
     if (type === 'zip') {
