@@ -71,10 +71,18 @@ export function getEnvironmentData() { return undefined; }
 export function setEnvironmentData() {}
 
 export const SHARE_ENV = Symbol('SHARE_ENV');
+export const isInternalThread = false;
+export const isMarkedAsUntransferable = () => false;
+export const locks = undefined;
+export const postMessageToThread = () => {
+  throw new Error('Not supported');
+};
+export const threadName = 'main';
 
 export default {
   isMainThread, parentPort, workerData, threadId, resourceLimits,
   Worker, MessageChannel, MessagePort, BroadcastChannel,
-  markAsUntransferable, moveMessagePortToContext, receiveMessageOnPort,
+  markAsUncloneable, markAsUntransferable, moveMessagePortToContext, receiveMessageOnPort,
   getEnvironmentData, setEnvironmentData, SHARE_ENV,
+  isInternalThread, isMarkedAsUntransferable, locks, postMessageToThread, threadName,
 };

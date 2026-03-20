@@ -30,10 +30,10 @@ NAPI_DIR   := $(ROOT_DIR)/napi-bridge
 OUTPUT_DIR := $(ROOT_DIR)/dist
 
 # ---- Emscripten ----
-EMSDK_DIR  ?= $(HOME)/emsdk
+EMSDK_DIR  ?= $(if $(EMSDK),$(EMSDK),$(HOME)/emsdk)
 EMSDK_VER  ?= 3.1.64
 EMCC       := $(EMSDK_DIR)/upstream/emscripten/emcc
-EMCMAKE    := $(EMSDK_DIR)/upstream/emscripten/emcmake
+EMCMAKE    ?= $(shell command -v emcmake 2>/dev/null || echo $(EMSDK_DIR)/upstream/emscripten/emcmake)
 
 # ---- Build Config ----
 BUILD_TYPE ?= Release
@@ -126,8 +126,14 @@ $(BUILD_DIR)/CMakeCache.txt: $(EDGEJS_SRC)/CMakeLists.txt emscripten-toolchain.c
 	@mkdir -p $(BUILD_DIR)
 	@cd $(ROOT_DIR) && git checkout -- edgejs-src 2>/dev/null || true
 	@cd $(ROOT_DIR) && (git apply --check patches/edgejs-emscripten.patch 2>/dev/null && git apply patches/edgejs-emscripten.patch) || echo ">>> Patch already applied or not needed"
-	@source $(EMSDK_DIR)/emsdk_env.sh 2>/dev/null || true
-	$(EMCMAKE) cmake \
+	@source "$(EMSDK_DIR)/emsdk_env.sh" 2>/dev/null || true
+	@EMCMAKE_BIN="$$(command -v emcmake || true)"; \
+	if [ -z "$$EMCMAKE_BIN" ] && [ -x "$(EMCMAKE)" ]; then EMCMAKE_BIN="$(EMCMAKE)"; fi; \
+	if [ -z "$$EMCMAKE_BIN" ]; then \
+		echo "ERROR: emcmake not found (PATH or $(EMCMAKE)). Ensure EMSDK is activated."; \
+		exit 127; \
+	fi; \
+	"$$EMCMAKE_BIN" cmake \
 		-S $(EDGEJS_SRC) \
 		-B $(BUILD_DIR) \
 		-DCMAKE_TOOLCHAIN_FILE=$(ROOT_DIR)/emscripten-toolchain.cmake \

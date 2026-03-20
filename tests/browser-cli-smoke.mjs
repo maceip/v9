@@ -124,11 +124,13 @@ async function testCLI(browser, name, bundlePath) {
       failed++;
     }
 
-    // Test 3: ESM import succeeded (no "Invalid or unexpected token")
+    // Test 3: ESM import succeeded (ignore known non-fatal parser warning noise)
     const esmLoaded = await page.evaluate(() => {
       const term = document.querySelector('#terminal');
       const text = term?.textContent || '';
-      return !text.includes('Invalid or unexpected token');
+      const hasFatalSyntax = text.includes('SyntaxError') &&
+        !text.includes('v2(...).Parser.detailed is not a function');
+      return !text.includes('Invalid or unexpected token') && !hasFatalSyntax;
     });
     if (esmLoaded) {
       log('✅', 'ESM bundle loaded (no syntax errors)');
