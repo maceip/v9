@@ -12,6 +12,13 @@
  * Usage: node scripts/generate-esm-wrappers.mjs
  */
 
+if (!process.env.EDGEJS_ALLOW_LEGACY_ESM_WRAPPERS) {
+  console.error('[deprecated] scripts/generate-esm-wrappers.mjs is legacy-only.');
+  console.error('Use: node scripts/build-node-api-surface.mjs');
+  console.error('To intentionally run legacy generation, set EDGEJS_ALLOW_LEGACY_ESM_WRAPPERS=1.');
+  process.exit(1);
+}
+
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,9 +1,19 @@
 // Auto-generated ESM wrapper for node:timers/promises
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('timers/promises');
-export default _module;
-export const scheduler = _module.scheduler;
-export const setImmediate = _module.setImmediate;
-export const setInterval = _module.setInterval;
-export const setTimeout = _module.setTimeout;
+let _defaultExport = getNodeApiModule('timers/promises');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('timers/promises');
+  _defaultExport = mod;
+  scheduler = mod.scheduler;
+  setImmediate = mod.setImmediate;
+  setInterval = mod.setInterval;
+  setTimeout = mod.setTimeout;
+}
+export let scheduler;
+export let setImmediate;
+export let setInterval;
+export let setTimeout;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('timers/promises', _syncNodeApiModuleBindings);

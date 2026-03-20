@@ -1,7 +1,15 @@
 // Auto-generated ESM wrapper for node:trace_events
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('trace_events');
-export default _module;
-export const createTracing = _module.createTracing;
-export const getEnabledCategories = _module.getEnabledCategories;
+let _defaultExport = getNodeApiModule('trace_events');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('trace_events');
+  _defaultExport = mod;
+  createTracing = mod.createTracing;
+  getEnabledCategories = mod.getEnabledCategories;
+}
+export let createTracing;
+export let getEnabledCategories;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('trace_events', _syncNodeApiModuleBindings);

@@ -1,16 +1,33 @@
 // Auto-generated ESM wrapper for node:perf_hooks
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('perf_hooks');
-export default _module;
-export const Performance = _module.Performance;
-export const PerformanceEntry = _module.PerformanceEntry;
-export const PerformanceMark = _module.PerformanceMark;
-export const PerformanceMeasure = _module.PerformanceMeasure;
-export const PerformanceObserver = _module.PerformanceObserver;
-export const PerformanceObserverEntryList = _module.PerformanceObserverEntryList;
-export const PerformanceResourceTiming = _module.PerformanceResourceTiming;
-export const constants = _module.constants;
-export const createHistogram = _module.createHistogram;
-export const monitorEventLoopDelay = _module.monitorEventLoopDelay;
-export const performance = _module.performance;
+let _defaultExport = getNodeApiModule('perf_hooks');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('perf_hooks');
+  _defaultExport = mod;
+  Performance = mod.Performance;
+  PerformanceEntry = mod.PerformanceEntry;
+  PerformanceMark = mod.PerformanceMark;
+  PerformanceMeasure = mod.PerformanceMeasure;
+  PerformanceObserver = mod.PerformanceObserver;
+  PerformanceObserverEntryList = mod.PerformanceObserverEntryList;
+  PerformanceResourceTiming = mod.PerformanceResourceTiming;
+  constants = mod.constants;
+  createHistogram = mod.createHistogram;
+  monitorEventLoopDelay = mod.monitorEventLoopDelay;
+  performance = mod.performance;
+}
+export let Performance;
+export let PerformanceEntry;
+export let PerformanceMark;
+export let PerformanceMeasure;
+export let PerformanceObserver;
+export let PerformanceObserverEntryList;
+export let PerformanceResourceTiming;
+export let constants;
+export let createHistogram;
+export let monitorEventLoopDelay;
+export let performance;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('perf_hooks', _syncNodeApiModuleBindings);

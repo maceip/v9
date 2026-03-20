@@ -1,6 +1,13 @@
 // Auto-generated ESM wrapper for node:wasi
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('wasi');
-export default _module;
-export const WASI = _module.WASI;
+let _defaultExport = getNodeApiModule('wasi');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('wasi');
+  _defaultExport = mod;
+  WASI = mod.WASI;
+}
+export let WASI;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('wasi', _syncNodeApiModuleBindings);

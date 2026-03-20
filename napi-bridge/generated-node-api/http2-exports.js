@@ -1,16 +1,33 @@
 // Auto-generated ESM wrapper for node:http2
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('http2');
-export default _module;
-export const Http2ServerRequest = _module.Http2ServerRequest;
-export const Http2ServerResponse = _module.Http2ServerResponse;
-export const connect = _module.connect;
-export const constants = _module.constants;
-export const createSecureServer = _module.createSecureServer;
-export const createServer = _module.createServer;
-export const getDefaultSettings = _module.getDefaultSettings;
-export const getPackedSettings = _module.getPackedSettings;
-export const getUnpackedSettings = _module.getUnpackedSettings;
-export const performServerHandshake = _module.performServerHandshake;
-export const sensitiveHeaders = _module.sensitiveHeaders;
+let _defaultExport = getNodeApiModule('http2');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('http2');
+  _defaultExport = mod;
+  Http2ServerRequest = mod.Http2ServerRequest;
+  Http2ServerResponse = mod.Http2ServerResponse;
+  connect = mod.connect;
+  constants = mod.constants;
+  createSecureServer = mod.createSecureServer;
+  createServer = mod.createServer;
+  getDefaultSettings = mod.getDefaultSettings;
+  getPackedSettings = mod.getPackedSettings;
+  getUnpackedSettings = mod.getUnpackedSettings;
+  performServerHandshake = mod.performServerHandshake;
+  sensitiveHeaders = mod.sensitiveHeaders;
+}
+export let Http2ServerRequest;
+export let Http2ServerResponse;
+export let connect;
+export let constants;
+export let createSecureServer;
+export let createServer;
+export let getDefaultSettings;
+export let getPackedSettings;
+export let getUnpackedSettings;
+export let performServerHandshake;
+export let sensitiveHeaders;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('http2', _syncNodeApiModuleBindings);

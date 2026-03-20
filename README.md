@@ -66,13 +66,18 @@ This produces:
 The runtime also auto-expands builtin overrides using this manifest via
 `napi-bridge/node-api-surface.js`.
 
+`scripts/generate-esm-wrappers.mjs` is now legacy-only and intentionally
+disabled by default to avoid reintroducing old stub-only wrappers.
+
 ### 2) Parsec Engine (Two-Stage Pipeline)
 
 Run the parser/prep/packaging engine from CLI:
 
 ```bash
-node scripts/parsec-engine.mjs --type raw-js --input ./my-app --output ./dist/parsec
+node experimental/parsec-engine/cli.mjs --type raw-js --input ./my-app --output ./dist/parsec
 ```
+
+Note: Parsec remains experimental and is isolated under `experimental/parsec-engine/`.
 
 Supported input types:
 - `npm` (package name or local package path)

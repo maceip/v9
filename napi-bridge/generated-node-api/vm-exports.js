@@ -1,15 +1,31 @@
 // Auto-generated ESM wrapper for node:vm
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('vm');
-export default _module;
-export const Script = _module.Script;
-export const compileFunction = _module.compileFunction;
-export const constants = _module.constants;
-export const createContext = _module.createContext;
-export const createScript = _module.createScript;
-export const isContext = _module.isContext;
-export const measureMemory = _module.measureMemory;
-export const runInContext = _module.runInContext;
-export const runInNewContext = _module.runInNewContext;
-export const runInThisContext = _module.runInThisContext;
+let _defaultExport = getNodeApiModule('vm');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('vm');
+  _defaultExport = mod;
+  Script = mod.Script;
+  compileFunction = mod.compileFunction;
+  constants = mod.constants;
+  createContext = mod.createContext;
+  createScript = mod.createScript;
+  isContext = mod.isContext;
+  measureMemory = mod.measureMemory;
+  runInContext = mod.runInContext;
+  runInNewContext = mod.runInNewContext;
+  runInThisContext = mod.runInThisContext;
+}
+export let Script;
+export let compileFunction;
+export let constants;
+export let createContext;
+export let createScript;
+export let isContext;
+export let measureMemory;
+export let runInContext;
+export let runInNewContext;
+export let runInThisContext;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('vm', _syncNodeApiModuleBindings);

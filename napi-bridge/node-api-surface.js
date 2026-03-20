@@ -2,6 +2,7 @@ import { NODE_API_SURFACE_EXPORTS, NODE_API_SURFACE_MODULES } from './node-api-s
 
 const SURFACE_MODULE_SET = new Set(NODE_API_SURFACE_MODULES);
 const _surfaceRegistry = new Map();
+const _surfaceListeners = new Map();
 
 const SURFACE_ALIASES = {
   'assert/strict': 'assert',
@@ -74,6 +75,18 @@ function materializeModule(moduleName, moduleExports) {
   return materialized;
 }
 
+function _notifySurfaceListeners(moduleName, moduleExports) {
+  const listeners = _surfaceListeners.get(moduleName);
+  if (!listeners || listeners.size === 0) return;
+  for (const listener of listeners) {
+    try {
+      listener(moduleExports);
+    } catch {
+      // Listener failures should not break registry updates.
+    }
+  }
+}
+
 export function isNodeApiSurfaceModule(moduleName) {
   const clean = moduleName.startsWith('node:') ? moduleName.slice(5) : moduleName;
   return SURFACE_MODULE_SET.has(clean);
@@ -91,10 +104,12 @@ export function expandBuiltinsToNodeApiSurface(initialBuiltins) {
     }
     expandedBuiltins[moduleName] = materializeModule(moduleName, expandedBuiltins[moduleName]);
     _surfaceRegistry.set(moduleName, expandedBuiltins[moduleName]);
+    _notifySurfaceListeners(moduleName, expandedBuiltins[moduleName]);
   }
 
   for (const [moduleName, moduleExports] of Object.entries(expandedBuiltins)) {
     _surfaceRegistry.set(moduleName, moduleExports);
+    _notifySurfaceListeners(moduleName, moduleExports);
   }
 
   return expandedBuiltins;
@@ -104,6 +119,30 @@ export function getNodeApiModule(moduleName) {
   const cleanName = moduleName.startsWith('node:') ? moduleName.slice(5) : moduleName;
   if (_surfaceRegistry.has(cleanName)) return _surfaceRegistry.get(cleanName);
   return materializeModule(cleanName, {});
+}
+
+export function subscribeNodeApiModule(moduleName, listener) {
+  const cleanName = moduleName.startsWith('node:') ? moduleName.slice(5) : moduleName;
+  if (typeof listener !== 'function') {
+    throw new TypeError('subscribeNodeApiModule listener must be a function');
+  }
+  if (!_surfaceListeners.has(cleanName)) {
+    _surfaceListeners.set(cleanName, new Set());
+  }
+  const listeners = _surfaceListeners.get(cleanName);
+  listeners.add(listener);
+
+  const initial = _surfaceRegistry.has(cleanName)
+    ? _surfaceRegistry.get(cleanName)
+    : materializeModule(cleanName, {});
+  listener(initial);
+
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      _surfaceListeners.delete(cleanName);
+    }
+  };
 }
 
 export function getNodeApiSurfaceModules() {

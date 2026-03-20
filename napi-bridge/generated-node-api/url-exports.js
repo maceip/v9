@@ -1,19 +1,39 @@
 // Auto-generated ESM wrapper for node:url
-import { getNodeApiModule } from '../node-api-surface.js';
+import { getNodeApiModule, subscribeNodeApiModule } from '../node-api-surface.js';
 
-const _module = getNodeApiModule('url');
-export default _module;
-export const URL = _module.URL;
-export const URLPattern = _module.URLPattern;
-export const URLSearchParams = _module.URLSearchParams;
-export const Url = _module.Url;
-export const domainToASCII = _module.domainToASCII;
-export const domainToUnicode = _module.domainToUnicode;
-export const fileURLToPath = _module.fileURLToPath;
-export const fileURLToPathBuffer = _module.fileURLToPathBuffer;
-export const format = _module.format;
-export const parse = _module.parse;
-export const pathToFileURL = _module.pathToFileURL;
-export const resolve = _module.resolve;
-export const resolveObject = _module.resolveObject;
-export const urlToHttpOptions = _module.urlToHttpOptions;
+let _defaultExport = getNodeApiModule('url');
+function _syncNodeApiModuleBindings() {
+  const mod = getNodeApiModule('url');
+  _defaultExport = mod;
+  URL = mod.URL;
+  URLPattern = mod.URLPattern;
+  URLSearchParams = mod.URLSearchParams;
+  Url = mod.Url;
+  domainToASCII = mod.domainToASCII;
+  domainToUnicode = mod.domainToUnicode;
+  fileURLToPath = mod.fileURLToPath;
+  fileURLToPathBuffer = mod.fileURLToPathBuffer;
+  format = mod.format;
+  parse = mod.parse;
+  pathToFileURL = mod.pathToFileURL;
+  resolve = mod.resolve;
+  resolveObject = mod.resolveObject;
+  urlToHttpOptions = mod.urlToHttpOptions;
+}
+export let URL;
+export let URLPattern;
+export let URLSearchParams;
+export let Url;
+export let domainToASCII;
+export let domainToUnicode;
+export let fileURLToPath;
+export let fileURLToPathBuffer;
+export let format;
+export let parse;
+export let pathToFileURL;
+export let resolve;
+export let resolveObject;
+export let urlToHttpOptions;
+export { _defaultExport as default };
+_syncNodeApiModuleBindings();
+subscribeNodeApiModule('url', _syncNodeApiModuleBindings);
