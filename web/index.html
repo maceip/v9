@@ -147,7 +147,7 @@
         stderr: { isTTY: true, write: (s)=>{const str=typeof s==='string'?s:new TextDecoder().decode(s);if(globalThis._xtermWrite)globalThis._xtermWrite(str);else globalThis._origConsoleError?.(str);return true;}, on: ()=>globalThis.process.stderr, once: ()=>globalThis.process.stderr, emit: ()=>false, end: ()=>{}, writable: true, fd: 2, getColorDepth: ()=>24, hasColors: ()=>true },
         exit: (code) => { console.log(`[process.exit] code=${code}`); },
         nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
-        hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
+        hrtime: Object.assign((prev) => { const now = performance.now(); const s = Math.floor(now / 1000); const ns = Math.round((now % 1000) * 1e6); if (prev) return [s - prev[0], ns - prev[1]]; return [s, ns]; }, { bigint: () => BigInt(Math.round(performance.now() * 1e6)) }),
         on: () => globalThis.process, off: () => globalThis.process, once: () => globalThis.process, emit: () => false,
         removeListener: () => globalThis.process, addListener: () => globalThis.process, removeAllListeners: () => globalThis.process,
         setMaxListeners: () => globalThis.process, getMaxListeners: () => 10, rawListeners: () => [],
