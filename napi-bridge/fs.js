@@ -241,17 +241,42 @@ export function createFsModule(memfs, getCwd) {
   function createReadStream(path, options) {
     const opts = parseOptions(options, { encoding: null, highWaterMark: 65536 });
     const resolved = _r(path);
-    let started = false;
+    let fd = null;
+    let position = 0;
+    let fileSize = 0;
+    const hwm = opts.highWaterMark;
     const stream = new Readable({
-      highWaterMark: opts.highWaterMark,
+      highWaterMark: hwm,
       read() {
-        if (started) return;
-        started = true;
         try {
-          const data = memfs.readFile(resolved);
-          this.push(opts.encoding ? fromBuffer(data, opts.encoding) : new Uint8Array(data));
-          this.push(null);
+          // Lazy open on first read
+          if (fd === null) {
+            fileSize = memfs.stat(resolved).size;
+            fd = memfs.open(resolved, 'r');
+            position = 0;
+          }
+          if (position >= fileSize) {
+            // Close fd and signal EOF
+            memfs.close(fd);
+            fd = null;
+            this.push(null);
+            return;
+          }
+          // Read one chunk up to highWaterMark
+          const chunkSize = Math.min(hwm, fileSize - position);
+          const buf = new Uint8Array(chunkSize);
+          const bytesRead = memfs.readFd(fd, buf, 0, chunkSize, position);
+          position += bytesRead;
+          if (bytesRead === 0) {
+            memfs.close(fd);
+            fd = null;
+            this.push(null);
+            return;
+          }
+          const chunk = bytesRead < chunkSize ? buf.subarray(0, bytesRead) : buf;
+          this.push(opts.encoding ? fromBuffer(chunk, opts.encoding) : chunk);
         } catch (err) {
+          if (fd !== null) { try { memfs.close(fd); } catch {} fd = null; }
           this.destroy(err);
         }
       },
@@ -263,15 +288,18 @@ export function createFsModule(memfs, getCwd) {
   function createWriteStream(path, options) {
     const opts = parseOptions(options, { encoding: 'utf8' });
     const resolved = _r(path);
-    const chunks = [];
+    let fd = null;
     const stream = new Writable({
       write(chunk, encoding, callback) {
         try {
-          if (typeof chunk === 'string') {
-            chunks.push(toBuffer(chunk, encoding));
-          } else {
-            chunks.push(new Uint8Array(chunk));
+          // Lazy create file and open fd on first write
+          if (fd === null) {
+            // Ensure file exists (create empty if new, truncate if existing)
+            memfs.writeFile(resolved, new Uint8Array(0));
+            fd = memfs.open(resolved, 'w');
           }
+          const buf = typeof chunk === 'string' ? toBuffer(chunk, encoding) : new Uint8Array(chunk);
+          memfs.writeFd(fd, buf, 0, buf.byteLength, null);
           callback();
         } catch (err) {
           callback(err);
@@ -279,18 +307,18 @@ export function createFsModule(memfs, getCwd) {
       },
       final(callback) {
         try {
-          const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0);
-          const combined = new Uint8Array(totalLen);
-          let offset = 0;
-          for (const c of chunks) {
-            combined.set(c, offset);
-            offset += c.byteLength;
+          if (fd !== null) {
+            memfs.close(fd);
+            fd = null;
           }
-          memfs.writeFile(resolved, combined);
           callback();
         } catch (err) {
           callback(err);
         }
+      },
+      destroy(err, callback) {
+        if (fd !== null) { try { memfs.close(fd); } catch {} fd = null; }
+        callback(err);
       },
     });
     stream.path = path;

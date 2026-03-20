@@ -1,19 +1,24 @@
 /**
  * child_process — Node.js-compatible child_process module for browser/Wasm.
  *
- * Provides spawn, exec, execSync, execFile backed by shell shims + MEMFS.
- * Fork throws (not available in browser).
+ * Provides spawn, exec, execSync, execFile, fork backed by shell shims + MEMFS.
  *
  * Architecture:
  *   - ExecutionContext: per-child isolation of pid, ppid, cwd, env, cancellation
  *   - Cancellation-safe: kill() prevents all further stdout/stderr/exit emission
  *   - Per-child cwd/env: threaded through shell dispatch, not global mutations
+ *   - fork(): in-process isolate with IPC message channels + return contract
  *
  * Execution contract:
  *   child_process is an in-process command shim with per-child isolation of
  *   cwd, env, and lifecycle. Commands run synchronously in the same JS realm
  *   against MEMFS shims. There is no true OS-level process isolation; the
  *   isolation boundary is logical (scoped cwd/env/cancellation).
+ *
+ *   fork() runs a module via require() in a new ExecutionContext with IPC
+ *   message channels. The child gets process.send()/process.on('message')
+ *   and the parent gets child.send()/child.on('message'). This provides
+ *   real parent-child return semantics without OS-level processes.
  *
  * SECURITY: All commands execute against MEMFS shims, not real system commands.
  * The `new Function` boundary in _memfsRequire is the trust boundary —
@@ -27,6 +32,9 @@ import { hasCommand, runCommand, withCwd } from './shell-commands.js';
 import { runGit } from './git-shim.js';
 
 let _pidCounter = 1000;
+
+// Process table for waitpid-like lookups
+const _processTable = new Map(); // pid → { ctx, child, exitCode, signal, settled }
 
 // ─── ExecutionContext ──────────────────────────────────────────────────
 // Per-child isolation object. Owns identity, environment, working directory,
@@ -124,6 +132,9 @@ class ChildProcess extends EventEmitter {
     this.connected = false;
     this._exited = false; // guard against double exit/close emission
 
+    // IPC channel (set up by fork())
+    this._ipcChannel = null;
+
     this.stdin = new Writable({
       write(chunk, encoding, callback) { callback(); },
     });
@@ -137,6 +148,11 @@ class ChildProcess extends EventEmitter {
     });
 
     this.stdio = [this.stdin, this.stdout, this.stderr];
+
+    // Register in process table
+    _processTable.set(ctx.pid, {
+      ctx, child: this, exitCode: null, signal: null, settled: false,
+    });
   }
 
   kill(signal) {
@@ -149,11 +165,53 @@ class ChildProcess extends EventEmitter {
     this._emitExit(null, this.signalCode);
   }
 
+  /**
+   * Send a message to the child process via IPC channel.
+   * Only available on forked children.
+   */
+  send(message, sendHandle, options, callback) {
+    if (typeof sendHandle === 'function') { callback = sendHandle; sendHandle = undefined; }
+    if (typeof options === 'function') { callback = options; options = undefined; }
+
+    if (!this._ipcChannel) {
+      const err = new Error('channel closed');
+      if (callback) callback(err);
+      return false;
+    }
+    try {
+      this._ipcChannel.postToChild(message);
+      if (callback) callback(null);
+      return true;
+    } catch (err) {
+      if (callback) callback(err);
+      return false;
+    }
+  }
+
+  /**
+   * Close the IPC channel.
+   */
+  disconnect() {
+    if (!this._ipcChannel) return;
+    this.connected = false;
+    this._ipcChannel = null;
+    this.emit('disconnect');
+  }
+
   _emitExit(code, signal) {
     // Guard: only emit exit/close once
     if (this._exited) return;
     this._exited = true;
     this.exitCode = code;
+
+    // Update process table
+    const entry = _processTable.get(this.pid);
+    if (entry) {
+      entry.exitCode = code;
+      entry.signal = signal;
+      entry.settled = true;
+    }
+
     // Defer to allow listeners to be registered
     Promise.resolve().then(() => {
       // End the streams first
@@ -163,12 +221,57 @@ class ChildProcess extends EventEmitter {
       // close fires after exit
       Promise.resolve().then(() => {
         this.emit('close', code, signal || null);
+        // Disconnect IPC if still connected
+        if (this.connected) this.disconnect();
       });
     });
   }
 
   ref() { return this; }
   unref() { return this; }
+}
+
+// ─── IPC Channel ─────────────────────────────────────────────────────
+// Lightweight in-process message channel for fork() parent-child IPC.
+
+class IPCChannel {
+  constructor() {
+    this._parentListeners = []; // messages from child → parent
+    this._childListeners = [];  // messages from parent → child
+    this._closed = false;
+  }
+
+  /** Parent sends message to child */
+  postToChild(message) {
+    if (this._closed) throw new Error('channel closed');
+    // Clone to simulate process boundary
+    const cloned = JSON.parse(JSON.stringify(message));
+    Promise.resolve().then(() => {
+      for (const fn of this._childListeners) {
+        try { fn(cloned); } catch {}
+      }
+    });
+  }
+
+  /** Child sends message to parent */
+  postToParent(message) {
+    if (this._closed) throw new Error('channel closed');
+    const cloned = JSON.parse(JSON.stringify(message));
+    Promise.resolve().then(() => {
+      for (const fn of this._parentListeners) {
+        try { fn(cloned); } catch {}
+      }
+    });
+  }
+
+  onParentMessage(fn) { this._parentListeners.push(fn); }
+  onChildMessage(fn) { this._childListeners.push(fn); }
+
+  close() {
+    this._closed = true;
+    this._parentListeners = [];
+    this._childListeners = [];
+  }
 }
 
 // ─── Internal dispatcher ─────────────────────────────────────────────
@@ -383,9 +486,138 @@ export function execFileSync(file, args, options) {
 }
 
 // ─── fork ────────────────────────────────────────────────────────────
+// In-process fork: runs a module in a new ExecutionContext with IPC.
+// The child gets process.send()/process.on('message') via a patched
+// process object. The parent gets child.send()/child.on('message').
+//
+// Return contract: the child's exit code and IPC messages are available
+// via the standard ChildProcess events (exit, close, message, disconnect).
 
-export function fork() {
-  throw new Error('child_process.fork() is not available in browser');
+// _forkRequire is set by the runtime during initialization to provide
+// the module require function for forked children.
+let _forkRequire = null;
+
+export function setForkRequire(requireFn) {
+  _forkRequire = requireFn;
+}
+
+export function fork(modulePath, args, options) {
+  if (Array.isArray(args)) {
+    options = options || {};
+  } else if (typeof args === 'object' && args !== null && !Array.isArray(args)) {
+    options = args;
+    args = [];
+  } else {
+    args = args || [];
+    options = options || {};
+  }
+
+  if (!_forkRequire) {
+    throw new Error('child_process.fork() requires runtime initialization — call setForkRequire() first');
+  }
+
+  const ctx = new ExecutionContext(options);
+  const child = new ChildProcess(ctx);
+
+  // Set up IPC channel
+  const ipc = new IPCChannel();
+  child._ipcChannel = ipc;
+  child.connected = true;
+
+  // Parent receives messages from child
+  ipc.onParentMessage((msg) => {
+    child.emit('message', msg);
+  });
+
+  // Execute the module asynchronously
+  Promise.resolve().then(() => {
+    if (ctx.cancelled) return;
+
+    try {
+      // Create a child process object with send/on('message') support
+      const childProcess = {
+        pid: ctx.pid,
+        ppid: ctx.ppid,
+        connected: true,
+        send(message, sendHandle, options, callback) {
+          if (typeof sendHandle === 'function') { callback = sendHandle; }
+          if (typeof options === 'function') { callback = options; }
+          try {
+            ipc.postToParent(message);
+            if (callback) callback(null);
+            return true;
+          } catch (err) {
+            if (callback) callback(err);
+            return false;
+          }
+        },
+        disconnect() {
+          childProcess.connected = false;
+        },
+        exit(code) {
+          child._emitExit(code || 0, null);
+        },
+        argv: ['/usr/bin/node', modulePath, ...(args || [])],
+        env: ctx.env,
+        cwd: () => ctx.cwd,
+      };
+
+      // Register message listener for parent → child
+      ipc.onChildMessage((msg) => {
+        if (childProcess._messageHandler) {
+          childProcess._messageHandler(msg);
+        }
+      });
+
+      // Provide on('message', fn) for the child's process object
+      childProcess._messageHandler = null;
+      childProcess.on = function(event, fn) {
+        if (event === 'message') {
+          childProcess._messageHandler = fn;
+        }
+      };
+
+      // Run the module with the child's process context injected
+      // The module gets access to process.send via the MEMFS require system
+      const savedProcess = globalThis.process;
+      const patchedProcess = Object.create(savedProcess || {});
+      patchedProcess.send = childProcess.send.bind(childProcess);
+      patchedProcess.connected = true;
+      patchedProcess.pid = ctx.pid;
+      patchedProcess.ppid = ctx.ppid;
+      patchedProcess.argv = childProcess.argv;
+      patchedProcess.env = ctx.env;
+      patchedProcess.on = function(event, fn) {
+        if (event === 'message') {
+          childProcess._messageHandler = fn;
+          return patchedProcess;
+        }
+        return savedProcess?.on?.(event, fn) || patchedProcess;
+      };
+
+      globalThis.process = patchedProcess;
+      try {
+        _forkRequire(modulePath, ctx.cwd);
+        if (!child._exited) {
+          child._emitExit(0, null);
+        }
+      } catch (err) {
+        if (ctx.cancelled) return;
+        child.emit('error', err);
+        if (!child._exited) {
+          child._emitExit(1, null);
+        }
+      } finally {
+        globalThis.process = savedProcess;
+      }
+    } catch (err) {
+      if (ctx.cancelled) return;
+      child.emit('error', err);
+      child._emitExit(1, null);
+    }
+  });
+
+  return child;
 }
 
 // ─── spawnSync ───────────────────────────────────────────────────────
@@ -423,9 +655,38 @@ export function spawnSync(command, args, options) {
   };
 }
 
+// ─── waitpid-like utility ────────────────────────────────────────────
+// Returns a promise that resolves with the canonical return envelope
+// when the child process exits.
+
+export function waitForChild(pid) {
+  return new Promise((resolve) => {
+    const entry = _processTable.get(pid);
+    if (!entry) {
+      resolve({ exitCode: -1, signal: null, error: 'no such process' });
+      return;
+    }
+    if (entry.settled) {
+      resolve({
+        exitCode: entry.exitCode,
+        signal: entry.signal,
+        pid: entry.ctx.pid,
+      });
+      return;
+    }
+    entry.child.on('exit', (code, signal) => {
+      resolve({
+        exitCode: code,
+        signal,
+        pid: entry.ctx.pid,
+      });
+    });
+  });
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────
 
-export { ExecutionContext, ChildProcess };
+export { ExecutionContext, ChildProcess, IPCChannel };
 
 export default {
   spawn,
@@ -437,4 +698,6 @@ export default {
   spawnSync,
   ChildProcess,
   ExecutionContext,
+  setForkRequire,
+  waitForChild,
 };

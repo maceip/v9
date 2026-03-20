@@ -1,8 +1,13 @@
 /**
  * http/https — Node.js-compatible HTTP client via browser fetch().
  *
- * ClientRequest (Writable-like) accumulates body, fires fetch() on end().
+ * ClientRequest (Writable) accumulates body, fires fetch() on end().
  * IncomingMessage (Readable) wraps the Response, streams body chunks.
+ *
+ * Backpressure: ClientRequest relies on Writable.write() + _write() for
+ * proper flow control. When streaming upload is supported (Chromium 105+),
+ * large request bodies auto-upgrade to ReadableStream with pull-based
+ * backpressure, avoiding full buffering and concatenation.
  */
 
 import { EventEmitter } from './eventemitter.js';
@@ -99,12 +104,15 @@ async function _proxyFetch(url, opts) {
           else if (v !== undefined) headers.set(k, v);
         }
 
-        // Bug #10: Stream the response instead of buffering everything
-        // Create a ReadableStream that pipes from the Node.js response
+        // Backpressure-aware streaming: pause Node.js source when downstream is full
         const readable = new ReadableStream({
           start(controller) {
             res.on('data', (chunk) => {
               controller.enqueue(new Uint8Array(chunk));
+              // Pause the Node.js source when ReadableStream buffer is full
+              if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+                res.pause();
+              }
             });
             res.on('end', () => {
               controller.close();
@@ -112,6 +120,13 @@ async function _proxyFetch(url, opts) {
             res.on('error', (err) => {
               controller.error(err);
             });
+          },
+          pull() {
+            // Consumer is ready for more data — resume the Node.js source
+            res.resume();
+          },
+          cancel() {
+            res.destroy();
           },
         });
 
@@ -125,10 +140,26 @@ async function _proxyFetch(url, opts) {
 
       req.on('error', reject);
 
-      if (opts?.body) {
-        req.write(opts.body);
+      // Handle streaming body (ReadableStream) or buffered body
+      if (opts?.body instanceof ReadableStream) {
+        const reader = opts.body.getReader();
+        (async function pump() {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) { req.end(); return; }
+              req.write(value);
+            }
+          } catch (err) {
+            req.destroy(err);
+          }
+        })();
+      } else {
+        if (opts?.body) {
+          req.write(opts.body);
+        }
+        req.end();
       }
-      req.end();
     });
 
     connectReq.on('error', reject);
@@ -262,7 +293,9 @@ class IncomingMessage extends Readable {
 }
 
 // ─── ClientRequest ──────────────────────────────────────────────────
-// Bug #16: Extend Writable so ClientRequest supports pipe-into and emits 'finish'
+// Extends Writable so ClientRequest supports pipe-into and emits 'finish'.
+// Backpressure is honored via Writable.write() + _write(); the custom
+// write() override that bypassed flow control has been removed.
 
 class ClientRequest extends Writable {
   constructor(url, options, callback) {
@@ -288,11 +321,17 @@ class ClientRequest extends Writable {
     this._reqHeaders = {};
     this._headerNames = {}; // lowercased → original case
     this._bodyChunks = [];
+    this._bodyLength = 0;
     this._ended = false;
     this._abortController = new AbortController();
     this._timeoutTimer = null;
     this._destroyed = false;
     this._aborted = false;
+
+    // Streaming upload state (activated when body exceeds highWaterMark)
+    this._fetchStarted = false;
+    this._streamController = null;
+    this._drainCallback = null;
 
     // Apply headers from options
     if (this._options.headers) {
@@ -302,13 +341,58 @@ class ClientRequest extends Writable {
     }
   }
 
-  // Override Writable._write to accumulate body chunks
+  // Writable._write: accumulate body chunks with proper backpressure.
+  // When streaming upload is supported and body exceeds highWaterMark,
+  // auto-upgrades to ReadableStream body with pull-based backpressure.
   _write(chunk, encoding, callback) {
     if (typeof chunk === 'string') {
-      this._bodyChunks.push(_encoder.encode(chunk));
-    } else if (chunk) {
-      this._bodyChunks.push((chunk instanceof Uint8Array) ? chunk : new Uint8Array(chunk));
+      chunk = _encoder.encode(chunk);
+    } else if (chunk && !(chunk instanceof Uint8Array)) {
+      chunk = new Uint8Array(chunk);
     }
+    if (!chunk) {
+      callback();
+      return;
+    }
+
+    // If already in streaming mode, enqueue directly to upload stream
+    if (this._streamController) {
+      try {
+        this._streamController.enqueue(chunk);
+      } catch (err) {
+        callback(err);
+        return;
+      }
+      // Respect ReadableStream backpressure via desiredSize
+      if (this._streamController.desiredSize !== null && this._streamController.desiredSize <= 0) {
+        // Defer callback until pull() fires — this keeps Writable.writing=true
+        // and causes subsequent writes to queue, providing backpressure to the source
+        this._drainCallback = callback;
+        return;
+      }
+      callback();
+      return;
+    }
+
+    // Buffered mode: accumulate chunk
+    this._bodyChunks.push(chunk);
+    this._bodyLength += chunk.byteLength;
+
+    // Auto-upgrade to streaming when buffered data exceeds highWaterMark
+    const method = (this._options.method || 'GET').toUpperCase();
+    if (this._bodyLength > this._writableState.highWaterMark
+        && _canStreamUpload()
+        && method !== 'GET' && method !== 'HEAD'
+        && !this._fetchStarted) {
+      this._startStreamingFetch();
+      // Drain all buffered chunks into the stream
+      for (const c of this._bodyChunks) {
+        this._streamController.enqueue(c);
+      }
+      this._bodyChunks = [];
+      this._bodyLength = 0;
+    }
+
     callback();
   }
 
@@ -328,19 +412,88 @@ class ClientRequest extends Writable {
     delete this._headerNames[lk];
   }
 
-  // Legacy write() — also accepted directly (in addition to Writable.write)
-  write(chunk, encoding, callback) {
-    if (typeof encoding === 'function') {
-      callback = encoding;
-      encoding = undefined;
+  // Explicitly send headers and start the fetch with a streaming body.
+  // Useful for progressive uploads — call before write() to enable streaming
+  // from the first byte. Otherwise, streaming auto-activates when buffered
+  // data exceeds highWaterMark.
+  flushHeaders() {
+    const method = (this._options.method || 'GET').toUpperCase();
+    if (!this._fetchStarted && _canStreamUpload() && method !== 'GET' && method !== 'HEAD') {
+      this._startStreamingFetch();
     }
-    if (typeof chunk === 'string') {
-      this._bodyChunks.push(_encoder.encode(chunk));
-    } else if (chunk) {
-      this._bodyChunks.push((chunk instanceof Uint8Array) ? chunk : new Uint8Array(chunk));
+  }
+
+  _buildUrl() {
+    const opts = this._options;
+    const protocol = opts.protocol || 'http:';
+    const hostname = opts.hostname || opts.host || 'localhost';
+    const port = opts.port;
+    const path = opts.path || '/';
+
+    if (opts.href && (opts.href.startsWith('http://') || opts.href.startsWith('https://'))) {
+      return opts.href;
     }
-    if (callback) callback();
-    return true;
+    const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : '';
+    return `${protocol}//${hostname}${portSuffix}${path}`;
+  }
+
+  _buildHeaders() {
+    const headers = {};
+    for (const [lk, val] of Object.entries(this._reqHeaders)) {
+      // Exclude content-length — fetch handles it
+      if (lk === 'content-length') continue;
+      headers[lk] = String(val);
+    }
+    return headers;
+  }
+
+  // Start a streaming fetch with ReadableStream body.
+  // Subsequent _write() calls enqueue directly into the stream.
+  // end() closes the stream.
+  _startStreamingFetch() {
+    this._fetchStarted = true;
+    const self = this;
+
+    const stream = new ReadableStream({
+      start(controller) {
+        self._streamController = controller;
+      },
+      pull() {
+        // Consumer is ready for more data — unblock any backpressured _write
+        if (self._drainCallback) {
+          const cb = self._drainCallback;
+          self._drainCallback = null;
+          cb();
+        }
+      },
+      cancel() {
+        self.destroy();
+      },
+    }, { highWaterMark: 65536, size(chunk) { return chunk.byteLength; } });
+
+    const url = this._buildUrl();
+    const headers = this._buildHeaders();
+    const method = (this._options.method || 'GET').toUpperCase();
+
+    _proxyFetch(url, {
+      method,
+      headers,
+      body: stream,
+      duplex: 'half',
+      signal: this._abortController.signal,
+      redirect: 'follow',
+    })
+      .then((response) => {
+        this._clearTimeoutTimer();
+        const msg = new IncomingMessage(response);
+        this.emit('response', msg);
+      })
+      .catch((err) => {
+        this._clearTimeoutTimer();
+        if (!this._destroyed) {
+          this.emit('error', err);
+        }
+      });
   }
 
   end(chunk, encoding, callback) {
@@ -352,88 +505,102 @@ class ClientRequest extends Writable {
       encoding = undefined;
     }
 
+    // Process final chunk directly (avoid going through Writable.write
+    // after we set ended state)
     if (chunk) {
-      this.write(chunk, encoding);
+      if (typeof chunk === 'string') {
+        chunk = _encoder.encode(chunk);
+      } else if (!(chunk instanceof Uint8Array)) {
+        chunk = new Uint8Array(chunk);
+      }
+
+      if (this._streamController) {
+        // Streaming mode: enqueue the final chunk
+        this._streamController.enqueue(chunk);
+      } else {
+        this._bodyChunks.push(chunk);
+        this._bodyLength += chunk.byteLength;
+      }
     }
 
     if (this._ended) return;
     this._ended = true;
 
+    // Update Writable state to prevent further writes
+    const wState = this._writableState;
+    wState.ended = true;
+    wState.finished = true;
+
     // Bug #7: end() callback fires when request is finished writing, not on response
-    // Fire callback and 'finish' event after body is sent, before waiting for response
-    const endCallback = callback;
-
-    // Build fetch URL
-    const opts = this._options;
-    const protocol = opts.protocol || 'http:';
-    const hostname = opts.hostname || opts.host || 'localhost';
-    const port = opts.port;
-    const path = opts.path || '/';
-    let url;
-
-    if (opts.href && (opts.href.startsWith('http://') || opts.href.startsWith('https://'))) {
-      url = opts.href;
-    } else {
-      const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : '';
-      url = `${protocol}//${hostname}${portSuffix}${path}`;
-    }
-
-    // Build body
-    let body = null;
-    const method = (opts.method || 'GET').toUpperCase();
-    const fetchExtra = {}; // extra fetch options (e.g., duplex)
-    if (this._bodyChunks.length > 0 && method !== 'GET' && method !== 'HEAD') {
-      if (this._bodyChunks.length === 1) {
-        // Single chunk — zero-copy, pass directly
-        body = this._bodyChunks[0];
-      } else {
-        // Multiple chunks — concatenate into one buffer
-        const totalLen = this._bodyChunks.reduce((s, c) => s + c.byteLength, 0);
-        const combined = new Uint8Array(totalLen);
-        let offset = 0;
-        for (const c of this._bodyChunks) {
-          combined.set(c, offset);
-          offset += c.byteLength;
-        }
-        body = combined;
-      }
-    }
-
-    // Build headers (exclude content-length — fetch handles it)
-    const headers = {};
-    for (const [lk, val] of Object.entries(this._reqHeaders)) {
-      if (lk === 'content-length') continue;
-      headers[lk] = String(val);
-    }
-
-    // Fire 'finish' and end callback NOW (body is ready to send)
-    if (endCallback) endCallback();
+    if (callback) callback();
     this.emit('finish');
 
-    // Fire fetch
-    const fetchOpts = {
-      method,
-      headers,
-      signal: this._abortController.signal,
-      redirect: 'follow',
-      ...fetchExtra,
-    };
-    if (body) fetchOpts.body = body;
+    if (this._fetchStarted) {
+      // Streaming mode: close the upload stream to signal body completion
+      if (this._streamController) {
+        this._streamController.close();
+      }
+    } else {
+      // Buffered mode: build body and fire fetch
+      const method = (this._options.method || 'GET').toUpperCase();
+      let body = null;
+      const fetchExtra = {};
 
-    _proxyFetch(url, fetchOpts)
-      .then((response) => {
-        // Bug #3: Clear timeout timer on successful response
-        this._clearTimeoutTimer();
-        const msg = new IncomingMessage(response);
-        this.emit('response', msg);
-      })
-      .catch((err) => {
-        // Bug #3: Clear timeout timer on error too
-        this._clearTimeoutTimer();
-        if (!this._destroyed) {
-          this.emit('error', err);
+      if (this._bodyChunks.length > 0 && method !== 'GET' && method !== 'HEAD') {
+        if (this._bodyChunks.length === 1) {
+          // Single chunk — zero-copy, pass directly
+          body = this._bodyChunks[0];
+        } else if (_canStreamUpload()) {
+          // Multiple chunks + streaming supported — yield chunks via ReadableStream
+          // to avoid concatenation copy
+          const chunks = this._bodyChunks;
+          body = new ReadableStream({
+            start(controller) {
+              for (const c of chunks) controller.enqueue(c);
+              controller.close();
+            },
+          });
+          fetchExtra.duplex = 'half';
+        } else {
+          // Fallback: concatenate into one buffer
+          const totalLen = this._bodyChunks.reduce((s, c) => s + c.byteLength, 0);
+          const combined = new Uint8Array(totalLen);
+          let offset = 0;
+          for (const c of this._bodyChunks) {
+            combined.set(c, offset);
+            offset += c.byteLength;
+          }
+          body = combined;
         }
-      });
+      }
+
+      const url = this._buildUrl();
+      const headers = this._buildHeaders();
+
+      const fetchOpts = {
+        method,
+        headers,
+        signal: this._abortController.signal,
+        redirect: 'follow',
+        ...fetchExtra,
+      };
+      if (body) fetchOpts.body = body;
+
+      _proxyFetch(url, fetchOpts)
+        .then((response) => {
+          // Bug #3: Clear timeout timer on successful response
+          this._clearTimeoutTimer();
+          const msg = new IncomingMessage(response);
+          this.emit('response', msg);
+        })
+        .catch((err) => {
+          // Bug #3: Clear timeout timer on error too
+          this._clearTimeoutTimer();
+          if (!this._destroyed) {
+            this.emit('error', err);
+          }
+        });
+    }
   }
 
   abort() {

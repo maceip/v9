@@ -34,12 +34,15 @@ export class EnvHttpProxyAgent extends Agent {
   }
 }
 
+let _globalDispatcher = null;
+
 export function setGlobalDispatcher(agent) {
-  // No-op in browser
+  _globalDispatcher = agent;
 }
 
 export function getGlobalDispatcher() {
-  return new Agent();
+  if (!_globalDispatcher) _globalDispatcher = new Agent();
+  return _globalDispatcher;
 }
 
 // ─── fetch / Request / Response pass-through ────────────────────────
