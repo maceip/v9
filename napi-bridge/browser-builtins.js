@@ -1124,13 +1124,41 @@ class Buffer extends Uint8Array {
     return offset + 2;
   }
 
-  writeUInt32BE(value, offset) {
-    this[offset] = (value >>> 24) & 0xff;
-    this[offset + 1] = (value >>> 16) & 0xff;
-    this[offset + 2] = (value >>> 8) & 0xff;
-    this[offset + 3] = value & 0xff;
-    return offset + 4;
-  }
+  writeUInt16LE(value, offset) { this[offset] = value & 0xff; this[offset+1] = (value>>>8) & 0xff; return offset+2; }
+  writeUInt32BE(value, offset) { this[offset]=(value>>>24)&0xff; this[offset+1]=(value>>>16)&0xff; this[offset+2]=(value>>>8)&0xff; this[offset+3]=value&0xff; return offset+4; }
+  writeUInt32LE(value, offset) { this[offset]=value&0xff; this[offset+1]=(value>>>8)&0xff; this[offset+2]=(value>>>16)&0xff; this[offset+3]=(value>>>24)&0xff; return offset+4; }
+  writeInt8(value, offset) { if(value<0) value=0xff+value+1; this[offset]=value&0xff; return offset+1; }
+  writeInt16BE(value, offset) { if(value<0) value=0xffff+value+1; return this.writeUInt16BE(value,offset); }
+  writeInt16LE(value, offset) { if(value<0) value=0xffff+value+1; return this.writeUInt16LE(value,offset); }
+  writeInt32BE(value, offset) { if(value<0) value=0xffffffff+value+1; return this.writeUInt32BE(value,offset); }
+  writeInt32LE(value, offset) { if(value<0) value=0xffffffff+value+1; return this.writeUInt32LE(value,offset); }
+  writeFloatBE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setFloat32(offset,value,false); return offset+4; }
+  writeFloatLE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setFloat32(offset,value,true); return offset+4; }
+  writeDoubleBE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setFloat64(offset,value,false); return offset+8; }
+  writeDoubleLE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setFloat64(offset,value,true); return offset+8; }
+  writeBigInt64BE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setBigInt64(offset,value,false); return offset+8; }
+  writeBigInt64LE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setBigInt64(offset,value,true); return offset+8; }
+  writeBigUInt64BE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setBigUint64(offset,value,false); return offset+8; }
+  writeBigUInt64LE(value, offset) { const v=new DataView(this.buffer,this.byteOffset,this.byteLength); v.setBigUint64(offset,value,true); return offset+8; }
+  readFloatBE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getFloat32(offset,false); }
+  readFloatLE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getFloat32(offset,true); }
+  readDoubleBE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getFloat64(offset,false); }
+  readDoubleLE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getFloat64(offset,true); }
+  readBigInt64BE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getBigInt64(offset,false); }
+  readBigInt64LE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getBigInt64(offset,true); }
+  readBigUInt64BE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getBigUint64(offset,false); }
+  readBigUInt64LE(offset) { return new DataView(this.buffer,this.byteOffset,this.byteLength).getBigUint64(offset,true); }
+  readIntBE(offset, byteLength) { let v=0; for(let i=0;i<byteLength;i++) v=(v*256)+this[offset+i]; if(v>=(1<<(8*byteLength-1))) v-=(1<<(8*byteLength)); return v; }
+  readIntLE(offset, byteLength) { let v=0; for(let i=byteLength-1;i>=0;i--) v=(v*256)+this[offset+i]; if(v>=(1<<(8*byteLength-1))) v-=(1<<(8*byteLength)); return v; }
+  readUIntBE(offset, byteLength) { let v=0; for(let i=0;i<byteLength;i++) v=(v*256)+this[offset+i]; return v; }
+  readUIntLE(offset, byteLength) { let v=0; for(let i=byteLength-1;i>=0;i--) v=(v*256)+this[offset+i]; return v; }
+  writeIntBE(value, offset, byteLength) { for(let i=byteLength-1;i>=0;i--) { this[offset+i]=value&0xff; value>>=8; } return offset+byteLength; }
+  writeIntLE(value, offset, byteLength) { for(let i=0;i<byteLength;i++) { this[offset+i]=value&0xff; value>>=8; } return offset+byteLength; }
+  writeUIntBE(value, offset, byteLength) { return this.writeIntBE(value,offset,byteLength); }
+  writeUIntLE(value, offset, byteLength) { return this.writeIntLE(value,offset,byteLength); }
+  swap16() { for(let i=0;i<this.length;i+=2) { const t=this[i]; this[i]=this[i+1]; this[i+1]=t; } return this; }
+  swap32() { for(let i=0;i<this.length;i+=4) { let t=this[i]; this[i]=this[i+3]; this[i+3]=t; t=this[i+1]; this[i+1]=this[i+2]; this[i+2]=t; } return this; }
+  swap64() { for(let i=0;i<this.length;i+=8) { for(let j=0;j<4;j++) { const t=this[i+j]; this[i+j]=this[i+7-j]; this[i+7-j]=t; } } return this; }
 
   toJSON() {
     return { type: 'Buffer', data: Array.from(this) };
@@ -1173,7 +1201,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     // Each module exposes named exports AND a `default` for ESM interop.
     // `const { createHash } = require('crypto')` and
     // `import { createHash } from 'node:crypto'` both work.
-    'crypto': { ...cryptoBridge, default: cryptoBridge },
+    'crypto': { ...cryptoBridge, default: cryptoBridge, Hash: class Hash { constructor() {} update() { return this; } digest() { return Buffer.alloc(0); } copy() { return new Hash(); } }, Hmac: class Hmac { constructor() {} update() { return this; } digest() { return Buffer.alloc(0); } }, Cipher: class Cipher extends Transform { constructor() { super(); } update() { return Buffer.alloc(0); } final() { return Buffer.alloc(0); } }, Cipheriv: class {}, Decipher: class Decipher extends Transform { constructor() { super(); } update() { return Buffer.alloc(0); } final() { return Buffer.alloc(0); } }, Decipheriv: class {}, Sign: class { constructor() {} update() { return this; } sign() { return Buffer.alloc(0); } }, Verify: class { constructor() {} update() { return this; } verify() { return false; } }, DiffieHellman: class {}, ECDH: class {}, KeyObject: class {}, X509Certificate: class {}, createPrivateKey: () => { throw new Error('createPrivateKey not in browser'); }, createPublicKey: () => { throw new Error('createPublicKey not in browser'); }, createSecretKey: () => { throw new Error('createSecretKey not in browser'); }, createSign: () => new (class { update() { return this; } sign() { return Buffer.alloc(0); } })(), createVerify: () => new (class { update() { return this; } verify() { return false; } })(), createCipheriv: () => { throw new Error('createCipheriv not in browser'); }, createDecipheriv: () => { throw new Error('createDecipheriv not in browser'); }, createDiffieHellman: () => { throw new Error('not in browser'); }, createECDH: () => { throw new Error('not in browser'); }, pbkdf2: () => { throw new Error('not in browser'); }, pbkdf2Sync: () => { throw new Error('not in browser'); }, scrypt: () => { throw new Error('not in browser'); }, scryptSync: () => { throw new Error('not in browser'); }, generateKeyPairSync: () => { throw new Error('not in browser'); }, generateKeyPair: () => { throw new Error('not in browser'); } },
     'events': Object.assign(EventEmitter, { EventEmitter, default: EventEmitter, setMaxListeners: EventEmitter.setMaxListeners || (() => {}) }),
     'stream': Object.assign(Readable, { Stream: Readable, Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, default: Readable }),
     'path': { ...pathBridge, default: pathBridge },
@@ -1196,7 +1224,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'tty': ttyModule,
     'readline': readlineModule,
     'readline/promises': readlinePromises,
-    'zlib': zlibModule,
+    'zlib': { ...zlibModule, DeflateRaw: class DeflateRaw extends Transform { constructor(o) { super(o); } }, InflateRaw: class InflateRaw extends Transform { constructor(o) { super(o); } }, Gzip: class Gzip extends Transform { constructor(o) { super(o); } }, Gunzip: class Gunzip extends Transform { constructor(o) { super(o); } }, Deflate: class Deflate extends Transform { constructor(o) { super(o); } }, Inflate: class Inflate extends Transform { constructor(o) { super(o); } }, Unzip: class Unzip extends Transform { constructor(o) { super(o); } }, BrotliCompress: class BrotliCompress extends Transform { constructor(o) { super(o); } }, BrotliDecompress: class BrotliDecompress extends Transform { constructor(o) { super(o); } } },
     'async_hooks': asyncHooksModule,
     'module': moduleShim,
     'timers': timersModule,
