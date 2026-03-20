@@ -42,6 +42,9 @@ async function main() {
       [
         "#!/usr/bin/env node",
         "const { join } = require('path');",
+        "const builtinName = 'path';",
+        "console.log(require(builtinName));",
+        "console.log(eval('2 + 2'));",
         'if (process.browser) console.log("browser-mode");',
         'if (process.env.NODE_ENV !== "production") console.log("dev-only-parsec-marker");',
         'if (!process.env.BROWSER) console.log("non-browser-parsec-marker");',
@@ -61,6 +64,16 @@ async function main() {
     assert(rewritten.includes("require('node:path')"), 'rewrite should normalize require specifier to node:path');
     assert(!rewritten.startsWith('#!'), 'rewrite should strip shebang');
     assert(rewritten.includes('if (true)'), 'rewrite should replace process.browser checks');
+    assert(metadata.stage1.analysis.hardHardSignals.dynamicRequire.count >= 1,
+      'analysis should detect dynamic require signals');
+    assert(metadata.stage1.analysis.hardHardSignals.directEval.count >= 1,
+      'analysis should detect direct eval signals');
+    assert(metadata.stage1.analysis.easyHardReadiness.ready === false,
+      'easy-hard readiness should be false when hard-hard signals are present');
+    assert(metadata.stage1.analysis.easyHardReadiness.blockers.includes('dynamic-require'),
+      'easy-hard blockers should include dynamic-require');
+    assert(metadata.stage1.analysis.easyHardReadiness.blockers.includes('direct-eval'),
+      'easy-hard blockers should include direct-eval');
     const bundle = await readFile(metadata.stage1.bundle.outputFile, 'utf8');
     assert(!bundle.includes('dev-only-parsec-marker'),
       'bundle should fold NODE_ENV define and eliminate dev-only branches');
@@ -72,6 +85,15 @@ async function main() {
       ...Object.values(metadata.stage1.bundle.metafile?.outputs || {}).map((entry) => entry?.bytes || 0),
     );
     assert(outputBytes > 0, 'optimized blob should report output byte size');
+    assert(existsSync(metadata.stage1.loadPlanFile), 'parsec load plan should be written');
+    const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
+    assert(loadPlan.runtime === 'edgejs-browser', 'load plan should target edgejs browser runtime');
+    assert(loadPlan.analysis.easyHardReadiness.ready === false,
+      'load plan should include readiness status');
+    assert(loadPlan.analysis.hardHardSignals.dynamicRequire.count >= 1,
+      'load plan should include hard-hard dynamic require signals');
+    assert(typeof loadPlan.load.importStatement === 'string' && loadPlan.load.importStatement.includes('app.optimized.js'),
+      'load plan should include import statement for optimized bundle');
   });
 
   await test('zip input is unpacked and bundled', async () => {
