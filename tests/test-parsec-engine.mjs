@@ -74,6 +74,8 @@ async function main() {
       'easy-hard blockers should include dynamic-require');
     assert(metadata.stage1.analysis.easyHardReadiness.blockers.includes('direct-eval'),
       'easy-hard blockers should include direct-eval');
+    assert(metadata.stage1.analysis.problematicNodeBuiltinsUsed.length === 0,
+      'baseline app should not mark problematic node builtins');
     const bundle = await readFile(metadata.stage1.bundle.outputFile, 'utf8');
     assert(!bundle.includes('dev-only-parsec-marker'),
       'bundle should fold NODE_ENV define and eliminate dev-only branches');
@@ -88,12 +90,73 @@ async function main() {
     assert(existsSync(metadata.stage1.loadPlanFile), 'parsec load plan should be written');
     const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
     assert(loadPlan.runtime === 'edgejs-browser', 'load plan should target edgejs browser runtime');
+    assert(loadPlan.backend.target === 'edgejs-browser', 'load plan should include backend target');
+    assert(loadPlan.packageStrategy === 'single', 'default package strategy should be single');
+    assert(typeof loadPlan.cacheKey === 'string' && loadPlan.cacheKey.length > 10,
+      'load plan should include cache key');
+    assert(existsSync(metadata.stage1.cacheKeyFile), 'cache key file should be written');
+    assert(existsSync(metadata.stage1.packageManifestFile), 'package manifest should be written');
+    const packageManifest = JSON.parse(await readFile(metadata.stage1.packageManifestFile, 'utf8'));
+    assert(Array.isArray(packageManifest.files) && packageManifest.files.length >= 1,
+      'package manifest should include emitted files');
     assert(loadPlan.analysis.easyHardReadiness.ready === false,
       'load plan should include readiness status');
     assert(loadPlan.analysis.hardHardSignals.dynamicRequire.count >= 1,
       'load plan should include hard-hard dynamic require signals');
     assert(typeof loadPlan.load.importStatement === 'string' && loadPlan.load.importStatement.includes('app.optimized.js'),
       'load plan should include import statement for optimized bundle');
+  });
+
+  await test('problematic builtin pruning + split packaging + wali backend metadata', async () => {
+    const appDir = path.join(sandbox, 'raw-app-prune');
+    await mkdir(path.join(appDir, 'src'), { recursive: true });
+    await writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: 'src/index.js' }), 'utf8');
+    await writeFile(
+      path.join(appDir, 'src/index.js'),
+      [
+        "import { spawn } from 'node:child_process';",
+        "import { connect } from 'net';",
+        'export function runDanger() {',
+        "  spawn('echo', ['hello']);",
+        "  return connect({ host: 'localhost', port: 3000 });",
+        '}',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const metadata = await engine.run(
+      { type: 'raw-js', input: appDir },
+      {
+        outputDir: path.join(outputRoot, 'raw-pruned'),
+        backendTarget: 'wali-edge-remote',
+        packageStrategy: 'split',
+        pruneProblematicBuiltins: true,
+      },
+    );
+
+    assert(metadata.stage1.packageStrategy === 'split', 'stage1 should capture split package strategy');
+    assert(metadata.stage1.backendTarget === 'wali-edge-remote', 'stage1 should capture wali backend target');
+    assert(metadata.stage1.analysis.problematicNodeBuiltinsUsed.includes('child_process'),
+      'analysis should detect problematic child_process builtin');
+    assert(metadata.stage1.analysis.problematicNodeBuiltinsUsed.includes('net'),
+      'analysis should detect problematic net builtin');
+    assert(metadata.stage1.rewrite.problematicBuiltinsRewritten.includes('child_process'),
+      'rewrite should track pruned child_process');
+    assert(metadata.stage1.rewrite.problematicBuiltinsRewritten.includes('net'),
+      'rewrite should track pruned net');
+    assert((metadata.stage1.bundle.outputFiles || []).length >= 1,
+      'split packaging should emit output files');
+    assert(metadata.stage1.bundle.outputDir.includes('/bundle'),
+      'split packaging should write to bundle directory');
+    const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
+    assert(loadPlan.backend.target === 'wali-edge-remote', 'load plan should preserve wali backend target');
+    assert(loadPlan.backend.execution.mode === 'remote-node',
+      'load plan should encode remote execution mode');
+    assert(loadPlan.packageStrategy === 'split', 'load plan should preserve split package strategy');
+    assert(loadPlan.analysis.problematicNodeBuiltinsUsed.includes('child_process'),
+      'load plan should include problematic builtin analysis');
+    assert(Array.isArray(loadPlan.bundle.outputFiles) && loadPlan.bundle.outputFiles.length >= 1,
+      'load plan should include split output file list');
   });
 
   await test('zip input is unpacked and bundled', async () => {

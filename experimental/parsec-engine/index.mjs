@@ -2,14 +2,14 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { execFile as _execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { unzipSync } from 'fflate';
 import esbuild from 'esbuild';
-import { NODE_API_SURFACE_MODULES } from '../../napi-bridge/node-api-surface.generated.js';
+import { NODE_API_SURFACE_EXPORTS, NODE_API_SURFACE_MODULES } from '../../napi-bridge/node-api-surface.generated.js';
 
 const execFile = promisify(_execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +23,20 @@ const EASY_HARD_REWRITE_PROFILE = {
   normalizeBuiltinSpecifiers: true,
   stripShebang: true,
   rewriteProcessBrowser: true,
+  pruneProblematicBuiltins: false,
 };
+const BACKEND_TARGETS = new Set(['edgejs-browser', 'wali-edge-remote']);
+const PACKAGE_STRATEGIES = new Set(['single', 'split']);
+const DEFAULT_PROBLEMATIC_BUILTINS = [
+  'child_process',
+  'worker_threads',
+  'cluster',
+  'net',
+  'tls',
+  'dgram',
+  'dns',
+];
+const DEFAULT_PROBLEMATIC_BUILTIN_SET = new Set(DEFAULT_PROBLEMATIC_BUILTINS);
 const HARD_HARD_SIGNAL_PATTERNS = [
   { id: 'directEval', regex: /\beval\s*\(/g },
   { id: 'newFunction', regex: /\bnew\s+Function\s*\(/g },
@@ -46,6 +59,27 @@ function normalizeBuiltinSpecifier(specifier) {
   return `node:${clean}`;
 }
 
+function canonicalizeBuiltinSpecifier(specifier) {
+  return specifier.startsWith('node:') ? specifier.slice(5) : specifier;
+}
+
+function toProblematicVirtualSpecifier(moduleName) {
+  return `@parsec/problematic/${encodeURIComponent(moduleName)}`;
+}
+
+function fromProblematicVirtualSpecifier(specifier) {
+  if (!specifier.startsWith('@parsec/problematic/')) return null;
+  return decodeURIComponent(specifier.slice('@parsec/problematic/'.length));
+}
+
+function resolveBuildOutputPath(filePath, outDir) {
+  if (!filePath) return null;
+  if (path.isAbsolute(filePath)) return filePath;
+  const fromOutDir = path.join(outDir, filePath);
+  if (existsSync(fromOutDir)) return fromOutDir;
+  return path.resolve(filePath);
+}
+
 function applySpecifierRewrite(source, regex, operationName, operations, profile) {
   return source.replace(regex, (full, prefix, specifier, suffix) => {
     if (!profile.normalizeBuiltinSpecifiers) return full;
@@ -57,6 +91,23 @@ function applySpecifierRewrite(source, regex, operationName, operations, profile
       to: normalized,
     });
     return `${prefix}${normalized}${suffix}`;
+  });
+}
+
+function applyProblematicBuiltinRewrite(source, regex, operationName, operations, profile) {
+  if (!profile.pruneProblematicBuiltins || !profile.problematicBuiltins) return source;
+  return source.replace(regex, (full, prefix, specifier, suffix) => {
+    const canonical = canonicalizeBuiltinSpecifier(specifier);
+    if (!profile.problematicBuiltins.has(canonical)) return full;
+    const target = toProblematicVirtualSpecifier(canonical);
+    operations.push({
+      op: operationName,
+      from: specifier,
+      to: target,
+      builtin: canonical,
+      reason: 'problematic-builtin-pruned',
+    });
+    return `${prefix}${target}${suffix}`;
   });
 }
 
@@ -95,6 +146,34 @@ function rewriteJavaScriptSource(source, relativePath, profile = EASY_HARD_REWRI
     rewritten,
     /(\brequire\(\s*['"])([^'"]+)(['"]\s*\))/g,
     'rewrite-require-specifier',
+    operations,
+    profile,
+  );
+  rewritten = applyProblematicBuiltinRewrite(
+    rewritten,
+    /(\bimport\s+(?:[^'"`]*?\s+from\s*)?['"])([^'"]+)(['"])/g,
+    'rewrite-problematic-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applyProblematicBuiltinRewrite(
+    rewritten,
+    /(\bexport\s+(?:\*|\{[^}]*\})\s+from\s*['"])([^'"]+)(['"])/g,
+    'rewrite-problematic-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applyProblematicBuiltinRewrite(
+    rewritten,
+    /(\bimport\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-problematic-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applyProblematicBuiltinRewrite(
+    rewritten,
+    /(\brequire\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-problematic-builtin',
     operations,
     profile,
   );
@@ -239,6 +318,9 @@ async function analyzeSourceTree(sourceDir) {
     .map((specifier) => specifier.startsWith('node:') ? specifier.slice(5) : specifier)
     .filter((specifier) => NODE_API_SURFACE_MODULES.includes(specifier))
     .sort();
+  const problematicNodeBuiltinsUsed = nodeBuiltinsUsed
+    .filter((specifier) => DEFAULT_PROBLEMATIC_BUILTIN_SET.has(specifier))
+    .sort();
   const externalPackagesUsed = [...imports]
     .filter((specifier) => !specifier.startsWith('.') && !specifier.startsWith('/') && !specifier.startsWith('node:'))
     .sort();
@@ -247,24 +329,40 @@ async function analyzeSourceTree(sourceDir) {
   if (hardHardSignals.newFunction.count > 0) blockers.push('new-function');
   if (hardHardSignals.dynamicRequire.count > 0) blockers.push('dynamic-require');
   if (nativeAddonSignals.size > 0) blockers.push('native-addons');
+  if (problematicNodeBuiltinsUsed.length > 0) blockers.push('problematic-node-builtins');
   const readinessPenalty = Math.min(30, hardHardSignals.directEval.count * 10)
     + Math.min(20, hardHardSignals.newFunction.count * 10)
     + Math.min(24, hardHardSignals.dynamicRequire.count * 8)
-    + Math.min(40, nativeAddonSignals.size * 20);
+    + Math.min(40, nativeAddonSignals.size * 20)
+    + Math.min(28, problematicNodeBuiltinsUsed.length * 7);
   const easyHardReadiness = {
     ready: blockers.length === 0,
     score: Math.max(0, 100 - readinessPenalty),
     blockers,
+  };
+  const backendPlan = {
+    edgejsBrowser: {
+      recommended: problematicNodeBuiltinsUsed.length === 0,
+      notes: problematicNodeBuiltinsUsed.length
+        ? 'Enable pruneProblematicBuiltins or target wali-edge-remote.'
+        : 'Direct browser EdgeJS execution is a good fit.',
+    },
+    waliEdgeRemote: {
+      recommended: problematicNodeBuiltinsUsed.length > 0 || nativeAddonSignals.size > 0,
+      notes: 'Remote backend can preserve process/native-heavy Node semantics.',
+    },
   };
 
   return {
     fileCount: files.length,
     extensionHistogram: extensions,
     nodeBuiltinsUsed,
+    problematicNodeBuiltinsUsed,
     externalPackagesUsed,
     nativeAddonSignals: [...nativeAddonSignals].sort(),
     hardHardSignals,
     easyHardReadiness,
+    backendPlan,
   };
 }
 
@@ -341,6 +439,7 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
   const files = await listFilesRecursive(sourceDir);
   const changedFiles = [];
   const opHistogram = {};
+  const problematicBuiltinsRewritten = new Set();
   let jsFileCount = 0;
 
   for (const fullPath of files) {
@@ -366,6 +465,9 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
       });
       for (const operation of rewriteResult.operations) {
         opHistogram[operation.op] = (opHistogram[operation.op] || 0) + 1;
+        if (operation.op === 'rewrite-problematic-builtin' && operation.builtin) {
+          problematicBuiltinsRewritten.add(operation.builtin);
+        }
       }
     }
   }
@@ -377,6 +479,7 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
     changedFileCount: changedFiles.length,
     changedFiles,
     operationHistogram: opHistogram,
+    problematicBuiltinsRewritten: [...problematicBuiltinsRewritten].sort(),
   };
 }
 
@@ -390,12 +493,58 @@ function getBundleBanner() {
   ].join('\n');
 }
 
-async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
+function createProblematicBuiltinPlugin({ backendTarget, problematicBuiltinModules }) {
+  const problematicSet = new Set(problematicBuiltinModules || []);
+  if (problematicSet.size === 0) return null;
+
+  return {
+    name: 'parsec-problematic-builtins',
+    setup(build) {
+      build.onResolve({ filter: /^@parsec\/problematic\// }, (args) => {
+        const moduleName = fromProblematicVirtualSpecifier(args.path);
+        if (!moduleName) return null;
+        return {
+          path: moduleName,
+          namespace: 'parsec-problematic',
+        };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: 'parsec-problematic' }, (args) => {
+        if (!problematicSet.has(args.path)) return null;
+        const available = (NODE_API_SURFACE_EXPORTS[args.path] || [])
+          .filter((name) => name !== 'default' && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name));
+        const lines = [
+          `const __parsecModuleName = ${JSON.stringify(args.path)};`,
+          `const __parsecBackendTarget = ${JSON.stringify(backendTarget)};`,
+          'function __parsecPrunedBuiltin(..._args) {',
+          "  const err = new Error(`Parsec pruned builtin ${__parsecModuleName} for backend ${__parsecBackendTarget}.`);",
+          "  err.code = 'ERR_PARSEC_PRUNED_BUILTIN';",
+          '  throw err;',
+          '}',
+          'const __defaultProxy = new Proxy({}, {',
+          '  get() { return __parsecPrunedBuiltin; },',
+          '});',
+          ...available.map((name) => `export const ${name} = __parsecPrunedBuiltin;`),
+          'export default __defaultProxy;',
+          '',
+        ];
+        return { contents: lines.join('\n'), loader: 'js' };
+      });
+    },
+  };
+}
+
+async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed, options = {}) {
+  const packageStrategy = options.packageStrategy || 'single';
+  const backendTarget = options.backendTarget || 'edgejs-browser';
+  const problematicBuiltinModules = options.problematicBuiltinModules || [];
+
   await ensureDir(outDir);
   const outFile = path.join(outDir, 'app.optimized.js');
-  const result = await esbuild.build({
+  const splitOutDir = path.join(outDir, 'bundle');
+  const problematicPlugin = createProblematicBuiltinPlugin({ backendTarget, problematicBuiltinModules });
+  const sharedOptions = {
     entryPoints: [entryPath],
-    outfile: outFile,
     bundle: true,
     format: 'esm',
     minify: true,
@@ -411,6 +560,7 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
       'process.env.NODE_ENV': JSON.stringify('production'),
       'process.env.BROWSER': 'true',
       __PARSEC_RUNTIME__: 'true',
+      __PARSEC_BACKEND_TARGET__: JSON.stringify(backendTarget),
     },
     mainFields: ['browser', 'module', 'main'],
     conditions: ['browser', 'module'],
@@ -420,39 +570,153 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
     treeShaking: true,
     keepNames: false,
     write: true,
-  });
-  const outputStats = result.metafile?.outputs?.[outFile] || null;
+    plugins: problematicPlugin ? [problematicPlugin] : [],
+  };
+  const buildOptions = packageStrategy === 'split'
+    ? {
+      ...sharedOptions,
+      outdir: splitOutDir,
+      splitting: true,
+      entryNames: 'entry-[name]-[hash]',
+      chunkNames: 'chunk-[name]-[hash]',
+      assetNames: 'asset-[name]-[hash]',
+    }
+    : {
+      ...sharedOptions,
+      outfile: outFile,
+      splitting: false,
+    };
+  const result = await esbuild.build(buildOptions);
+  const outputEntries = Object.entries(result.metafile?.outputs || {});
+  const outputFiles = outputEntries
+    .map(([filePath]) => resolveBuildOutputPath(filePath, outDir))
+    .filter(Boolean)
+    .sort();
+  const outputStats = outputEntries.find(([filePath]) =>
+    resolveBuildOutputPath(filePath, outDir) === outFile)?.[1] || null;
+  const splitEntry = packageStrategy === 'split'
+    ? (outputEntries.find(([, metadata]) => metadata?.entryPoint)?.[0] || null)
+    : null;
+  const entryOutputPath = packageStrategy === 'split'
+    ? (resolveBuildOutputPath(splitEntry, outDir) || outputFiles[0] || null)
+    : outFile;
+  const entryMapPath = entryOutputPath ? `${entryOutputPath}.map` : null;
+  const chunkFiles = outputEntries
+    .map(([filePath, metadata]) => ({ filePath, metadata }))
+    .filter(({ filePath, metadata }) => filePath.endsWith('.js') && !metadata?.entryPoint)
+    .map(({ filePath }) => resolveBuildOutputPath(filePath, outDir))
+    .filter(Boolean)
+    .sort();
+
   return {
-    outputFile: outFile,
-    outputMapFile: `${outFile}.map`,
+    outputFile: entryOutputPath,
+    outputMapFile: entryMapPath,
+    outputDir: packageStrategy === 'split' ? splitOutDir : outDir,
+    packageStrategy,
+    outputFiles,
+    chunkFiles,
     metafile: result.metafile || null,
-    bytes: outputStats?.bytes || null,
+    bytes: outputStats?.bytes
+      || (entryOutputPath
+        ? (outputEntries.find(([filePath]) =>
+          resolveBuildOutputPath(filePath, outDir) === entryOutputPath)?.[1]?.bytes || null)
+        : null),
   };
 }
 
+async function buildPackageManifest(bundleResult, outputDir) {
+  const files = [];
+  const candidates = new Set(bundleResult.outputFiles || []);
+  if (bundleResult.outputFile) candidates.add(bundleResult.outputFile);
+  if (bundleResult.outputMapFile) candidates.add(bundleResult.outputMapFile);
+  for (const absolutePath of candidates) {
+    if (!absolutePath || !existsSync(absolutePath)) continue;
+    const raw = await readFile(absolutePath);
+    files.push({
+      file: toPosix(path.relative(outputDir, absolutePath)),
+      bytes: raw.byteLength,
+      sha256: createHash('sha256').update(raw).digest('hex'),
+      immutable: /-[a-f0-9]{8,}\./.test(path.basename(absolutePath)),
+    });
+  }
+  files.sort((a, b) => a.file.localeCompare(b.file));
+  const manifest = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    files,
+  };
+  const manifestFile = path.join(outputDir, 'parsec-package-manifest.json');
+  await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  return { manifest, manifestFile };
+}
+
+function buildParsecCacheKey(stage1Result, options = {}) {
+  const payload = {
+    backendTarget: options.backendTarget || 'edgejs-browser',
+    packageStrategy: options.packageStrategy || 'single',
+    pruneProblematicBuiltins: Boolean(options.pruneProblematicBuiltins),
+    entry: toPosix(path.relative(stage1Result.preparedDir, stage1Result.preparedEntryPath)),
+    nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
+    problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis.problematicNodeBuiltinsUsed || [],
+    operationHistogram: stage1Result.rewrite.operationHistogram || {},
+    easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || {},
+  };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
 function createLoadPlan(outputDir, stage1Result) {
-  const bundleFile = toPosix(path.relative(outputDir, stage1Result.bundle.outputFile));
-  const bundleMapFile = toPosix(path.relative(outputDir, stage1Result.bundle.outputMapFile));
+  const bundleFile = stage1Result.bundle.outputFile
+    ? toPosix(path.relative(outputDir, stage1Result.bundle.outputFile))
+    : null;
+  const bundleMapFile = stage1Result.bundle.outputMapFile
+    ? toPosix(path.relative(outputDir, stage1Result.bundle.outputMapFile))
+    : null;
+  const backendTarget = stage1Result.backendTarget || 'edgejs-browser';
+  const execution = backendTarget === 'wali-edge-remote'
+    ? {
+      mode: 'remote-node',
+      remoteEntrypoint: '/edge/wali/execute',
+      notes: 'Run Node execution on remote Wali backend; browser receives streamed IO.',
+    }
+    : {
+      mode: 'browser-edgejs',
+      wasmRuntime: 'edgejs',
+      notes: 'Run bundle directly inside browser EdgeJS runtime.',
+    };
+
   return {
     schemaVersion: 1,
     runtime: 'edgejs-browser',
     profile: stage1Result.rewrite.profile,
+    backend: {
+      target: backendTarget,
+      execution,
+    },
+    packageStrategy: stage1Result.bundle.packageStrategy || 'single',
     entry: toPosix(path.relative(stage1Result.preparedDir, stage1Result.preparedEntryPath)),
     bundle: {
       file: bundleFile,
       sourceMap: bundleMapFile,
       bytes: stage1Result.bundle.bytes,
+      outputFiles: (stage1Result.bundle.outputFiles || [])
+        .map((filePath) => toPosix(path.relative(outputDir, filePath))),
     },
     analysis: {
       nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
       externalPackagesUsed: stage1Result.preparedAnalysis.externalPackagesUsed || [],
+      problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis.problematicNodeBuiltinsUsed || [],
       easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || { ready: true, score: 100, blockers: [] },
       hardHardSignals: stage1Result.preparedAnalysis.hardHardSignals || {},
+      backendPlan: stage1Result.preparedAnalysis.backendPlan || {},
     },
     load: {
       type: 'esm',
-      importStatement: `import './${bundleFile}';`,
+      importStatement: bundleFile ? `import './${bundleFile}';` : null,
     },
+    packageManifest: stage1Result.packageManifestFile
+      ? toPosix(path.relative(outputDir, stage1Result.packageManifestFile))
+      : null,
+    cacheKey: stage1Result.cacheKey || null,
   };
 }
 
@@ -563,6 +827,17 @@ export class ParsecEngine {
       throw new Error('inputSpec is required and must be an object');
     }
 
+    const backendTarget = options.backendTarget || 'edgejs-browser';
+    if (!BACKEND_TARGETS.has(backendTarget)) {
+      throw new Error(`Unsupported backend target: ${backendTarget}`);
+    }
+    const packageStrategy = options.packageStrategy || 'single';
+    if (!PACKAGE_STRATEGIES.has(packageStrategy)) {
+      throw new Error(`Unsupported package strategy: ${packageStrategy}`);
+    }
+    const pruneProblematicBuiltins = Boolean(options.pruneProblematicBuiltins);
+    const problematicBuiltins = new Set(options.problematicBuiltins || DEFAULT_PROBLEMATIC_BUILTINS);
+
     const jobId = inputSpec.jobId || randomUUID();
     const jobRoot = path.join(this.stageRoot, jobId);
     const sourceDir = path.join(jobRoot, 'source');
@@ -582,10 +857,20 @@ export class ParsecEngine {
       throw new Error('No JS/TS entry point found during stage 1 preparation.');
     }
 
-    const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir);
+    const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir, {
+      ...EASY_HARD_REWRITE_PROFILE,
+      pruneProblematicBuiltins,
+      problematicBuiltins,
+    });
     const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
     const preparedAnalysis = await analyzeSourceTree(preparedDir);
-    const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || []);
+    const problematicBuiltinModules = rewriteResult.problematicBuiltinsRewritten || [];
+    const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || [], {
+      packageStrategy,
+      backendTarget,
+      problematicBuiltinModules,
+    });
+    const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(bundleResult, outputDir);
     const stage1Result = {
       sourceDir,
       preparedDir,
@@ -595,7 +880,20 @@ export class ParsecEngine {
       preparedAnalysis,
       rewrite: rewriteResult,
       bundle: bundleResult,
+      backendTarget,
+      packageStrategy,
+      pruneProblematicBuiltins,
+      packageManifest,
+      packageManifestFile,
     };
+    const cacheKey = buildParsecCacheKey(stage1Result, {
+      backendTarget,
+      packageStrategy,
+      pruneProblematicBuiltins,
+    });
+    stage1Result.cacheKey = cacheKey;
+    stage1Result.cacheKeyFile = path.join(outputDir, 'parsec-cache-key.txt');
+    await writeFile(stage1Result.cacheKeyFile, `${cacheKey}\n`, 'utf8');
     const loadPlan = createLoadPlan(outputDir, stage1Result);
     const loadPlanFile = path.join(outputDir, 'parsec-load-plan.json');
     await writeFile(loadPlanFile, `${JSON.stringify(loadPlan, null, 2)}\n`, 'utf8');

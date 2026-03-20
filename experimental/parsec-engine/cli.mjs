@@ -31,6 +31,9 @@ function usage() {
     '  --entry <path>           Preferred entry file path inside source tree',
     '  --output <dir>           Output directory for packaged artifact',
     '  --stage-root <dir>       Root directory for job staging',
+    '  --backend-target <name>  edgejs-browser | wali-edge-remote',
+    '  --package-strategy <s>   single | split',
+    '  --prune-problematic-builtins  Rewrite known-problematic builtins to pruned stubs',
     '  --wait-stage2            Wait for github wasm lift task to finish',
     '  --stage2-timeout-ms <n>  Wait timeout when --wait-stage2 is set',
     '  --json                   Print only JSON result',
@@ -56,6 +59,9 @@ async function main() {
     },
     {
       outputDir: args.output ? path.resolve(String(args.output)) : undefined,
+      backendTarget: args['backend-target'] ? String(args['backend-target']) : undefined,
+      packageStrategy: args['package-strategy'] ? String(args['package-strategy']) : undefined,
+      pruneProblematicBuiltins: Boolean(args['prune-problematic-builtins']),
       waitForStage2: Boolean(args['wait-stage2']),
       stage2TimeoutMs: args['stage2-timeout-ms'] ? Number(args['stage2-timeout-ms']) : undefined,
     },
@@ -71,6 +77,9 @@ async function main() {
   console.log(`- inputType: ${metadata.inputType}`);
   console.log(`- entry: ${metadata.stage1.entryPath}`);
   console.log(`- bundle: ${metadata.stage1.bundle.outputFile}`);
+  console.log(`- backendTarget: ${metadata.stage1.backendTarget}`);
+  console.log(`- packageStrategy: ${metadata.stage1.packageStrategy}`);
+  console.log(`- cacheKey: ${metadata.stage1.cacheKey}`);
   if (metadata.stage2) {
     console.log(`- stage2 task: ${metadata.stage2.taskId || metadata.stage2.id} (${metadata.stage2.status})`);
   }

@@ -77,6 +77,11 @@ Run the parser/prep/packaging engine from CLI:
 node experimental/parsec-engine/cli.mjs --type raw-js --input ./my-app --output ./dist/parsec
 ```
 
+Useful flags:
+- `--backend-target edgejs-browser|wali-edge-remote` (plan package for local browser runtime or remote Wali execution)
+- `--package-strategy single|split` (single-file bundle vs code-split package outputs)
+- `--prune-problematic-builtins` (rewrite known problematic builtins such as `child_process`/`net` to explicit Parsec-pruned shims)
+
 Note: Parsec remains experimental and is isolated under `experimental/parsec-engine/`.
 
 Supported input types:
