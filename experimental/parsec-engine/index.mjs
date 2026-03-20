@@ -24,6 +24,11 @@ const EASY_HARD_REWRITE_PROFILE = {
   stripShebang: true,
   rewriteProcessBrowser: true,
 };
+const HARD_HARD_SIGNAL_PATTERNS = [
+  { id: 'directEval', regex: /\beval\s*\(/g },
+  { id: 'newFunction', regex: /\bnew\s+Function\s*\(/g },
+  { id: 'dynamicRequire', regex: /\brequire\(\s*(?!['"`])[^)]+\)/g },
+];
 
 function toPosix(p) {
   return p.split(path.sep).join('/');
@@ -195,6 +200,20 @@ async function analyzeSourceTree(sourceDir) {
   const extensions = {};
   const imports = new Set();
   const nativeAddonSignals = new Set();
+  const hardHardSignals = {};
+
+  for (const signal of HARD_HARD_SIGNAL_PATTERNS) {
+    hardHardSignals[signal.id] = { count: 0, files: [] };
+  }
+
+  function recordHardHardSignal(signalId, fullPath, matchCount) {
+    if (!hardHardSignals[signalId]) return;
+    hardHardSignals[signalId].count += matchCount;
+    const relPath = toPosix(path.relative(sourceDir, fullPath));
+    if (!hardHardSignals[signalId].files.includes(relPath)) {
+      hardHardSignals[signalId].files.push(relPath);
+    }
+  }
 
   for (const fullPath of files) {
     const ext = path.extname(fullPath).toLowerCase();
@@ -208,6 +227,12 @@ async function analyzeSourceTree(sourceDir) {
     if (!JS_EXTENSIONS.has(ext)) continue;
     const source = await readFile(fullPath, 'utf8');
     for (const specifier of parseImportsFromSource(source)) imports.add(specifier);
+
+    for (const signal of HARD_HARD_SIGNAL_PATTERNS) {
+      const matches = source.match(signal.regex);
+      if (!matches || matches.length === 0) continue;
+      recordHardHardSignal(signal.id, fullPath, matches.length);
+    }
   }
 
   const nodeBuiltinsUsed = [...imports]
@@ -217,6 +242,20 @@ async function analyzeSourceTree(sourceDir) {
   const externalPackagesUsed = [...imports]
     .filter((specifier) => !specifier.startsWith('.') && !specifier.startsWith('/') && !specifier.startsWith('node:'))
     .sort();
+  const blockers = [];
+  if (hardHardSignals.directEval.count > 0) blockers.push('direct-eval');
+  if (hardHardSignals.newFunction.count > 0) blockers.push('new-function');
+  if (hardHardSignals.dynamicRequire.count > 0) blockers.push('dynamic-require');
+  if (nativeAddonSignals.size > 0) blockers.push('native-addons');
+  const readinessPenalty = Math.min(30, hardHardSignals.directEval.count * 10)
+    + Math.min(20, hardHardSignals.newFunction.count * 10)
+    + Math.min(24, hardHardSignals.dynamicRequire.count * 8)
+    + Math.min(40, nativeAddonSignals.size * 20);
+  const easyHardReadiness = {
+    ready: blockers.length === 0,
+    score: Math.max(0, 100 - readinessPenalty),
+    blockers,
+  };
 
   return {
     fileCount: files.length,
@@ -224,6 +263,8 @@ async function analyzeSourceTree(sourceDir) {
     nodeBuiltinsUsed,
     externalPackagesUsed,
     nativeAddonSignals: [...nativeAddonSignals].sort(),
+    hardHardSignals,
+    easyHardReadiness,
   };
 }
 
@@ -389,6 +430,32 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed) {
   };
 }
 
+function createLoadPlan(outputDir, stage1Result) {
+  const bundleFile = toPosix(path.relative(outputDir, stage1Result.bundle.outputFile));
+  const bundleMapFile = toPosix(path.relative(outputDir, stage1Result.bundle.outputMapFile));
+  return {
+    schemaVersion: 1,
+    runtime: 'edgejs-browser',
+    profile: stage1Result.rewrite.profile,
+    entry: toPosix(path.relative(stage1Result.preparedDir, stage1Result.preparedEntryPath)),
+    bundle: {
+      file: bundleFile,
+      sourceMap: bundleMapFile,
+      bytes: stage1Result.bundle.bytes,
+    },
+    analysis: {
+      nodeBuiltinsUsed: stage1Result.preparedAnalysis.nodeBuiltinsUsed || [],
+      externalPackagesUsed: stage1Result.preparedAnalysis.externalPackagesUsed || [],
+      easyHardReadiness: stage1Result.preparedAnalysis.easyHardReadiness || { ready: true, score: 100, blockers: [] },
+      hardHardSignals: stage1Result.preparedAnalysis.hardHardSignals || {},
+    },
+    load: {
+      type: 'esm',
+      importStatement: `import './${bundleFile}';`,
+    },
+  };
+}
+
 async function loadBackendConfig() {
   const raw = await readFile(path.join(__dirname, 'language-backends.json'), 'utf8');
   const parsed = JSON.parse(raw);
@@ -529,6 +596,11 @@ export class ParsecEngine {
       rewrite: rewriteResult,
       bundle: bundleResult,
     };
+    const loadPlan = createLoadPlan(outputDir, stage1Result);
+    const loadPlanFile = path.join(outputDir, 'parsec-load-plan.json');
+    await writeFile(loadPlanFile, `${JSON.stringify(loadPlan, null, 2)}\n`, 'utf8');
+    stage1Result.loadPlan = loadPlan;
+    stage1Result.loadPlanFile = loadPlanFile;
 
     const metadata = {
       jobId,
