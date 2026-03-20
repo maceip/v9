@@ -6,7 +6,7 @@ import * as _mod from './zlib.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* zlib stub */ } };
 }
 
 export const BrotliCompress = typeof _impl.BrotliCompress !== 'undefined' ? _impl.BrotliCompress : _notImplemented('zlib.BrotliCompress');

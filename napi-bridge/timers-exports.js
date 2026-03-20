@@ -5,7 +5,7 @@
 import timersModule from './timers-promises.js';
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* timers stub */ } };
 }
 
 export const clearImmediate = typeof timersModule.clearImmediate !== 'undefined' ? timersModule.clearImmediate : _notImplemented('timers.clearImmediate');

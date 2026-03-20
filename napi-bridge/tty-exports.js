@@ -6,7 +6,7 @@ import * as _mod from './tty.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* tty stub */ } };
 }
 
 export const ReadStream = typeof _impl.ReadStream !== 'undefined' ? _impl.ReadStream : _notImplemented('tty.ReadStream');

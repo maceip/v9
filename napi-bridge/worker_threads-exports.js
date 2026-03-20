@@ -6,7 +6,7 @@ import * as _mod from './worker-threads.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* worker_threads stub */ } };
 }
 
 export const BroadcastChannel = typeof _impl.BroadcastChannel !== 'undefined' ? _impl.BroadcastChannel : _notImplemented('worker_threads.BroadcastChannel');

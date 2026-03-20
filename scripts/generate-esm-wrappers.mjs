@@ -89,7 +89,7 @@ function generateWrapper(modName) {
 
   lines.push('');
   lines.push(`function _notImplemented(name) {`);
-  lines.push(`  return function() { throw new Error(\`\${name} is not implemented in the browser runtime\`); };`);
+  lines.push(`  return class { constructor(...a) { /* ${modName} stub */ } };`);
   lines.push(`}`);
   lines.push('');
 

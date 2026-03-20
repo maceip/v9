@@ -6,7 +6,7 @@ import * as _mod from './readline.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* readline stub */ } };
 }
 
 export const Interface = typeof _impl.Interface !== 'undefined' ? _impl.Interface : _notImplemented('readline.Interface');

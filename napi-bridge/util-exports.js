@@ -5,7 +5,7 @@
 import util from './util.js';
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* util stub */ } };
 }
 
 export const MIMEParams = typeof util.MIMEParams !== 'undefined' ? util.MIMEParams : _notImplemented('util.MIMEParams');

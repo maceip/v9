@@ -6,7 +6,7 @@ import { tls } from './net-stubs.js';
 const _impl = tls;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* tls stub */ } };
 }
 
 export const CLIENT_RENEG_LIMIT = typeof _impl.CLIENT_RENEG_LIMIT !== 'undefined' ? _impl.CLIENT_RENEG_LIMIT : _notImplemented('tls.CLIENT_RENEG_LIMIT');

@@ -5,7 +5,7 @@
 import fs from './fs.js';
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* fs stub */ } };
 }
 
 export const Dir = typeof fs.Dir !== 'undefined' ? fs.Dir : _notImplemented('fs.Dir');

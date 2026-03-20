@@ -5,7 +5,7 @@
 import _impl from './os.js';
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* os stub */ } };
 }
 
 export const EOL = typeof _impl.EOL !== 'undefined' ? _impl.EOL : _notImplemented('os.EOL');

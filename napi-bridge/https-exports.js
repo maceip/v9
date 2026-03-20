@@ -6,7 +6,7 @@ import { https } from './http.js';
 const _impl = https;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* https stub */ } };
 }
 
 export const Agent = typeof _impl.Agent !== 'undefined' ? _impl.Agent : _notImplemented('https.Agent');

@@ -6,7 +6,7 @@ import * as _mod from './async-hooks.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* async_hooks stub */ } };
 }
 
 export const AsyncLocalStorage = typeof _impl.AsyncLocalStorage !== 'undefined' ? _impl.AsyncLocalStorage : _notImplemented('async_hooks.AsyncLocalStorage');

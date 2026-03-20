@@ -5,7 +5,7 @@
 const _impl = {};
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* v8 stub */ } };
 }
 
 export const DefaultDeserializer = typeof _impl.DefaultDeserializer !== 'undefined' ? _impl.DefaultDeserializer : _notImplemented('v8.DefaultDeserializer');

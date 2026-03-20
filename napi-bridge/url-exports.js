@@ -6,7 +6,7 @@ import { urlBridge } from './browser-builtins.js';
 const _impl = urlBridge;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* url stub */ } };
 }
 
 export const URL = typeof _impl.URL !== 'undefined' ? _impl.URL : _notImplemented('url.URL');

@@ -6,7 +6,7 @@ import { http } from './http.js';
 const _impl = http;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* http2 stub */ } };
 }
 
 export const Http2ServerRequest = typeof _impl.Http2ServerRequest !== 'undefined' ? _impl.Http2ServerRequest : _notImplemented('http2.Http2ServerRequest');

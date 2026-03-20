@@ -6,7 +6,7 @@ import { net } from './net-stubs.js';
 const _impl = net;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* net stub */ } };
 }
 
 export const BlockList = typeof _impl.BlockList !== 'undefined' ? _impl.BlockList : _notImplemented('net.BlockList');

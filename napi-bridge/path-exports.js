@@ -6,7 +6,7 @@ import { pathBridge } from './browser-builtins.js';
 const _impl = pathBridge;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* path stub */ } };
 }
 
 export const basename = typeof _impl.basename !== 'undefined' ? _impl.basename : _notImplemented('path.basename');

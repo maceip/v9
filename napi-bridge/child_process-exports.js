@@ -6,7 +6,7 @@ import * as _mod from './child-process.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* child_process stub */ } };
 }
 
 export const ChildProcess = typeof _impl.ChildProcess !== 'undefined' ? _impl.ChildProcess : _notImplemented('child_process.ChildProcess');

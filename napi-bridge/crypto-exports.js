@@ -6,7 +6,7 @@ import { cryptoBridge } from './browser-builtins.js';
 const _impl = cryptoBridge;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* crypto stub */ } };
 }
 
 export const Certificate = typeof _impl.Certificate !== 'undefined' ? _impl.Certificate : _notImplemented('crypto.Certificate');

@@ -6,7 +6,7 @@ import * as _mod from './constants.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* constants stub */ } };
 }
 
 export const COPYFILE_EXCL = typeof _impl.COPYFILE_EXCL !== 'undefined' ? _impl.COPYFILE_EXCL : _notImplemented('constants.COPYFILE_EXCL');

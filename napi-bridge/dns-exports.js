@@ -6,7 +6,7 @@ import { dns } from './net-stubs.js';
 const _impl = dns;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* dns stub */ } };
 }
 
 export const ADDRCONFIG = typeof _impl.ADDRCONFIG !== 'undefined' ? _impl.ADDRCONFIG : _notImplemented('dns.ADDRCONFIG');

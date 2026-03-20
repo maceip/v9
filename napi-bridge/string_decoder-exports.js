@@ -6,7 +6,7 @@ import * as _mod from './string-decoder.js';
 const _impl = _mod.default || _mod;
 
 function _notImplemented(name) {
-  return function() { throw new Error(`${name} is not implemented in the browser runtime`); };
+  return class { constructor(...a) { /* string_decoder stub */ } };
 }
 
 export const StringDecoder = typeof _impl.StringDecoder !== 'undefined' ? _impl.StringDecoder : _notImplemented('string_decoder.StringDecoder');
