@@ -4,16 +4,18 @@
  * Anthropic's API does not send Access-Control-Allow-Origin for browser
  * requests. This minimal worker forwards requests and adds CORS headers.
  *
- * SECURITY (H3): Origin is validated against ALLOWED_ORIGINS.
- * Set the environment variable ALLOWED_ORIGINS as a comma-separated list
- * of allowed origins, or default to localhost for development.
+ * Security layers:
+ *   1. Origin validation: only ALLOWED_ORIGINS can use the proxy
+ *   2. Rate limiting: per-IP sliding window (configurable via env)
+ *   3. Shared secret: optional PROXY_SECRET header validation
  *
  * Deploy:
  *   npx wrangler deploy web/cors-proxy-worker.js --name edgejs-cors-proxy
  *
- * Configure allowed origins via wrangler.toml:
- *   [vars]
+ * Configure via wrangler.toml [vars]:
  *   ALLOWED_ORIGINS = "https://yourdomain.com,https://app.yourdomain.com"
+ *   PROXY_SECRET = "your-shared-secret"  # optional — if set, clients must send x-proxy-secret header
+ *   RATE_LIMIT_RPM = "60"                # requests per minute per IP (default: 60)
  */
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -36,6 +38,49 @@ function isOriginAllowed(origin, env) {
   return allowed.includes(origin) || allowed.includes('*');
 }
 
+// ─── Rate limiting (per-IP sliding window) ──────────────────────────
+// Uses in-memory Map — resets on worker restart, which is acceptable
+// for a lightweight proxy. For durable rate limiting, use Cloudflare KV
+// or Durable Objects.
+
+const _rateLimitMap = new Map();  // ip → { count, windowStart }
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+
+function isRateLimited(ip, env) {
+  const maxRpm = parseInt(env?.RATE_LIMIT_RPM || '60', 10) || 60;
+  const now = Date.now();
+  let entry = _rateLimitMap.get(ip);
+
+  if (!entry || (now - entry.windowStart) > RATE_LIMIT_WINDOW_MS) {
+    entry = { count: 0, windowStart: now };
+    _rateLimitMap.set(ip, entry);
+  }
+
+  entry.count++;
+
+  if (entry.count > maxRpm) {
+    return true;
+  }
+
+  // Periodic cleanup: remove stale entries every 1000 requests
+  if (_rateLimitMap.size > 10000) {
+    for (const [k, v] of _rateLimitMap) {
+      if (now - v.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+        _rateLimitMap.delete(k);
+      }
+    }
+  }
+
+  return false;
+}
+
+function getClientIP(request) {
+  return request.headers.get('CF-Connecting-IP') ||
+    request.headers.get('X-Real-IP') ||
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    '0.0.0.0';
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin') || '';
@@ -50,15 +95,35 @@ export default {
         headers: {
           'Access-Control-Allow-Origin': origin,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access, x-proxy-secret',
           'Access-Control-Max-Age': '86400',
         },
       });
     }
 
-    // Validate origin for non-preflight requests
+    // ── Security: Origin validation ──
     if (!isOriginAllowed(origin, env)) {
       return new Response('Forbidden: origin not allowed', { status: 403 });
+    }
+
+    // ── Security: Shared secret validation ──
+    if (env?.PROXY_SECRET) {
+      const clientSecret = request.headers.get('x-proxy-secret') || '';
+      if (clientSecret !== env.PROXY_SECRET) {
+        return new Response('Forbidden: invalid proxy secret', { status: 403 });
+      }
+    }
+
+    // ── Security: Rate limiting ──
+    const clientIP = getClientIP(request);
+    if (isRateLimited(clientIP, env)) {
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: {
+          'Retry-After': '60',
+          'Access-Control-Allow-Origin': origin,
+        },
+      });
     }
 
     // Forward to Anthropic API
@@ -67,16 +132,19 @@ export default {
     url.port = '';
     url.protocol = 'https:';
 
+    // Strip proxy-specific headers before forwarding
+    const forwardHeaders = new Headers(request.headers);
+    forwardHeaders.delete('x-proxy-secret');
+
     const proxyRequest = new Request(url.toString(), {
       method: request.method,
-      headers: request.headers,
+      headers: forwardHeaders,
       body: request.body,
       redirect: 'follow',
     });
 
     const response = await fetch(proxyRequest);
 
-    // M12: Clone response to avoid consuming the body stream
     const corsHeaders = new Headers(response.headers);
     corsHeaders.set('Access-Control-Allow-Origin', origin);
     corsHeaders.set('Access-Control-Expose-Headers', 'x-request-id');

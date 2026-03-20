@@ -54,6 +54,12 @@
     }
   }
   </script>
+  <!-- Node.js global polyfills — MUST load before any module imports.
+       Provides process, Buffer, setImmediate, setTimeout.unref, console.Console,
+       hrtime, and CORS proxy intercept. All 4 CLIs depend on this.
+       Do NOT inline this block — keep it in node-polyfills.js so it survives
+       automated pushes and import map regeneration. -->
+  <script src="node-polyfills.js"></script>
 </head>
 <body>
   <div id="terminal"></div>
