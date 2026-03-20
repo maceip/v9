@@ -30,6 +30,8 @@ const BASE_URL = 'http://localhost:8080';
 const BUNDLES = {
   'Claude Code': '/dist/claude-code-cli.js',
   'Gemini CLI': '/dist/gemini-cli.js',
+  'Cline': '/dist/cline-cli.js',
+  'Cody': '/dist/cody-cli.js',
 };
 const TIMEOUT = 60_000; // 60s per CLI
 const API_KEY = 'sk-test-fake-key-for-smoke-test';
@@ -172,6 +174,12 @@ async function testCLI(browser, name, bundlePath) {
       }
       if (cliName === 'Gemini CLI') {
         return text.includes('Gemini') || text.includes('gemini') || text.includes('Google');
+      }
+      if (cliName === 'Cline') {
+        return text.includes('Cline') || text.includes('cline') || text.includes('autonomous');
+      }
+      if (cliName === 'Cody') {
+        return text.includes('Cody') || text.includes('cody') || text.includes('Sourcegraph');
       }
       return false;
     }, name);
