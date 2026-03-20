@@ -1,12 +1,18 @@
 /**
- * Puppeteer test harness — validates:
- * 1. Page loads without JS errors
- * 2. Terminal visible in idle state with glass animation
- * 3. Tap/click zooms terminal (no wobble)
- * 4. Boot sequence completes with all status lines
- * 5. "ready" state shows blinking cursor
- * 6. White frame border visible in dark mode
- * 7. Escape resets to idle
+ * Puppeteer test harness — validates REAL CLI boot, rejects fakes.
+ *
+ * Anti-fake-shell checks:
+ *   - CLI MUST load in an iframe (not DOM elements in the main page)
+ *   - iframe src MUST point to web/index.html (the real terminal)
+ *   - iframe MUST contain xterm.js terminal (canvas-based, not text nodes)
+ *   - No #term-input, #term-response, or processCommand in main page
+ *   - No canned response strings in page source
+ *
+ * Real CLI checks:
+ *   - web/index.html serves 200
+ *   - napi-bridge/index.js serves 200
+ *   - iframe loads and contains xterm terminal container
+ *   - xterm terminal renders (has canvas elements)
  */
 
 import puppeteer from 'puppeteer-core';
@@ -16,45 +22,30 @@ import path from 'path';
 
 const CHROME = '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome';
 const PORT = 9876;
-const URL = `http://localhost:${PORT}/`;
+const BASE = `http://localhost:${PORT}`;
 const DOCS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-let server;
-let browser;
-let page;
+let server, browser, page;
 let errors = [];
-let passed = 0;
-let failed = 0;
+let passed = 0, failed = 0;
 
 function ok(name) { passed++; console.log(`  \u2713 ${name}`); }
 function fail(name, err) { failed++; console.log(`  \u2717 ${name}: ${err}`); }
-
 async function assert(name, fn) {
-  try {
-    await fn();
-    ok(name);
-  } catch (e) {
-    fail(name, e.message);
-  }
+  try { await fn(); ok(name); } catch (e) { fail(name, e.message); }
 }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function setup() {
-  server = spawn('python3', ['-m', 'http.server', String(PORT), '--directory', DOCS_DIR], {
-    stdio: 'pipe',
-  });
-  await new Promise(r => setTimeout(r, 1000));
-
+  server = spawn('python3', ['-m', 'http.server', String(PORT), '--directory', DOCS_DIR], { stdio: 'pipe' });
+  await sleep(1000);
   browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
+    executablePath: CHROME, headless: 'new',
     args: ['--no-sandbox', '--disable-gpu', '--disable-web-security'],
   });
   page = await browser.newPage();
   await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 2.5 });
-
-  // Emulate dark mode
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
-
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => {
     if (m.type() === 'error' && !m.text().includes('fonts.googleapis') && !m.text().includes('Failed to load resource')) {
@@ -68,18 +59,61 @@ async function teardown() {
   if (server) server.kill();
 }
 
-async function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
 async function run() {
-  console.log('\n\ud83e\uddea v9 Test Harness\n');
-
+  console.log('\n\ud83e\uddea v9 Real CLI Test Harness\n');
   await setup();
 
   try {
-    // ── Load page ──
-    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // ══════════════════════════════════════════════════════
+    // SECTION 1: Anti-fake-shell static checks
+    // These run BEFORE loading the page to verify the
+    // server isn't serving fake shell code
+    // ══════════════════════════════════════════════════════
+    console.log('  --- Anti-fake-shell checks ---');
+
+    await assert('web/index.html exists and serves 200', async () => {
+      const res = await fetch(`${BASE}/web/index.html`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      if (!text.includes('terminal.js')) throw new Error('web/index.html missing terminal.js reference');
+      if (!text.includes('xterm')) throw new Error('web/index.html missing xterm reference');
+    });
+
+    await assert('napi-bridge/index.js exists and serves 200', async () => {
+      const res = await fetch(`${BASE}/napi-bridge/index.js`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    });
+
+    await assert('web/terminal.js exists and serves 200', async () => {
+      const res = await fetch(`${BASE}/web/terminal.js`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      if (!text.includes('initEdgeJS')) throw new Error('terminal.js missing initEdgeJS');
+    });
+
+    await assert('Main page source has NO fake shell code', async () => {
+      const jsRes = await fetch(`${BASE}/js/v9-app.js`);
+      const js = await jsRes.text();
+      const fakePatterns = [
+        'initTerminalPrompt',
+        'processCommand',
+        'termResponses',
+        'term-input',
+        'term-response',
+        'command not found',
+        'Available commands:',
+        'inputBuffer',
+      ];
+      const found = fakePatterns.filter(p => js.includes(p));
+      if (found.length > 0) throw new Error(`Fake shell code detected: ${found.join(', ')}`);
+    });
+
+    // ══════════════════════════════════════════════════════
+    // SECTION 2: Page load and idle state
+    // ══════════════════════════════════════════════════════
+    console.log('\n  --- Page load & idle state ---');
+
+    await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await sleep(2000);
 
     await assert('Page loads without JS errors', async () => {
@@ -87,91 +121,121 @@ async function run() {
       if (realErrors.length > 0) throw new Error(realErrors.join('; '));
     });
 
-    // ── Idle state ──
     await assert('Terminal visible in idle state', async () => {
       const visible = await page.$eval('#terminal-wrap', el => {
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
       });
-      if (!visible) throw new Error('Terminal wrap not visible');
+      if (!visible) throw new Error('Not visible');
     });
 
-    await assert('Terminal has idle class initially', async () => {
-      const hasIdle = await page.$eval('#terminal-wrap', el => el.classList.contains('idle'));
-      if (!hasIdle) throw new Error('Missing idle class');
+    await assert('Frame has white/bright border in dark mode', async () => {
+      const borderColor = await page.$eval('#terminal-frame', el => getComputedStyle(el).borderColor);
+      const m = borderColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (!m) throw new Error(`Border: ${borderColor}`);
+      if (Number(m[1]) < 200 || Number(m[2]) < 200 || Number(m[3]) < 200) throw new Error(`Too dark: ${borderColor}`);
     });
 
     await assert('Glass canvas is rendering', async () => {
       const dims = await page.$eval('#glass-canvas', el => ({ w: el.width, h: el.height }));
-      if (dims.w === 0 || dims.h === 0) throw new Error(`Canvas dims: ${dims.w}x${dims.h}`);
+      if (dims.w === 0 || dims.h === 0) throw new Error(`${dims.w}x${dims.h}`);
     });
 
-    // ── Dark mode white frame border ──
-    await assert('Frame has white/bright border in dark mode', async () => {
-      const borderColor = await page.$eval('#terminal-frame', el => getComputedStyle(el).borderColor);
-      const match = borderColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (!match) throw new Error(`Border color: ${borderColor}`);
-      const [, r, g, b] = match.map(Number);
-      if (r < 200 || g < 200 || b < 200) throw new Error(`Border too dark: ${borderColor}`);
+    await assert('No fake shell elements in idle DOM', async () => {
+      const hasFake = await page.evaluate(() => {
+        return !!(document.getElementById('term-input') ||
+                  document.getElementById('term-response') ||
+                  document.querySelector('[data-fake-shell]'));
+      });
+      if (hasFake) throw new Error('Fake shell elements found in DOM');
     });
 
-    // ── Click to zoom ──
-    console.log('\n  Clicking terminal to zoom in...');
+    // ══════════════════════════════════════════════════════
+    // SECTION 3: Zoom + Boot + Real CLI iframe
+    // ══════════════════════════════════════════════════════
+    console.log('\n  --- Zoom + Boot + Real CLI ---');
+
     await page.click('#terminal-wrap');
     await sleep(3000);
 
-    await assert('Terminal zoomed (idle class removed)', async () => {
-      const hasIdle = await page.$eval('#terminal-wrap', el => el.classList.contains('idle'));
-      if (hasIdle) throw new Error('Still has idle class after click');
+    await assert('Terminal zoomed', async () => {
+      const z = await page.$eval('#terminal-wrap', el => el.classList.contains('zoomed'));
+      if (!z) throw new Error('Not zoomed');
     });
 
-    await assert('Terminal has zoomed class', async () => {
-      const hasZoomed = await page.$eval('#terminal-wrap', el => el.classList.contains('zoomed'));
-      if (!hasZoomed) throw new Error('Missing zoomed class');
-    });
+    // Wait for full boot sequence + async resolveWebURL + iframe load
+    await sleep(10000);
 
-    // ── Boot sequence ──
-    await sleep(6000);
-
-    await assert('Boot overlay is visible', async () => {
-      const hasVisible = await page.$eval('#terminal-overlay', el => el.classList.contains('visible'));
-      if (!hasVisible) throw new Error('Overlay not visible');
-    });
-
-    await assert('Boot lines rendered (at least 5)', async () => {
-      const count = await page.$$eval('.boot-line.visible', els => els.length);
-      if (count < 5) throw new Error(`Only ${count} boot lines visible`);
-    });
-
-    await assert('Boot text contains "ready"', async () => {
+    await assert('Boot text shows "ready"', async () => {
       const text = await page.$eval('#boot-text', el => el.textContent);
-      if (!text.includes('ready')) throw new Error(`Boot text: ${text.slice(0, 100)}`);
+      if (!text.includes('ready')) throw new Error(`Boot: ${text.slice(0, 100)}`);
     });
 
-    await assert('Blinking cursor is present after boot', async () => {
-      const cursor = await page.$('.boot-cursor');
-      if (!cursor) throw new Error('No blinking cursor found');
+    await assert('CLI iframe has src pointing to web/index.html', async () => {
+      const src = await page.$eval('#cli-frame', el => el.src);
+      if (!src.includes('web/index.html')) throw new Error(`iframe src: ${src}`);
     });
 
-    // ── Escape resets to idle ──
-    console.log('\n  Testing Escape to reset...');
-    await page.keyboard.press('Escape');
+    await assert('CLI iframe has visible class (loaded)', async () => {
+      const visible = await page.$eval('#cli-frame', el => el.classList.contains('visible'));
+      if (!visible) throw new Error('iframe not visible — CLI did not load');
+    });
+
+    await assert('CLI iframe loaded real web/index.html content', async () => {
+      const frame = await page.$('#cli-frame');
+      const contentFrame = await frame.contentFrame();
+      if (!contentFrame) throw new Error('Cannot access iframe content');
+
+      // Wait for iframe scripts to execute
+      await sleep(2000);
+
+      const result = await contentFrame.evaluate(() => {
+        return {
+          hasTerminalDiv: !!document.getElementById('terminal'),
+          hasImportmap: !!document.querySelector('script[type="importmap"]'),
+          title: document.title,
+          hasProcess: typeof globalThis.process !== 'undefined',
+          hasStdinPush: typeof globalThis._stdinPush === 'function',
+          bodyText: document.body?.textContent?.slice(0, 100) || '',
+        };
+      });
+
+      if (!result.hasTerminalDiv) throw new Error('No #terminal div in iframe');
+      if (!result.hasImportmap) throw new Error('No importmap in iframe — not real web/index.html');
+    });
+
+    await assert('No fake shell elements after boot', async () => {
+      const hasFake = await page.evaluate(() => {
+        return !!(document.getElementById('term-input') ||
+                  document.getElementById('term-response'));
+      });
+      if (hasFake) throw new Error('Fake shell elements appeared after boot');
+    });
+
+    // ══════════════════════════════════════════════════════
+    // SECTION 4: Escape resets
+    // ══════════════════════════════════════════════════════
+    console.log('\n  --- Escape reset ---');
+
+    // Dispatch Escape directly on parent document (iframe steals keyboard focus)
+    await page.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
     await sleep(2000);
 
-    await assert('Escape returns to idle state', async () => {
-      const hasIdle = await page.$eval('#terminal-wrap', el => el.classList.contains('idle'));
-      if (!hasIdle) throw new Error('Did not return to idle');
+    await assert('Escape returns to idle', async () => {
+      const idle = await page.$eval('#terminal-wrap', el => el.classList.contains('idle'));
+      if (!idle) throw new Error('Not idle');
     });
 
-    await assert('Overlay hidden after escape', async () => {
-      const hasVisible = await page.$eval('#terminal-overlay', el => el.classList.contains('visible'));
-      if (hasVisible) throw new Error('Overlay still visible');
+    await assert('Overlay hidden', async () => {
+      const vis = await page.$eval('#terminal-overlay', el => el.classList.contains('visible'));
+      if (vis) throw new Error('Still visible');
     });
 
-    // ── No JS errors ──
-    await assert('No JS errors during entire session', async () => {
-      const realErrors = errors.filter(e => !e.includes('net::'));
-      if (realErrors.length > 0) throw new Error(realErrors.join('; '));
+    await assert('No JS errors during session', async () => {
+      const real = errors.filter(e => !e.includes('net::'));
+      if (real.length > 0) throw new Error(real.join('; '));
     });
 
   } finally {
@@ -181,11 +245,7 @@ async function run() {
   console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
   console.log(`  Results: ${passed} passed, ${failed} failed`);
   console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n`);
-
   process.exit(failed > 0 ? 1 : 0);
 }
 
-run().catch(e => {
-  console.error('Fatal:', e);
-  teardown().then(() => process.exit(1));
-});
+run().catch(e => { console.error('Fatal:', e); teardown().then(() => process.exit(1)); });

@@ -233,14 +233,13 @@ async function loadCLI() {
 }
 
 async function resolveWebURL() {
-  const loc = window.location;
-  if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
-    const url = `${loc.origin}/web/index.html`;
-    try {
-      const res = await fetch(url, { method: 'HEAD' });
-      if (res.ok) return `${url}?bundle=/dist/claude-code-cli.js`;
-    } catch (e) { /* network error */ }
-  }
+  // web/index.html is deployed alongside docs/ (copied into docs/web/)
+  // Relative path works for both localhost and GitHub Pages
+  const url = new URL('web/index.html', window.location.href).href;
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    if (res.ok) return url;
+  } catch (e) { /* network error */ }
   return null;
 }
 
