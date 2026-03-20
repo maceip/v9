@@ -43,6 +43,8 @@ async function main() {
         "#!/usr/bin/env node",
         "const { join } = require('path');",
         'if (process.browser) console.log("browser-mode");',
+        'if (process.env.NODE_ENV !== "production") console.log("dev-only-parsec-marker");',
+        'if (!process.env.BROWSER) console.log("non-browser-parsec-marker");',
         "console.log(join('/tmp', 'x'));",
       ].join('\n'),
       'utf8',
@@ -59,6 +61,17 @@ async function main() {
     assert(rewritten.includes("require('node:path')"), 'rewrite should normalize require specifier to node:path');
     assert(!rewritten.startsWith('#!'), 'rewrite should strip shebang');
     assert(rewritten.includes('if (true)'), 'rewrite should replace process.browser checks');
+    const bundle = await readFile(metadata.stage1.bundle.outputFile, 'utf8');
+    assert(!bundle.includes('dev-only-parsec-marker'),
+      'bundle should fold NODE_ENV define and eliminate dev-only branches');
+    assert(!bundle.includes('non-browser-parsec-marker'),
+      'bundle should fold BROWSER define and eliminate non-browser branches');
+    assert(existsSync(metadata.stage1.bundle.outputMapFile), 'optimized blob should emit source map');
+    const outputBytes = metadata.stage1.bundle.bytes ?? Math.max(
+      0,
+      ...Object.values(metadata.stage1.bundle.metafile?.outputs || {}).map((entry) => entry?.bytes || 0),
+    );
+    assert(outputBytes > 0, 'optimized blob should report output byte size');
   });
 
   await test('zip input is unpacked and bundled', async () => {
