@@ -15,7 +15,8 @@ set -e
 mkdir -p dist
 
 npx esbuild node_modules/@google/gemini-cli/dist/index.js \
-  --bundle --platform=neutral --format=esm \
+  --banner:js='import{createRequire as __cr}from"module";import{fileURLToPath as __fu}from"url";import{dirname as __dn}from"path";var require=__cr(import.meta.url),__filename=__fu(import.meta.url),__dirname=__dn(__filename);' \
+  --bundle --platform=node --format=esm \
   --main-fields=module,main \
   --conditions=import,browser,default \
   --external:crypto --external:http --external:https \
@@ -36,6 +37,7 @@ npx esbuild node_modules/@google/gemini-cli/dist/index.js \
   --external:@google/gemini-cli-devtools \
   --external:unicorn-magic --external:npm-run-path \
   --external:read-pkg --external:execa \
+  --external:require-in-the-middle --external:import-in-the-middle \
   --external:node:* \
   --loader:.wasm=file \
   --outfile=dist/gemini-cli-bundle.js \
