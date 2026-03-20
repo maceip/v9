@@ -81,6 +81,7 @@ Useful flags:
 - `--backend-target edgejs-browser|wali-edge-remote` (plan package for local browser runtime or remote Wali execution)
 - `--package-strategy single|split` (single-file bundle vs code-split package outputs)
 - `--prune-problematic-builtins` (rewrite known problematic builtins such as `child_process`/`net` to explicit Parsec-pruned shims)
+- `--virtualize-network-layer` (rewrite `http`/`https`/`http2`/`net`/`tls`/`dns` imports to shared network-layer adapters)
 
 Note: Parsec remains experimental and is isolated under `experimental/parsec-engine/`.
 
@@ -96,6 +97,8 @@ Behavior:
 2. **Stage 2** (`github` input): Start **selective wasm lifting** using language backend detection, helper wasm matching, and per-component compile attempts for "easy" subcomponents first.
 
 For `wasm` input, Stage 1 runs loader-focused validation (`WebAssembly.compile` + import/export extraction), packages the raw wasm artifact, and emits `parsec-load-plan.json` / `parsec-package-manifest.json` for runtime loader verification.
+
+When `--virtualize-network-layer` is enabled, Parsec emits `parsec-shared-network-adapter.js` and rewrites networking builtins to shared adapters backed by `globalThis.__PARSEC_SHARED_NETWORK__`, allowing multiple packaged apps to share one persistent network/proxy layer.
 
 ## Architecture
 

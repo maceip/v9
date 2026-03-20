@@ -159,6 +159,59 @@ async function main() {
       'load plan should include split output file list');
   });
 
+  await test('network virtualization routes imports to shared network layer', async () => {
+    const appDir = path.join(sandbox, 'raw-app-network');
+    await mkdir(path.join(appDir, 'src'), { recursive: true });
+    await writeFile(path.join(appDir, 'package.json'), JSON.stringify({ main: 'src/index.js' }), 'utf8');
+    await writeFile(
+      path.join(appDir, 'src/index.js'),
+      [
+        "import http from 'node:http';",
+        "import tls from 'tls';",
+        'export function callNetwork() {',
+        "  return [http.request, tls.connect].map((v) => typeof v).join(',');",
+        '}',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const metadata = await engine.run(
+      { type: 'raw-js', input: appDir },
+      {
+        outputDir: path.join(outputRoot, 'raw-network'),
+        virtualizeNetworkLayer: true,
+      },
+    );
+
+    assert(metadata.stage1.virtualizeNetworkLayer === true, 'stage1 should record network virtualization mode');
+    assert(metadata.stage1.analysis.networkBuiltinsUsed.includes('http'),
+      'analysis should detect http as network builtin');
+    assert(metadata.stage1.analysis.networkBuiltinsUsed.includes('tls'),
+      'analysis should detect tls as network builtin');
+    assert(metadata.stage1.rewrite.networkBuiltinsRewritten.includes('http'),
+      'rewrite should track network rewrite for http');
+    assert(metadata.stage1.rewrite.networkBuiltinsRewritten.includes('tls'),
+      'rewrite should track network rewrite for tls');
+    assert(existsSync(metadata.stage1.sharedNetworkAdapterFile),
+      'shared network adapter file should be generated');
+    const adapter = await readFile(metadata.stage1.sharedNetworkAdapterFile, 'utf8');
+    assert(adapter.includes('__PARSEC_SHARED_NETWORK__'),
+      'shared adapter should target global shared network layer');
+
+    const bundle = await readFile(metadata.stage1.bundle.outputFile, 'utf8');
+    assert(bundle.includes('__PARSEC_SHARED_NETWORK__'),
+      'optimized bundle should reference shared network layer');
+    assert(bundle.includes('ERR_PARSEC_NETWORK_LAYER_UNAVAILABLE'),
+      'optimized bundle should include explicit shared network error code');
+
+    const loadPlan = JSON.parse(await readFile(metadata.stage1.loadPlanFile, 'utf8'));
+    assert(loadPlan.sharedNetwork.enabled === true, 'load plan should mark shared network enabled');
+    assert(loadPlan.sharedNetwork.rewrittenBuiltins.includes('http'),
+      'load plan should include rewritten network builtins');
+    assert(typeof loadPlan.sharedNetwork.adapterFile === 'string' && loadPlan.sharedNetwork.adapterFile.includes('parsec-shared-network-adapter.js'),
+      'load plan should reference shared adapter file');
+  });
+
   await test('wasm input validates and packages raw wasm artifact', async () => {
     const wasmDir = path.join(sandbox, 'wasm-app');
     await mkdir(wasmDir, { recursive: true });

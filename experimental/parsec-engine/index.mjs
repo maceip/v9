@@ -24,6 +24,7 @@ const EASY_HARD_REWRITE_PROFILE = {
   stripShebang: true,
   rewriteProcessBrowser: true,
   pruneProblematicBuiltins: false,
+  virtualizeNetworkLayer: false,
 };
 const BACKEND_TARGETS = new Set(['edgejs-browser', 'wali-edge-remote']);
 const PACKAGE_STRATEGIES = new Set(['single', 'split']);
@@ -37,6 +38,16 @@ const DEFAULT_PROBLEMATIC_BUILTINS = [
   'dns',
 ];
 const DEFAULT_PROBLEMATIC_BUILTIN_SET = new Set(DEFAULT_PROBLEMATIC_BUILTINS);
+const DEFAULT_NETWORK_BUILTINS = [
+  'net',
+  'tls',
+  'dns',
+  'dgram',
+  'http',
+  'https',
+  'http2',
+];
+const DEFAULT_NETWORK_BUILTIN_SET = new Set(DEFAULT_NETWORK_BUILTINS);
 const HARD_HARD_SIGNAL_PATTERNS = [
   { id: 'directEval', regex: /\beval\s*\(/g },
   { id: 'newFunction', regex: /\bnew\s+Function\s*\(/g },
@@ -70,6 +81,15 @@ function toProblematicVirtualSpecifier(moduleName) {
 function fromProblematicVirtualSpecifier(specifier) {
   if (!specifier.startsWith('@parsec/problematic/')) return null;
   return decodeURIComponent(specifier.slice('@parsec/problematic/'.length));
+}
+
+function toSharedNetworkVirtualSpecifier(moduleName) {
+  return `@parsec/network/${encodeURIComponent(moduleName)}`;
+}
+
+function fromSharedNetworkVirtualSpecifier(specifier) {
+  if (!specifier.startsWith('@parsec/network/')) return null;
+  return decodeURIComponent(specifier.slice('@parsec/network/'.length));
 }
 
 function resolveBuildOutputPath(filePath, outDir) {
@@ -106,6 +126,23 @@ function applyProblematicBuiltinRewrite(source, regex, operationName, operations
       to: target,
       builtin: canonical,
       reason: 'problematic-builtin-pruned',
+    });
+    return `${prefix}${target}${suffix}`;
+  });
+}
+
+function applySharedNetworkRewrite(source, regex, operationName, operations, profile) {
+  if (!profile.virtualizeNetworkLayer || !profile.networkBuiltins) return source;
+  return source.replace(regex, (full, prefix, specifier, suffix) => {
+    const canonical = canonicalizeBuiltinSpecifier(specifier);
+    if (!profile.networkBuiltins.has(canonical)) return full;
+    const target = toSharedNetworkVirtualSpecifier(canonical);
+    operations.push({
+      op: operationName,
+      from: specifier,
+      to: target,
+      builtin: canonical,
+      reason: 'network-layer-virtualized',
     });
     return `${prefix}${target}${suffix}`;
   });
@@ -174,6 +211,34 @@ function rewriteJavaScriptSource(source, relativePath, profile = EASY_HARD_REWRI
     rewritten,
     /(\brequire\(\s*['"])([^'"]+)(['"]\s*\))/g,
     'rewrite-problematic-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applySharedNetworkRewrite(
+    rewritten,
+    /(\bimport\s+(?:[^'"`]*?\s+from\s*)?['"])([^'"]+)(['"])/g,
+    'rewrite-shared-network-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applySharedNetworkRewrite(
+    rewritten,
+    /(\bexport\s+(?:\*|\{[^}]*\})\s+from\s*['"])([^'"]+)(['"])/g,
+    'rewrite-shared-network-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applySharedNetworkRewrite(
+    rewritten,
+    /(\bimport\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-shared-network-builtin',
+    operations,
+    profile,
+  );
+  rewritten = applySharedNetworkRewrite(
+    rewritten,
+    /(\brequire\(\s*['"])([^'"]+)(['"]\s*\))/g,
+    'rewrite-shared-network-builtin',
     operations,
     profile,
   );
@@ -359,6 +424,9 @@ async function analyzeSourceTree(sourceDir) {
     .map((specifier) => specifier.startsWith('node:') ? specifier.slice(5) : specifier)
     .filter((specifier) => NODE_API_SURFACE_MODULES.includes(specifier))
     .sort();
+  const networkBuiltinsUsed = nodeBuiltinsUsed
+    .filter((specifier) => DEFAULT_NETWORK_BUILTIN_SET.has(specifier))
+    .sort();
   const problematicNodeBuiltinsUsed = nodeBuiltinsUsed
     .filter((specifier) => DEFAULT_PROBLEMATIC_BUILTIN_SET.has(specifier))
     .sort();
@@ -398,6 +466,7 @@ async function analyzeSourceTree(sourceDir) {
     fileCount: files.length,
     extensionHistogram: extensions,
     nodeBuiltinsUsed,
+    networkBuiltinsUsed,
     problematicNodeBuiltinsUsed,
     externalPackagesUsed,
     nativeAddonSignals: [...nativeAddonSignals].sort(),
@@ -498,6 +567,7 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
   const changedFiles = [];
   const opHistogram = {};
   const problematicBuiltinsRewritten = new Set();
+  const networkBuiltinsRewritten = new Set();
   let jsFileCount = 0;
 
   for (const fullPath of files) {
@@ -526,6 +596,9 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
         if (operation.op === 'rewrite-problematic-builtin' && operation.builtin) {
           problematicBuiltinsRewritten.add(operation.builtin);
         }
+        if (operation.op === 'rewrite-shared-network-builtin' && operation.builtin) {
+          networkBuiltinsRewritten.add(operation.builtin);
+        }
       }
     }
   }
@@ -538,6 +611,7 @@ async function rewriteSourceTree(sourceDir, preparedDir, profile = EASY_HARD_REW
     changedFiles,
     operationHistogram: opHistogram,
     problematicBuiltinsRewritten: [...problematicBuiltinsRewritten].sort(),
+    networkBuiltinsRewritten: [...networkBuiltinsRewritten].sort(),
   };
 }
 
@@ -592,15 +666,133 @@ function createProblematicBuiltinPlugin({ backendTarget, problematicBuiltinModul
   };
 }
 
+function createSharedNetworkPlugin({ backendTarget, sharedNetworkModules }) {
+  const sharedSet = new Set(sharedNetworkModules || []);
+  if (sharedSet.size === 0) return null;
+
+  return {
+    name: 'parsec-shared-network-layer',
+    setup(build) {
+      build.onResolve({ filter: /^@parsec\/network\// }, (args) => {
+        const moduleName = fromSharedNetworkVirtualSpecifier(args.path);
+        if (!moduleName) return null;
+        return {
+          path: moduleName,
+          namespace: 'parsec-shared-network',
+        };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: 'parsec-shared-network' }, (args) => {
+        if (!sharedSet.has(args.path)) return null;
+        const available = (NODE_API_SURFACE_EXPORTS[args.path] || [])
+          .filter((name) => name !== 'default' && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name));
+        const lines = [
+          `const __parsecModuleName = ${JSON.stringify(args.path)};`,
+          `const __parsecBackendTarget = ${JSON.stringify(backendTarget)};`,
+          'function __parsecResolveSharedLayer() {',
+          '  return globalThis.__PARSEC_SHARED_NETWORK__ || null;',
+          '}',
+          'function __parsecResolveModuleApi() {',
+          '  const layer = __parsecResolveSharedLayer();',
+          '  if (!layer) {',
+          "    const err = new Error(`Shared network layer is not installed for ${__parsecModuleName}.`);",
+          "    err.code = 'ERR_PARSEC_NETWORK_LAYER_UNAVAILABLE';",
+          '    throw err;',
+          '  }',
+          "  if (typeof layer.resolveBuiltin === 'function') {",
+          '    const resolved = layer.resolveBuiltin(__parsecModuleName);',
+          '    if (resolved) return resolved;',
+          '  }',
+          '  const byBuiltins = layer.builtins?.[__parsecModuleName];',
+          '  if (byBuiltins) return byBuiltins;',
+          "  const err = new Error(`Shared network layer does not provide ${__parsecModuleName}.`);",
+          "  err.code = 'ERR_PARSEC_NETWORK_BUILTIN_UNSUPPORTED';",
+          '  throw err;',
+          '}',
+          'function __parsecResolveExport(name) {',
+          '  const mod = __parsecResolveModuleApi();',
+          '  if (name === "default") return mod;',
+          '  if (name in mod) return mod[name];',
+          "  const err = new Error(`Shared network layer export missing: ${__parsecModuleName}.${name}`);",
+          "  err.code = 'ERR_PARSEC_NETWORK_EXPORT_UNSUPPORTED';",
+          '  throw err;',
+          '}',
+          'function __parsecNamed(name) {',
+          '  return (...args) => {',
+          '    const value = __parsecResolveExport(name);',
+          '    return typeof value === "function" ? value(...args) : value;',
+          '  };',
+          '}',
+          ...available.map((name) => `export const ${name} = __parsecNamed(${JSON.stringify(name)});`),
+          'const __defaultProxy = new Proxy({}, {',
+          '  get(_target, prop) {',
+          "    if (prop === '__esModule') return true;",
+          "    if (prop === 'default') return __parsecResolveExport('default');",
+          "    if (typeof prop !== 'string') return undefined;",
+          '    const value = __parsecResolveExport(prop);',
+          '    return value;',
+          '  },',
+          '});',
+          'export default __defaultProxy;',
+          '',
+        ];
+        return { contents: lines.join('\n'), loader: 'js' };
+      });
+    },
+  };
+}
+
+async function writeSharedNetworkAdapter(outputDir, backendTarget, sharedNetworkModules) {
+  const adapterFile = path.join(outputDir, 'parsec-shared-network-adapter.js');
+  const lines = [
+    '// Auto-generated by Parsec stage-1.',
+    '// Install one shared network layer for all packaged apps.',
+    '',
+    `export const PARSEC_NETWORK_MODULES = ${JSON.stringify(sharedNetworkModules || [], null, 2)};`,
+    '',
+    'export function installParsecSharedNetworkLayer(layer) {',
+    "  if (!layer || typeof layer !== 'object') throw new TypeError('layer must be an object');",
+    '  globalThis.__PARSEC_SHARED_NETWORK__ = layer;',
+    '  return layer;',
+    '}',
+    '',
+    'export function getParsecSharedNetworkLayer() {',
+    '  return globalThis.__PARSEC_SHARED_NETWORK__ || null;',
+    '}',
+    '',
+    'export function createProxyBackedSharedNetworkLayer({',
+    "  proxyUrl = 'https://cors.stare.network',",
+    "  persistent = true,",
+    '} = {}) {',
+    '  // Loader integration point: maintain one transport/session and expose',
+    '  // builtin-compatible APIs through resolveBuiltin().',
+    '  const session = { proxyUrl, persistent, backendTarget: ' + JSON.stringify(backendTarget) + ' };',
+    '  return {',
+    '    session,',
+    '    builtins: {},',
+    '    resolveBuiltin(name) {',
+    '      return this.builtins[name] || null;',
+    '    },',
+    '  };',
+    '}',
+    '',
+  ];
+  await writeFile(adapterFile, `${lines.join('\n')}\n`, 'utf8');
+  return adapterFile;
+}
+
 async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed, options = {}) {
   const packageStrategy = options.packageStrategy || 'single';
   const backendTarget = options.backendTarget || 'edgejs-browser';
   const problematicBuiltinModules = options.problematicBuiltinModules || [];
+  const sharedNetworkModules = options.sharedNetworkModules || [];
 
   await ensureDir(outDir);
   const outFile = path.join(outDir, 'app.optimized.js');
   const splitOutDir = path.join(outDir, 'bundle');
   const problematicPlugin = createProblematicBuiltinPlugin({ backendTarget, problematicBuiltinModules });
+  const sharedNetworkPlugin = createSharedNetworkPlugin({ backendTarget, sharedNetworkModules });
+  const plugins = [problematicPlugin, sharedNetworkPlugin].filter(Boolean);
   const sharedOptions = {
     entryPoints: [entryPath],
     bundle: true,
@@ -628,7 +820,7 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed, options =
     treeShaking: true,
     keepNames: false,
     write: true,
-    plugins: problematicPlugin ? [problematicPlugin] : [],
+    plugins,
   };
   const buildOptions = packageStrategy === 'split'
     ? {
@@ -682,11 +874,14 @@ async function buildOptimizedBlob(entryPath, outDir, nodeBuiltinsUsed, options =
   };
 }
 
-async function buildPackageManifest(bundleResult, outputDir) {
+async function buildPackageManifest(bundleResult, outputDir, extraArtifacts = []) {
   const files = [];
   const candidates = new Set(bundleResult.outputFiles || []);
   if (bundleResult.outputFile) candidates.add(bundleResult.outputFile);
   if (bundleResult.outputMapFile) candidates.add(bundleResult.outputMapFile);
+  for (const artifact of extraArtifacts) {
+    if (artifact) candidates.add(artifact);
+  }
   for (const absolutePath of candidates) {
     if (!absolutePath || !existsSync(absolutePath)) continue;
     const raw = await readFile(absolutePath);
@@ -713,11 +908,14 @@ function buildParsecCacheKey(stage1Result, options = {}) {
     backendTarget: options.backendTarget || 'edgejs-browser',
     packageStrategy: options.packageStrategy || 'single',
     pruneProblematicBuiltins: Boolean(options.pruneProblematicBuiltins),
+    virtualizeNetworkLayer: Boolean(options.virtualizeNetworkLayer),
     entry: toPosix(path.relative(stage1Result.preparedDir, stage1Result.preparedEntryPath)),
     inputKind: stage1Result.inputKind || 'javascript',
     nodeBuiltinsUsed: stage1Result.preparedAnalysis?.nodeBuiltinsUsed || [],
+    networkBuiltinsUsed: stage1Result.preparedAnalysis?.networkBuiltinsUsed || [],
     problematicNodeBuiltinsUsed: stage1Result.preparedAnalysis?.problematicNodeBuiltinsUsed || [],
     operationHistogram: stage1Result.rewrite?.operationHistogram || {},
+    networkBuiltinsRewritten: stage1Result.rewrite?.networkBuiltinsRewritten || [],
     easyHardReadiness: stage1Result.preparedAnalysis?.easyHardReadiness || {},
     wasmValidation: stage1Result.wasmValidation || null,
   };
@@ -750,6 +948,13 @@ function createLoadPlan(outputDir, stage1Result) {
       ...(stage1Result.rewrite?.problematicBuiltinsRewritten || []),
     ]),
   ].sort();
+  const networkBuiltinsUsed = [
+    ...new Set([
+      ...(stage1Result.analysis?.networkBuiltinsUsed || []),
+      ...(stage1Result.preparedAnalysis?.networkBuiltinsUsed || []),
+      ...(stage1Result.rewrite?.networkBuiltinsRewritten || []),
+    ]),
+  ].sort();
 
   return {
     schemaVersion: 1,
@@ -772,6 +977,7 @@ function createLoadPlan(outputDir, stage1Result) {
     analysis: {
       nodeBuiltinsUsed: stage1Result.preparedAnalysis?.nodeBuiltinsUsed || [],
       externalPackagesUsed: stage1Result.preparedAnalysis?.externalPackagesUsed || [],
+      networkBuiltinsUsed,
       problematicNodeBuiltinsUsed,
       easyHardReadiness: stage1Result.preparedAnalysis?.easyHardReadiness || { ready: true, score: 100, blockers: [] },
       hardHardSignals: stage1Result.preparedAnalysis?.hardHardSignals || {},
@@ -793,6 +999,14 @@ function createLoadPlan(outputDir, stage1Result) {
     packageManifest: stage1Result.packageManifestFile
       ? toPosix(path.relative(outputDir, stage1Result.packageManifestFile))
       : null,
+    sharedNetwork: {
+      enabled: Boolean(stage1Result.virtualizeNetworkLayer),
+      rewrittenBuiltins: stage1Result.rewrite?.networkBuiltinsRewritten || [],
+      adapterFile: stage1Result.sharedNetworkAdapterFile
+        ? toPosix(path.relative(outputDir, stage1Result.sharedNetworkAdapterFile))
+        : null,
+      globalLayerVar: '__PARSEC_SHARED_NETWORK__',
+    },
     cacheKey: stage1Result.cacheKey || null,
   };
 }
@@ -914,6 +1128,8 @@ export class ParsecEngine {
     }
     const pruneProblematicBuiltins = Boolean(options.pruneProblematicBuiltins);
     const problematicBuiltins = new Set(options.problematicBuiltins || DEFAULT_PROBLEMATIC_BUILTINS);
+    const virtualizeNetworkLayer = Boolean(options.virtualizeNetworkLayer);
+    const networkBuiltins = new Set(options.networkBuiltins || DEFAULT_NETWORK_BUILTINS);
 
     const jobId = inputSpec.jobId || randomUUID();
     const jobRoot = path.join(this.stageRoot, jobId);
@@ -941,6 +1157,7 @@ export class ParsecEngine {
       const rewriteResult = await rewriteSourceTree(sourceDir, preparedDir, {
         ...EASY_HARD_REWRITE_PROFILE,
         pruneProblematicBuiltins: false,
+        virtualizeNetworkLayer: false,
       });
       const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
       const preparedAnalysis = await analyzeSourceTree(preparedDir);
@@ -972,8 +1189,10 @@ export class ParsecEngine {
         backendTarget,
         packageStrategy: 'single',
         pruneProblematicBuiltins: false,
+        virtualizeNetworkLayer: false,
         packageManifest,
         packageManifestFile,
+        sharedNetworkAdapterFile: null,
       };
     } else {
       const entryPath = await detectEntryPoint(sourceDir, inputSpec.entry);
@@ -985,16 +1204,27 @@ export class ParsecEngine {
         ...EASY_HARD_REWRITE_PROFILE,
         pruneProblematicBuiltins,
         problematicBuiltins,
+        virtualizeNetworkLayer,
+        networkBuiltins,
       });
       const preparedEntryPath = path.join(preparedDir, path.relative(sourceDir, entryPath));
       const preparedAnalysis = await analyzeSourceTree(preparedDir);
       const problematicBuiltinModules = rewriteResult.problematicBuiltinsRewritten || [];
+      const sharedNetworkModules = rewriteResult.networkBuiltinsRewritten || [];
       const bundleResult = await buildOptimizedBlob(preparedEntryPath, outputDir, preparedAnalysis.nodeBuiltinsUsed || [], {
         packageStrategy,
         backendTarget,
         problematicBuiltinModules,
+        sharedNetworkModules,
       });
-      const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(bundleResult, outputDir);
+      const sharedNetworkAdapterFile = (virtualizeNetworkLayer && sharedNetworkModules.length > 0)
+        ? await writeSharedNetworkAdapter(outputDir, backendTarget, sharedNetworkModules)
+        : null;
+      const { manifest: packageManifest, manifestFile: packageManifestFile } = await buildPackageManifest(
+        bundleResult,
+        outputDir,
+        sharedNetworkAdapterFile ? [sharedNetworkAdapterFile] : [],
+      );
       stage1Result = {
         inputKind: 'javascript',
         sourceDir,
@@ -1009,14 +1239,17 @@ export class ParsecEngine {
         backendTarget,
         packageStrategy,
         pruneProblematicBuiltins,
+        virtualizeNetworkLayer,
         packageManifest,
         packageManifestFile,
+        sharedNetworkAdapterFile,
       };
     }
     const cacheKey = buildParsecCacheKey(stage1Result, {
       backendTarget,
       packageStrategy,
       pruneProblematicBuiltins,
+      virtualizeNetworkLayer,
     });
     stage1Result.cacheKey = cacheKey;
     stage1Result.cacheKeyFile = path.join(outputDir, 'parsec-cache-key.txt');

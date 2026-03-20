@@ -34,6 +34,7 @@ function usage() {
     '  --backend-target <name>  edgejs-browser | wali-edge-remote',
     '  --package-strategy <s>   single | split',
     '  --prune-problematic-builtins  Rewrite known-problematic builtins to pruned stubs',
+    '  --virtualize-network-layer    Rewrite app network imports to shared layer adapters',
     '  --wait-stage2            Wait for github wasm lift task to finish',
     '  --stage2-timeout-ms <n>  Wait timeout when --wait-stage2 is set',
     '  --json                   Print only JSON result',
@@ -62,6 +63,7 @@ async function main() {
       backendTarget: args['backend-target'] ? String(args['backend-target']) : undefined,
       packageStrategy: args['package-strategy'] ? String(args['package-strategy']) : undefined,
       pruneProblematicBuiltins: Boolean(args['prune-problematic-builtins']),
+      virtualizeNetworkLayer: Boolean(args['virtualize-network-layer']),
       waitForStage2: Boolean(args['wait-stage2']),
       stage2TimeoutMs: args['stage2-timeout-ms'] ? Number(args['stage2-timeout-ms']) : undefined,
     },
@@ -79,6 +81,7 @@ async function main() {
   console.log(`- bundle: ${metadata.stage1.bundle.outputFile}`);
   console.log(`- backendTarget: ${metadata.stage1.backendTarget}`);
   console.log(`- packageStrategy: ${metadata.stage1.packageStrategy}`);
+  console.log(`- virtualizeNetworkLayer: ${Boolean(metadata.stage1.virtualizeNetworkLayer)}`);
   console.log(`- cacheKey: ${metadata.stage1.cacheKey}`);
   if (metadata.stage2) {
     console.log(`- stage2 task: ${metadata.stage2.taskId || metadata.stage2.id} (${metadata.stage2.status})`);
