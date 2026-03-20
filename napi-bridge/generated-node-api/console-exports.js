@@ -1,0 +1,30 @@
+// Auto-generated ESM wrapper for node:console
+import { getNodeApiModule } from '../node-api-surface.js';
+
+const _module = getNodeApiModule('console');
+export default _module;
+export const Console = _module.Console;
+export const assert = _module.assert;
+export const clear = _module.clear;
+export const context = _module.context;
+export const count = _module.count;
+export const countReset = _module.countReset;
+export const createTask = _module.createTask;
+export const debug = _module.debug;
+export const dir = _module.dir;
+export const dirxml = _module.dirxml;
+export const error = _module.error;
+export const group = _module.group;
+export const groupCollapsed = _module.groupCollapsed;
+export const groupEnd = _module.groupEnd;
+export const info = _module.info;
+export const log = _module.log;
+export const profile = _module.profile;
+export const profileEnd = _module.profileEnd;
+export const table = _module.table;
+export const time = _module.time;
+export const timeEnd = _module.timeEnd;
+export const timeLog = _module.timeLog;
+export const timeStamp = _module.timeStamp;
+export const trace = _module.trace;
+export const warn = _module.warn;

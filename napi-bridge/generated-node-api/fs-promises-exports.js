@@ -1,0 +1,37 @@
+// Auto-generated ESM wrapper for node:fs/promises
+import { getNodeApiModule } from '../node-api-surface.js';
+
+const _module = getNodeApiModule('fs/promises');
+export default _module;
+export const access = _module.access;
+export const appendFile = _module.appendFile;
+export const chmod = _module.chmod;
+export const chown = _module.chown;
+export const constants = _module.constants;
+export const copyFile = _module.copyFile;
+export const cp = _module.cp;
+export const glob = _module.glob;
+export const lchmod = _module.lchmod;
+export const lchown = _module.lchown;
+export const link = _module.link;
+export const lstat = _module.lstat;
+export const lutimes = _module.lutimes;
+export const mkdir = _module.mkdir;
+export const mkdtemp = _module.mkdtemp;
+export const open = _module.open;
+export const opendir = _module.opendir;
+export const readFile = _module.readFile;
+export const readdir = _module.readdir;
+export const readlink = _module.readlink;
+export const realpath = _module.realpath;
+export const rename = _module.rename;
+export const rm = _module.rm;
+export const rmdir = _module.rmdir;
+export const stat = _module.stat;
+export const statfs = _module.statfs;
+export const symlink = _module.symlink;
+export const truncate = _module.truncate;
+export const unlink = _module.unlink;
+export const utimes = _module.utimes;
+export const watch = _module.watch;
+export const writeFile = _module.writeFile;

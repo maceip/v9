@@ -1,0 +1,53 @@
+{
+  "backends": [
+    {
+      "language": "rust",
+      "extensions": [".rs"],
+      "probeFiles": ["Cargo.toml"],
+      "compileCommands": [
+        ["cargo", "build", "--release", "--target", "wasm32-wasi"]
+      ],
+      "notes": "Prefer pure crates first; native deps may require helper wasm adapters."
+    },
+    {
+      "language": "c-cpp",
+      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"],
+      "probeFiles": ["CMakeLists.txt", "Makefile"],
+      "compileCommands": [
+        ["emcc", "-O3", "-sWASM=1"]
+      ],
+      "notes": "Use emscripten for portable browser wasm artifacts."
+    },
+    {
+      "language": "zig",
+      "extensions": [".zig"],
+      "probeFiles": ["build.zig"],
+      "compileCommands": [
+        ["zig", "build", "-Dtarget=wasm32-wasi", "-Doptimize=ReleaseFast"]
+      ],
+      "notes": "Zig toolchain natively supports wasm32-wasi targets."
+    },
+    {
+      "language": "go",
+      "extensions": [".go"],
+      "probeFiles": ["go.mod"],
+      "compileCommands": [
+        ["go", "build", "-o", "build/app.wasm"]
+      ],
+      "environment": {
+        "GOOS": "js",
+        "GOARCH": "wasm"
+      },
+      "notes": "Go can target wasm for browser execution."
+    },
+    {
+      "language": "assemblyscript",
+      "extensions": [".ts"],
+      "probeFiles": ["asconfig.json"],
+      "compileCommands": [
+        ["npx", "asc", "assembly/index.ts", "--target", "release"]
+      ],
+      "notes": "AssemblyScript projects compile directly to wasm."
+    }
+  ]
+}
