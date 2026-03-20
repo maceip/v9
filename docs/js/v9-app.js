@@ -228,8 +228,9 @@ async function loadCLI() {
     cliFrame.addEventListener('load', () => {
       bootText.style.display = 'none';
     }, { once: true });
+  } else {
+    showRuntimeUnavailable();
   }
-  // No CLI URL — boot screen stays at "ready" with blinking cursor.
 }
 
 async function resolveWebURL() {
@@ -241,6 +242,40 @@ async function resolveWebURL() {
     if (res.ok) return url;
   } catch (e) { /* network error */ }
   return null;
+}
+
+function showRuntimeUnavailable() {
+  state = 'UNAVAILABLE';
+
+  const panel = document.createElement('div');
+  panel.className = 'boot-line visible';
+  panel.id = 'runtime-unavailable';
+  panel.style.marginTop = '16px';
+  panel.style.padding = '12px 14px';
+  panel.style.borderRadius = '10px';
+  panel.style.border = '1px solid rgba(255, 120, 120, 0.45)';
+  panel.style.background = 'rgba(80, 10, 10, 0.22)';
+  panel.style.maxWidth = '560px';
+
+  const title = document.createElement('div');
+  title.style.color = '#ff8a8a';
+  title.style.fontFamily = 'IBM Plex Mono, monospace';
+  title.style.fontSize = '13px';
+  title.style.letterSpacing = '0.06em';
+  title.style.marginBottom = '8px';
+  title.textContent = 'RUNTIME UNAVAILABLE';
+  panel.appendChild(title);
+
+  const detail = document.createElement('div');
+  detail.style.fontFamily = 'IBM Plex Mono, monospace';
+  detail.style.fontSize = '14px';
+  detail.style.lineHeight = '1.6';
+  detail.style.color = 'var(--fg)';
+  detail.textContent =
+    'This deployment is not connected to a live Claude Code runtime. Input is disabled. Use a runtime-backed environment instead of this static site.';
+  panel.appendChild(detail);
+
+  bootText.appendChild(panel);
 }
 
 // ── Helpers ──
@@ -291,7 +326,7 @@ function resetToIdle() {
 
 // ── Keyboard shortcut: Escape to zoom out ──
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING')) {
+  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE')) {
     resetToIdle();
   }
 });
@@ -302,7 +337,7 @@ document.addEventListener('keydown', (e) => {
 const dismissedTray = document.getElementById('dismissed-tray');
 
 new SwipeDismiss(termWrap, {
-  canSwipe: () => state === 'RUNNING' || state === 'BOOTING',
+  canSwipe: () => state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE',
   onDismiss: () => {
     addDismissedTile();
     resetToIdle();
