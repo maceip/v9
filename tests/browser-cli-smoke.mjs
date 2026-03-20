@@ -124,19 +124,26 @@ async function testCLI(browser, name, bundlePath) {
       failed++;
     }
 
-    // Test 3: ESM import succeeded (ignore known non-fatal parser warning noise)
-    const esmLoaded = await page.evaluate(() => {
+    // Test 3: ESM import succeeded with no syntax/parser failures
+    const syntaxErrorPattern = /SyntaxError|Invalid or unexpected token|Unexpected token|Cannot use import statement outside a module|Unexpected identifier/i;
+    const terminalHasSyntaxError = await page.evaluate((patternSource) => {
       const term = document.querySelector('#terminal');
       const text = term?.textContent || '';
-      const hasFatalSyntax = text.includes('SyntaxError') &&
-        !text.includes('v2(...).Parser.detailed is not a function');
-      return !text.includes('Invalid or unexpected token') && !hasFatalSyntax;
-    });
+      const pattern = new RegExp(patternSource, 'i');
+      return pattern.test(text);
+    }, syntaxErrorPattern.source);
+    const syntaxPageErrors = errors.filter((msg) => syntaxErrorPattern.test(msg));
+    const syntaxConsoleErrors = consoleMessages
+      .filter((msg) => msg.type === 'error')
+      .filter((msg) => syntaxErrorPattern.test(msg.text));
+    const esmLoaded = !terminalHasSyntaxError &&
+      syntaxPageErrors.length === 0 &&
+      syntaxConsoleErrors.length === 0;
     if (esmLoaded) {
       log('✅', 'ESM bundle loaded (no syntax errors)');
       passed++;
     } else {
-      log('❌', 'ESM bundle failed with syntax error');
+      log('❌', `ESM bundle failed with syntax/parsing errors (terminal=${terminalHasSyntaxError}, page=${syntaxPageErrors.length}, console=${syntaxConsoleErrors.length})`);
       failed++;
     }
 
