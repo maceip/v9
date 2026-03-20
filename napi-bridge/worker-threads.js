@@ -64,6 +64,7 @@ export const BroadcastChannel = globalThis.BroadcastChannel || class BroadcastCh
 };
 
 export function markAsUntransferable() {}
+export function markAsUncloneable() {}
 export function moveMessagePortToContext() { throw new Error('Not supported'); }
 export function receiveMessageOnPort() { return undefined; }
 export function getEnvironmentData() { return undefined; }
