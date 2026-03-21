@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "baseUrl": "http://localhost:8080",
+    "protocolTimeoutMs": 300000,
+    "navigationTimeoutMs": 60000,
+    "smokeRenderWaitMs": 15000,
+    "interactiveRenderWaitMs": 20000
+  },
+  "scenarios": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "bundlePath": "/dist/claude-code-cli.js",
+      "cliMarkers": [
+        "Welcome",
+        "Claude",
+        "claude"
+      ],
+      "allowlistedRejectionSubstrings": [
+        "m2r.transport",
+        "transport is not a function",
+        "Failed to save project registry"
+      ],
+      "knownSkips": [],
+      "sessionKeys": [
+        {
+          "name": "anthropic_api_key",
+          "fromEnv": "ANTHROPIC_API_KEY",
+          "fallback": "sk-test-fake-key-for-smoke-test"
+        }
+      ],
+      "phaseBudgetsMs": {
+        "smokeLoad": 60000,
+        "smokeRender": 15000,
+        "interactiveLoad": 90000,
+        "interactiveRender": 20000
+      }
+    },
+    {
+      "id": "gemini-cli",
+      "displayName": "Gemini CLI",
+      "bundlePath": "/dist/gemini-cli.js",
+      "cliMarkers": [
+        "Gemini",
+        "gemini",
+        "Google"
+      ],
+      "allowlistedRejectionSubstrings": [
+        "m2r.transport",
+        "transport is not a function",
+        "Failed to save project registry"
+      ],
+      "knownSkips": [
+        {
+          "code": "PUPPETEER_PROTOCOL_TIMEOUT",
+          "scope": "all",
+          "matchSubstring": "Runtime.callFunctionOn timed out",
+          "issueUrl": "https://github.com/maceip/v9/pull/6",
+          "expiresOn": "2026-06-30"
+        },
+        {
+          "code": "PUPPETEER_PROTOCOL_ERROR",
+          "scope": "interactivity",
+          "matchSubstring": "Protocol error",
+          "issueUrl": "https://github.com/maceip/v9/pull/6",
+          "expiresOn": "2026-06-30"
+        }
+      ],
+      "phaseBudgetsMs": {
+        "smokeLoad": 60000,
+        "smokeRender": 15000,
+        "interactiveLoad": 90000,
+        "interactiveRender": 20000
+      }
+    },
+    {
+      "id": "cline",
+      "displayName": "Cline",
+      "bundlePath": "/dist/cline-cli.js",
+      "cliMarkers": [
+        "Cline",
+        "cline",
+        "autonomous"
+      ],
+      "allowlistedRejectionSubstrings": [
+        "m2r.transport",
+        "transport is not a function",
+        "Failed to save project registry"
+      ],
+      "knownSkips": [],
+      "phaseBudgetsMs": {
+        "smokeLoad": 60000,
+        "smokeRender": 15000,
+        "interactiveLoad": 90000,
+        "interactiveRender": 20000
+      }
+    },
+    {
+      "id": "cody",
+      "displayName": "Cody",
+      "bundlePath": "/dist/cody-cli.js",
+      "cliMarkers": [
+        "Cody",
+        "cody",
+        "Sourcegraph"
+      ],
+      "allowlistedRejectionSubstrings": [
+        "m2r.transport",
+        "transport is not a function",
+        "Failed to save project registry"
+      ],
+      "knownSkips": [],
+      "phaseBudgetsMs": {
+        "smokeLoad": 60000,
+        "smokeRender": 15000,
+        "interactiveLoad": 90000,
+        "interactiveRender": 20000
+      }
+    },
+    {
+      "id": "amp",
+      "displayName": "Amp",
+      "bundlePath": "/dist/amp-cli.js",
+      "cliMarkers": [
+        "Amp",
+        "amp",
+        "Sourcegraph",
+        "ampcode"
+      ],
+      "allowlistedRejectionSubstrings": [
+        "m2r.transport",
+        "transport is not a function",
+        "Failed to save project registry"
+      ],
+      "knownSkips": [],
+      "phaseBudgetsMs": {
+        "smokeLoad": 60000,
+        "smokeRender": 15000,
+        "interactiveLoad": 90000,
+        "interactiveRender": 20000
+      }
+    }
+  ],
+  "conversation": {
+    "scenarioId": "claude-code",
+    "requiredEnvKey": "ANTHROPIC_API_KEY",
+    "prompt": "write me a paragraph on god",
+    "responseWaitMs": 60000
+  }
+}

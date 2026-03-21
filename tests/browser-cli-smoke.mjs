@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Browser smoke tests for Claude Code and Gemini CLI.
+ * Browser CLI smoke tests driven by contract definitions.
  *
  * Starts the dev server, launches Chrome via Puppeteer,
  * loads each CLI bundle, and checks that the TUI renders.
@@ -19,25 +19,15 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  loadBrowserSmokeContract,
+  shouldSkipForKnownIssue,
+} from './helpers/browser-smoke-contract.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// ── Config ──────────────────────────────────────────────────────────
-
 const DEV_SERVER = join(ROOT, 'scripts', 'dev-server.mjs');
-const BASE_URL = 'http://localhost:8080';
-const BUNDLES = {
-  'Claude Code': '/dist/claude-code-cli.js',
-  'Gemini CLI': '/dist/gemini-cli.js',
-  'Cline': '/dist/cline-cli.js',
-  'Cody': '/dist/cody-cli.js',
-  'Amp': '/dist/amp-cli.js',
-};
-const TIMEOUT = 60_000; // 60s per CLI
-const API_KEY = 'sk-test-fake-key-for-smoke-test';
-
-// ── Helpers ─────────────────────────────────────────────────────────
 
 let passed = 0;
 let failed = 0;
@@ -47,7 +37,7 @@ function log(icon, msg) {
   console.log(`  ${icon} ${msg}`);
 }
 
-async function launchBrowser() {
+async function launchBrowser(protocolTimeoutMs) {
   // Try puppeteer first, fall back to puppeteer-core + system Chrome
   let puppeteer;
   try {
@@ -63,15 +53,36 @@ async function launchBrowser() {
   const launch = puppeteer.default?.launch || puppeteer.launch;
   const browser = await launch({
     headless: 'new',
-    protocolTimeout: 300000,
+    protocolTimeout: protocolTimeoutMs,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'],
   });
   return browser;
 }
 
-async function testCLI(browser, name, bundlePath) {
+function buildScenarioSessionSeed(scenario) {
+  const sessionSeed = {};
+  for (const key of scenario.sessionKeys || []) {
+    if (!key?.name) {
+      continue;
+    }
+    if (key.fromEnv && process.env[key.fromEnv]) {
+      sessionSeed[key.name] = process.env[key.fromEnv];
+      continue;
+    }
+    if (typeof key.fallback === 'string') {
+      sessionSeed[key.name] = key.fallback;
+    }
+  }
+  return sessionSeed;
+}
+
+async function testCLI(browser, scenario, defaults) {
+  const name = scenario.displayName;
+  const bundlePath = scenario.bundlePath;
+  const loadBudgetMs = scenario.phaseBudgetsMs?.smokeLoad || defaults.navigationTimeoutMs;
+  const renderBudgetMs = scenario.phaseBudgetsMs?.smokeRender || defaults.smokeRenderWaitMs;
   const cacheBust = Date.now();
-  const fullUrl = `${BASE_URL}/web/index.html?bundle=${bundlePath}&cb=${cacheBust}`;
+  const fullUrl = `${defaults.baseUrl}/web/index.html?bundle=${bundlePath}&cb=${cacheBust}`;
   console.log(`\n── ${name} ──`);
   console.log(`  URL: ${fullUrl}`);
 
@@ -90,23 +101,24 @@ async function testCLI(browser, name, bundlePath) {
   page.on('console', (msg) => consoleMessages.push({ type: msg.type(), text: msg.text() }));
   page.on('pageerror', (err) => errors.push(err.message));
 
-  // Seed only CLI-specific session keys before navigation.
-  // A generic fake key can trigger auth churn in unrelated CLIs.
-  await page.evaluateOnNewDocument((cliName, key) => {
+  const sessionSeed = buildScenarioSessionSeed(scenario);
+  await page.evaluateOnNewDocument((seed) => {
     sessionStorage.removeItem('anthropic_api_key');
     sessionStorage.removeItem('gemini_api_key');
-    if (cliName === 'Claude Code') {
-      sessionStorage.setItem('anthropic_api_key', key);
+    for (const [k, v] of Object.entries(seed)) {
+      if (v) {
+        sessionStorage.setItem(k, v);
+      }
     }
-  }, name, API_KEY);
+  }, sessionSeed);
 
   try {
     // Navigate and wait for DOM readiness.
     // Some CLIs keep long-lived network activity which makes networkidle flaky.
-    await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: loadBudgetMs });
 
     // Wait for the terminal to render something
-    await sleep(15_000);
+    await sleep(renderBudgetMs);
 
     // Test 1: Page loaded without crash
     const title = await page.title();
@@ -157,12 +169,11 @@ async function testCLI(browser, name, bundlePath) {
 
     // Test 4: No critical unhandled rejections
     // Filter out known non-critical rejections from bundled dependencies
-    const rejectionInfo = await page.evaluate(() => {
+    const rejectionInfo = await page.evaluate((ignorable) => {
       const all = globalThis._rejections || [];
-      const ignorable = ['m2r.transport', 'transport is not a function', 'Failed to save project registry'];
       const critical = all.filter(r => !ignorable.some(pat => (r.message || '').includes(pat)));
       return { total: all.length, critical: critical.length, details: critical.slice(0, 3).map(r => r.message?.slice(0, 100)) };
-    });
+    }, scenario.allowlistedRejectionSubstrings || []);
     if (rejectionInfo.critical === 0) {
       log('✅', rejectionInfo.total > 0
         ? `No critical rejections (${rejectionInfo.total} non-critical filtered)`
@@ -189,26 +200,11 @@ async function testCLI(browser, name, bundlePath) {
     }
 
     // Test 6: Check for specific CLI markers
-    const cliMarker = await page.evaluate((cliName) => {
+    const cliMarker = await page.evaluate((markers) => {
       const term = document.querySelector('#terminal');
       const text = term?.textContent || '';
-      if (cliName === 'Claude Code') {
-        return text.includes('Welcome') || text.includes('Claude') || text.includes('claude');
-      }
-      if (cliName === 'Gemini CLI') {
-        return text.includes('Gemini') || text.includes('gemini') || text.includes('Google');
-      }
-      if (cliName === 'Cline') {
-        return text.includes('Cline') || text.includes('cline') || text.includes('autonomous');
-      }
-      if (cliName === 'Cody') {
-        return text.includes('Cody') || text.includes('cody') || text.includes('Sourcegraph');
-      }
-      if (cliName === 'Amp') {
-        return text.includes('Amp') || text.includes('amp') || text.includes('Sourcegraph') || text.includes('ampcode');
-      }
-      return false;
-    }, name);
+      return markers.some((marker) => text.includes(marker));
+    }, scenario.cliMarkers || []);
     if (cliMarker) {
       log('✅', `${name} TUI content detected`);
       passed++;
@@ -240,9 +236,9 @@ async function testCLI(browser, name, bundlePath) {
 
   } catch (err) {
     const message = String(err?.message || '');
-    const isProtocolTimeout = message.includes('Runtime.callFunctionOn timed out');
-    if (name === 'Gemini CLI' && isProtocolTimeout) {
-      log('⚠️', `${name} protocol timeout (known heavy runtime behavior): ${message.slice(0, 120)}`);
+    const skip = shouldSkipForKnownIssue(scenario, 'smoke', message);
+    if (skip) {
+      log('⚠️', `${name} skipped (${skip.code}, expires ${skip.expiresOn}): ${message.slice(0, 120)}`);
       skipped++;
       return;
     }
@@ -260,9 +256,14 @@ async function testCLI(browser, name, bundlePath) {
   }
 }
 
-// ── Main ────────────────────────────────────────────────────────────
-
 console.log('=== Browser CLI Smoke Tests ===\n');
+const contract = await loadBrowserSmokeContract();
+const defaults = {
+  baseUrl: process.env.BASE_URL || contract.defaults.baseUrl,
+  protocolTimeoutMs: contract.defaults.protocolTimeoutMs,
+  navigationTimeoutMs: contract.defaults.navigationTimeoutMs,
+  smokeRenderWaitMs: contract.defaults.smokeRenderWaitMs,
+};
 
 // Start dev server
 console.log('Starting dev server...');
@@ -298,11 +299,11 @@ console.log('Dev server started.');
 
 let browser;
 try {
-  browser = await launchBrowser();
+  browser = await launchBrowser(defaults.protocolTimeoutMs);
   console.log('Browser launched.');
 
-  for (const [name, bundlePath] of Object.entries(BUNDLES)) {
-    await testCLI(browser, name, bundlePath);
+  for (const scenario of contract.scenarios) {
+    await testCLI(browser, scenario, defaults);
   }
 } catch (err) {
   console.error('Fatal error:', err.message);

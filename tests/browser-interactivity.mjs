@@ -27,20 +27,15 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  getScenarioByDisplayName,
+  loadBrowserSmokeContract,
+  shouldSkipForKnownIssue,
+} from './helpers/browser-smoke-contract.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
-
-const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
-const NAVIGATION_TIMEOUT_MS = Number(process.env.BROWSER_TEST_NAV_TIMEOUT_MS || 90_000);
 const API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const BUNDLES = {
-  'Claude Code': '/dist/claude-code-cli.js',
-  'Gemini CLI': '/dist/gemini-cli.js',
-  'Cline': '/dist/cline-cli.js',
-  'Cody': '/dist/cody-cli.js',
-  'Amp': '/dist/amp-cli.js',
-};
 
 let passed = 0;
 let failed = 0;
@@ -48,7 +43,7 @@ let skipped = 0;
 
 function log(icon, msg) { console.log(`  ${icon} ${msg}`); }
 
-async function launchBrowser() {
+async function launchBrowser(protocolTimeoutMs) {
   let puppeteer;
   try { puppeteer = await import('puppeteer'); } catch {
     try { puppeteer = await import('puppeteer-core'); } catch {
@@ -57,9 +52,24 @@ async function launchBrowser() {
   }
   return (puppeteer.default?.launch || puppeteer.launch)({
     headless: 'new',
-    protocolTimeout: 300000,
+    protocolTimeout: protocolTimeoutMs,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'],
   });
+}
+
+function buildScenarioSessionSeed(scenario) {
+  const seed = {};
+  for (const key of scenario?.sessionKeys || []) {
+    if (!key?.name) continue;
+    if (key.fromEnv && process.env[key.fromEnv]) {
+      seed[key.name] = process.env[key.fromEnv];
+      continue;
+    }
+    if (typeof key.fallback === 'string') {
+      seed[key.name] = key.fallback;
+    }
+  }
+  return seed;
 }
 
 async function getTerminalText(page) {
@@ -109,7 +119,9 @@ async function sendKeys(page, keys, delayMs = 100) {
   }
 }
 
-async function testKeyInteractivity(browser, name, bundlePath) {
+async function testKeyInteractivity(browser, scenario, defaults) {
+  const name = scenario.displayName;
+  const bundlePath = scenario.bundlePath;
   console.log(`\n── ${name}: Key Interactivity ──`);
 
   const bundleFile = join(ROOT, bundlePath.replace(/^\//, ''));
@@ -122,19 +134,23 @@ async function testKeyInteractivity(browser, name, bundlePath) {
   const page = await browser.newPage();
   page.on('pageerror', () => {}); // suppress page errors
 
-  // Set API key
-  await page.evaluateOnNewDocument((key) => {
-    if (key) sessionStorage.setItem('anthropic_api_key', key);
-  }, API_KEY);
+  const sessionSeed = buildScenarioSessionSeed(scenario);
+  await page.evaluateOnNewDocument((seed) => {
+    for (const [k, v] of Object.entries(seed)) {
+      if (v) sessionStorage.setItem(k, v);
+    }
+  }, sessionSeed);
 
   try {
-    await page.goto(`${BASE_URL}/web/index.html?bundle=${bundlePath}`, {
+    const loadBudgetMs = scenario.phaseBudgetsMs?.interactiveLoad || defaults.navigationTimeoutMs;
+    const renderBudgetMs = scenario.phaseBudgetsMs?.interactiveRender || defaults.interactiveRenderWaitMs;
+    await page.goto(`${defaults.baseUrl}/web/index.html?bundle=${bundlePath}`, {
       waitUntil: 'domcontentloaded',
-      timeout: NAVIGATION_TIMEOUT_MS,
+      timeout: loadBudgetMs,
     });
 
     // Wait for CLI to load and render
-    await sleep(20000);
+    await sleep(renderBudgetMs);
 
     const textBefore = await getTerminalText(page);
     if (textBefore.length < 50) {
@@ -187,11 +203,9 @@ async function testKeyInteractivity(browser, name, bundlePath) {
 
   } catch (err) {
     const message = String(err?.message || err);
-    if (
-      name === 'Gemini CLI' &&
-      (message.includes('Runtime.callFunctionOn timed out') || message.includes('Protocol error'))
-    ) {
-      log('⚠️', `${name} protocol timeout (known heavy runtime behavior): ${message.slice(0, 120)}`);
+    const skip = shouldSkipForKnownIssue(scenario, 'interactivity', message);
+    if (skip) {
+      log('⚠️', `${name} skipped (${skip.code}, expires ${skip.expiresOn}): ${message.slice(0, 120)}`);
       skipped++;
     } else {
       log('❌', `${name} error: ${message}`);
@@ -205,15 +219,20 @@ async function testKeyInteractivity(browser, name, bundlePath) {
 async function testClaudeConversation(browser) {
   console.log('\n── Claude Code: Full Conversation ──');
 
-  if (!API_KEY) {
-    log('⏭', 'SKIP: No ANTHROPIC_API_KEY set. Run with: ANTHROPIC_API_KEY=sk-ant-... node tests/browser-interactivity.mjs');
+  const requiredEnvKey = CONTRACT.conversation.requiredEnvKey;
+  const requiredEnvValue = process.env[requiredEnvKey] || '';
+  if (!requiredEnvValue) {
+    log('⏭', `SKIP: No ${requiredEnvKey} set. Run with: ${requiredEnvKey}=... node tests/browser-interactivity.mjs`);
     skipped++;
     return;
   }
 
-  const bundleFile = join(ROOT, 'dist', 'claude-code-cli.js');
+  const conversationScenario = CONTRACT.scenarios.find((s) => s.id === CONTRACT.conversation.scenarioId)
+    || getScenarioByDisplayName(CONTRACT, 'Claude Code');
+  const conversationBundle = conversationScenario?.bundlePath || '/dist/claude-code-cli.js';
+  const bundleFile = join(ROOT, conversationBundle.replace(/^\//, ''));
   if (!existsSync(bundleFile)) {
-    log('⏭', 'SKIP: dist/claude-code-cli.js not found');
+    log('⏭', `SKIP: ${conversationBundle} not found`);
     skipped++;
     return;
   }
@@ -223,16 +242,18 @@ async function testClaudeConversation(browser) {
 
   await page.evaluateOnNewDocument((key) => {
     sessionStorage.setItem('anthropic_api_key', key);
-  }, API_KEY);
+  }, requiredEnvValue);
 
   try {
-    await page.goto(`${BASE_URL}/web/index.html?bundle=/dist/claude-code-cli.js`, {
+    const loadBudgetMs = conversationScenario?.phaseBudgetsMs?.interactiveLoad || TEST_DEFAULTS.navigationTimeoutMs;
+    const renderBudgetMs = conversationScenario?.phaseBudgetsMs?.interactiveRender || TEST_DEFAULTS.interactiveRenderWaitMs;
+    await page.goto(`${TEST_DEFAULTS.baseUrl}/web/index.html?bundle=${conversationBundle}`, {
       waitUntil: 'domcontentloaded',
-      timeout: NAVIGATION_TIMEOUT_MS,
+      timeout: loadBudgetMs,
     });
 
     // Wait for Claude Code TUI to fully render
-    await sleep(25000);
+    await sleep(renderBudgetMs);
     log('✅', 'Claude Code loaded');
     passed++;
 
@@ -254,7 +275,7 @@ async function testClaudeConversation(browser) {
     log('📋', `After onboarding: ${textAfterOnboarding.length} chars`);
 
     // Step 4: Type the prompt — push directly to stdin AND via keyboard
-    const prompt = 'write me a paragraph on god';
+    const prompt = CONTRACT.conversation.prompt;
     log('⏳', `Typing prompt: "${prompt}"`);
     // Focus xterm
     await page.evaluate(() => {
@@ -283,13 +304,15 @@ async function testClaudeConversation(browser) {
     await page.evaluate(() => { if (globalThis._stdinPush) globalThis._stdinPush('\r'); });
     await sendKeys(page, ['Enter']);
 
-    // Step 6: Wait for streaming response (up to 60 seconds)
+    // Step 6: Wait for streaming response (contract budget)
     // Accept either visible content growth OR runtime request/response activity.
-    log('⏳', 'Waiting for API response or runtime request activity (up to 60s)...');
+    log('⏳', 'Waiting for API response or runtime request activity...');
     let responseDetected = false;
     let networkDispatchDetected = false;
-    for (let i = 0; i < 30; i++) {
-      await sleep(2000);
+    const responsePollMs = 2000;
+    const loops = Math.max(1, Math.ceil(CONTRACT.conversation.responseWaitMs / responsePollMs));
+    for (let i = 0; i < loops; i++) {
+      await sleep(responsePollMs);
       const currentText = await getTerminalText(page);
       const diagnostics = await getRuntimeDiagnostics(page);
       // Look for signs of a response — Claude's response would contain
@@ -326,7 +349,7 @@ async function testClaudeConversation(browser) {
       const finalDiagnostics = await getRuntimeDiagnostics(page);
       log('📋', `Runtime diagnostics: requests=${finalDiagnostics.requestCount}, responses=${finalDiagnostics.responseCount}, rejections=${finalDiagnostics.rejectionCount}`);
     } else if (!responseDetected) {
-      log('❌', 'No response or runtime request activity detected after 60s');
+      log('❌', 'No response or runtime request activity detected within budget');
       failed++;
 
       // Check for error messages
@@ -359,11 +382,18 @@ async function testClaudeConversation(browser) {
 // ── Main ────────────────────────────────────────────────────────────
 
 console.log('=== Browser Interactivity Tests ===\n');
+const CONTRACT = await loadBrowserSmokeContract();
+const TEST_DEFAULTS = {
+  baseUrl: process.env.BASE_URL || CONTRACT.defaults.baseUrl,
+  navigationTimeoutMs: Number(process.env.BROWSER_TEST_NAV_TIMEOUT_MS || CONTRACT.defaults.navigationTimeoutMs),
+  protocolTimeoutMs: CONTRACT.defaults.protocolTimeoutMs,
+  interactiveRenderWaitMs: CONTRACT.defaults.interactiveRenderWaitMs,
+};
 
 // Start dev server if not already running
 let server = null;
 try {
-  const resp = await fetch(`${BASE_URL}/web/index.html`);
+  const resp = await fetch(`${TEST_DEFAULTS.baseUrl}/web/index.html`);
   if (resp.ok) console.log('Dev server already running.');
 } catch {
   console.log('Starting dev server...');
@@ -376,12 +406,12 @@ try {
 
 let browser;
 try {
-  browser = await launchBrowser();
+  browser = await launchBrowser(TEST_DEFAULTS.protocolTimeoutMs);
   console.log('Browser launched.');
 
   // Test key interactivity for all CLIs
-  for (const [name, bundlePath] of Object.entries(BUNDLES)) {
-    await testKeyInteractivity(browser, name, bundlePath);
+  for (const scenario of CONTRACT.scenarios) {
+    await testKeyInteractivity(browser, scenario, TEST_DEFAULTS);
   }
 
   // Test full conversation with Claude Code

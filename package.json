@@ -20,7 +20,7 @@
     "parsec": "node scripts/parsec-engine.mjs",
     "release-gate": "node scripts/release-gate.mjs",
     "test:wasm": "node tests/test-wasm-load.mjs",
-    "test:browser": "node tests/test-browser-smoke.mjs",
+    "test:browser": "node tests/test-browser-smoke-contract.mjs && node tests/test-browser-smoke.mjs",
     "test:guardrails": "node tests/test-guardrails.mjs",
     "test:runtime-stability": "node tests/test-runtime-stability.mjs",
     "test:soak": "node tests/test-soak.mjs",
