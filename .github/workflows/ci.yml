@@ -57,8 +57,8 @@ jobs:
       - name: Configure and build
         run: |
           source "$EMSDK/emsdk_env.sh"
-          make configure
-          make build
+          make configure EMSDK_PATH=$EMSDK
+          make build EMSDK_PATH=$EMSDK
 
       - name: Integration tests
         run: |

@@ -1,6 +1,7 @@
 # Build output
 build/
 dist/
+!docs/dist/
 edgejs-src/
 .node-wasix32/
 
