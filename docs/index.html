@@ -32,7 +32,8 @@
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-    :root {
+    /* ── Theme: Midnight (default dark) ── */
+    :root, [data-theme="midnight"] {
       --bg: #0a0a0f;
       --fg: #e8e4de;
       --nav-bg: #0d0d14;
@@ -48,11 +49,35 @@
       --spot-color: rgba(180,200,255,0.04);
       --fog-color: rgba(10,10,15,0.85);
       --text-secondary: rgba(232,228,222,0.4);
+      --overlay-bg: rgba(10,10,15,0.97);
       --icon-tint: 0;
       color-scheme: dark;
     }
 
-    :root.light {
+    /* ── Theme: Lumon Severance ── */
+    [data-theme="lumon"] {
+      --bg: #1b2d40;
+      --fg: #d6e2ee;
+      --nav-bg: #1b2d40;
+      --nav-border: #355066;
+      --nav-highlight: rgba(111,184,227,0.06);
+      --frame-bg: #1b2d40;
+      --frame-border: #6fb8e3;
+      --frame-joint: rgba(111,184,227,0.12);
+      --frame-highlight: rgba(111,184,227,0.04);
+      --glass-tint: rgba(111,184,227,0.06);
+      --accent: #6fb8e3;
+      --accent-dim: rgba(111,184,227,0.2);
+      --spot-color: rgba(111,184,227,0.06);
+      --fog-color: rgba(27,45,64,0.85);
+      --text-secondary: rgba(214,226,238,0.4);
+      --overlay-bg: rgba(27,45,64,0.97);
+      --icon-tint: 0;
+      color-scheme: dark;
+    }
+
+    /* ── Theme: Bone (light) ── */
+    [data-theme="bone"] {
       --bg: #e8e4de;
       --fg: #0a0a0f;
       --nav-bg: #ded9d1;
@@ -68,6 +93,7 @@
       --spot-color: rgba(255,250,240,0.08);
       --fog-color: rgba(232,228,222,0.85);
       --text-secondary: rgba(10,10,15,0.35);
+      --overlay-bg: rgba(232,228,222,0.97);
       --icon-tint: 1;
       color-scheme: light;
     }
