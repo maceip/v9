@@ -296,7 +296,7 @@ try {
   // TEST 9: Boot sequence runs
   // ─────────────────────────────────────────────────────────────────
   console.log('\n── Boot Sequence ──');
-  await sleep(8000); // Wait for typewriter animation (6 lines × ~40ms/char × ~15 chars + delays)
+  await sleep(12000); // Wait for zoom animation (slower spring) + typewriter animation
 
   const bootState = await page.evaluate(() => {
     const overlay = document.getElementById('terminal-overlay');

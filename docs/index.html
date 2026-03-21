@@ -32,14 +32,15 @@
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-    :root {
+    /* ── Theme: Midnight (default dark) ── */
+    :root, [data-theme="midnight"] {
       --bg: #0a0a0f;
       --fg: #e8e4de;
       --nav-bg: #0d0d14;
       --nav-border: #1a1a28;
       --nav-highlight: rgba(255,255,255,0.03);
       --frame-bg: #0b0b12;
-      --frame-border: #18182a;
+      --frame-border: rgba(255,255,255,0.85);
       --frame-joint: rgba(255,255,255,0.06);
       --frame-highlight: rgba(255,255,255,0.015);
       --glass-tint: rgba(120,140,180,0.06);
@@ -48,11 +49,35 @@
       --spot-color: rgba(180,200,255,0.04);
       --fog-color: rgba(10,10,15,0.85);
       --text-secondary: rgba(232,228,222,0.4);
+      --overlay-bg: rgba(10,10,15,0.97);
       --icon-tint: 0;
       color-scheme: dark;
     }
 
-    :root.light {
+    /* ── Theme: Lumon Severance ── */
+    [data-theme="lumon"] {
+      --bg: #1b2d40;
+      --fg: #d6e2ee;
+      --nav-bg: #1b2d40;
+      --nav-border: #355066;
+      --nav-highlight: rgba(111,184,227,0.06);
+      --frame-bg: #1b2d40;
+      --frame-border: #6fb8e3;
+      --frame-joint: rgba(111,184,227,0.12);
+      --frame-highlight: rgba(111,184,227,0.04);
+      --glass-tint: rgba(111,184,227,0.06);
+      --accent: #6fb8e3;
+      --accent-dim: rgba(111,184,227,0.2);
+      --spot-color: rgba(111,184,227,0.06);
+      --fog-color: rgba(27,45,64,0.85);
+      --text-secondary: rgba(214,226,238,0.4);
+      --overlay-bg: rgba(27,45,64,0.97);
+      --icon-tint: 0;
+      color-scheme: dark;
+    }
+
+    /* ── Theme: Bone (light) ── */
+    [data-theme="bone"] {
       --bg: #e8e4de;
       --fg: #0a0a0f;
       --nav-bg: #ded9d1;
@@ -68,6 +93,7 @@
       --spot-color: rgba(255,250,240,0.08);
       --fog-color: rgba(232,228,222,0.85);
       --text-secondary: rgba(10,10,15,0.35);
+      --overlay-bg: rgba(232,228,222,0.97);
       --icon-tint: 1;
       color-scheme: light;
     }
@@ -88,7 +114,12 @@
     #navbar {
       position: fixed; top: 0; left: 0; right: 0;
       height: 44px; z-index: 100;
-      background: var(--nav-bg);
+      background:
+        linear-gradient(180deg,
+          rgba(255,255,255,0.06) 0%,
+          rgba(255,255,255,0.015) 50%,
+          rgba(0,0,0,0.08) 100%),
+        var(--nav-bg);
       border-bottom: 1px solid var(--nav-border);
       display: flex; align-items: center; justify-content: flex-end;
       padding: 0 16px;
@@ -96,20 +127,19 @@
       overflow: hidden;
     }
 
-    /* Beveled edge — layered shadows for machined metal */
+    /* Clean top highlight + subtle drop shadow */
     #navbar::before {
       content: '';
       position: absolute; inset: 0;
-      border-bottom: 1px solid var(--nav-highlight);
+      border-top: 1px solid rgba(255,255,255,0.06);
       box-shadow:
-        inset 0 1px 0 var(--nav-highlight),
-        inset 0 -1px 0 rgba(0,0,0,0.2),
-        0 1px 3px rgba(0,0,0,0.3),
+        inset 0 1px 0 rgba(255,255,255,0.04),
+        0 1px 3px rgba(0,0,0,0.4),
         0 2px 8px rgba(0,0,0,0.15);
       pointer-events: none;
     }
 
-    /* Brushed aluminum texture */
+    /* Subtle brushed texture — barely perceptible grain */
     #navbar::after {
       content: '';
       position: absolute; inset: 0;
@@ -117,11 +147,19 @@
         repeating-linear-gradient(
           90deg,
           transparent,
-          transparent 1px,
-          rgba(255,255,255,0.008) 1px,
-          rgba(255,255,255,0.008) 2px
+          transparent 2px,
+          rgba(255,255,255,0.008) 2px,
+          rgba(255,255,255,0.008) 3px
         );
       pointer-events: none;
+    }
+    :root.light #navbar {
+      background:
+        linear-gradient(180deg,
+          rgba(255,255,255,0.5) 0%,
+          rgba(255,255,255,0.1) 50%,
+          rgba(0,0,0,0.04) 100%),
+        var(--nav-bg);
     }
 
     /* Fluid canvas overlay for navbar flourish */
@@ -166,51 +204,49 @@
     .nav-icon {
       position: absolute;
       width: 14px; height: 14px;
-      opacity: 0.06;
+      opacity: 0.35;
       z-index: 1;
       pointer-events: none;
-      filter: invert(var(--icon-tint));
     }
-    .light .nav-icon { filter: invert(0); }
+    :root.light .nav-icon { opacity: 0.25; }
 
-    /* Navbar micro-details: air vents */
+    /* Navbar micro-details — subtle and clean */
     .nav-vent {
       position: absolute;
       z-index: 1;
       pointer-events: none;
+      opacity: 0.4;
     }
     .nav-vent::before {
       content: '';
       display: block;
-      width: 24px; height: 8px;
+      width: 20px; height: 6px;
       background: repeating-linear-gradient(
         0deg,
         transparent,
-        transparent 1px,
-        var(--frame-joint) 1px,
+        transparent 1.5px,
+        var(--frame-joint) 1.5px,
         var(--frame-joint) 2px
       );
       border-radius: 1px;
     }
 
-    /* Diagonal seam */
     .nav-seam {
       position: absolute;
-      width: 1px; height: 20px;
+      width: 1px; height: 16px;
       background: var(--frame-joint);
       transform: rotate(35deg);
       z-index: 1;
       pointer-events: none;
+      opacity: 0.35;
     }
 
-    /* Light reflections */
     .nav-light {
       position: absolute;
-      width: 40px; height: 2px;
-      background: linear-gradient(90deg, transparent, var(--nav-highlight), transparent);
+      width: 40px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
       z-index: 1;
       pointer-events: none;
-      border-radius: 1px;
     }
 
     /* ── Main viewport ── */
@@ -239,16 +275,25 @@
       transition: opacity 0.6s ease;
     }
 
-    /* Floating background icons */
+    /* Floating background icons — interactive */
     .bg-icon {
       position: absolute;
       width: 28px; height: 28px;
-      opacity: 0.04;
+      opacity: 0.4;
       z-index: 3;
-      pointer-events: none;
-      transition: transform 0.1s ease;
-      filter: invert(var(--icon-tint));
+      cursor: pointer;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease, filter 0.3s ease;
     }
+    .bg-icon:hover {
+      opacity: 0.85;
+      transform: scale(1.6) rotate(-5deg) !important;
+      filter: drop-shadow(0 0 8px var(--accent));
+    }
+    .bg-icon:active {
+      transform: scale(1.3) rotate(0deg) !important;
+      opacity: 1.0;
+    }
+    :root.light .bg-icon { opacity: 0.3; }
 
     /* ── Terminal container ── */
     #terminal-wrap {
@@ -262,21 +307,38 @@
     }
     #terminal-wrap.zoomed { cursor: default; }
 
-    /* Terminal frame */
+    /* Terminal frame — clean device bezel, white border in dark (iRobot) */
     #terminal-frame {
       position: absolute; inset: 0;
-      border: 1px solid var(--frame-border);
-      border-radius: 6px;
-      background: var(--frame-bg);
+      border: 2px solid var(--frame-border);
+      border-radius: 10px;
+      background:
+        linear-gradient(170deg,
+          rgba(255,255,255,0.05) 0%,
+          transparent 40%,
+          rgba(0,0,0,0.06) 100%),
+        var(--frame-bg);
       overflow: hidden;
       box-shadow:
-        inset 0 1px 0 var(--frame-highlight),
-        inset 0 -1px 0 rgba(0,0,0,0.3),
-        0 4px 20px rgba(0,0,0,0.4),
-        0 8px 40px rgba(0,0,0,0.2);
+        inset 0 1px 0 rgba(255,255,255,0.03),
+        inset 0 -1px 0 rgba(0,0,0,0.2),
+        0 0 0 0.5px rgba(255,255,255,0.1),
+        0 0 15px rgba(255,255,255,0.06),
+        0 0 40px rgba(255,255,255,0.03),
+        0 4px 12px rgba(0,0,0,0.25),
+        0 8px 32px rgba(0,0,0,0.3),
+        0 16px 64px rgba(0,0,0,0.15);
+    }
+    :root.light #terminal-frame {
+      background:
+        linear-gradient(170deg,
+          rgba(255,255,255,0.4) 0%,
+          transparent 40%,
+          rgba(0,0,0,0.04) 100%),
+        var(--frame-bg);
     }
 
-    /* Frame brushed aluminum texture */
+    /* Subtle surface texture — almost invisible, just adds materiality */
     #terminal-frame::before {
       content: '';
       position: absolute; inset: 0;
@@ -284,9 +346,9 @@
         repeating-linear-gradient(
           90deg,
           transparent,
-          transparent 1px,
-          rgba(255,255,255,0.006) 1px,
-          rgba(255,255,255,0.006) 2px
+          transparent 3px,
+          rgba(255,255,255,0.005) 3px,
+          rgba(255,255,255,0.005) 4px
         );
       pointer-events: none;
       z-index: 1;
@@ -296,17 +358,17 @@
     .frame-icon {
       position: absolute;
       width: 16px; height: 16px;
-      opacity: 0.12;
+      opacity: 0.5;
       z-index: 2;
       pointer-events: none;
-      filter: invert(var(--icon-tint));
     }
+    :root.light .frame-icon { opacity: 0.35; }
     .frame-icon.tl { top: 8px; left: 8px; }
     .frame-icon.tr { top: 8px; right: 8px; }
     .frame-icon.bl { bottom: 8px; left: 8px; }
     .frame-icon.br { bottom: 8px; right: 8px; }
 
-    /* Frame micro-details */
+    /* Frame micro-details — minimal, clean */
     .frame-vent {
       position: absolute;
       z-index: 2;
@@ -319,11 +381,12 @@
       background: repeating-linear-gradient(
         0deg,
         transparent,
-        transparent 1px,
-        var(--frame-joint) 1px,
+        transparent 1.5px,
+        var(--frame-joint) 1.5px,
         var(--frame-joint) 2px
       );
-      border-radius: 1px;
+      border-radius: 2px;
+      opacity: 0.6;
     }
     .frame-seam {
       position: absolute;
@@ -331,29 +394,32 @@
       background: var(--frame-joint);
       z-index: 2;
       pointer-events: none;
+      opacity: 0.5;
     }
     .frame-joint {
       position: absolute;
       width: 4px; height: 4px;
       border-radius: 50%;
-      background: var(--frame-joint);
-      border: 0.5px solid rgba(0,0,0,0.2);
+      background: radial-gradient(circle at 40% 40%, rgba(255,255,255,0.08), var(--frame-joint) 70%);
+      border: 0.5px solid rgba(0,0,0,0.15);
       z-index: 2;
       pointer-events: none;
     }
+    .frame-joint::after { display: none; }
     .frame-light {
       position: absolute;
       background: linear-gradient(90deg, transparent, var(--frame-highlight), transparent);
       height: 1px;
       z-index: 2;
       pointer-events: none;
+      opacity: 0.5;
     }
 
     /* Terminal screen (glass) */
     #terminal-screen {
       position: absolute;
-      top: 3px; left: 3px; right: 3px; bottom: 3px;
-      border-radius: 4px;
+      top: 4px; left: 4px; right: 4px; bottom: 4px;
+      border-radius: 6px;
       overflow: hidden;
       background: var(--glass-tint);
       z-index: 3;
@@ -365,13 +431,13 @@
       width: 100%; height: 100%;
     }
 
-    /* Terminal overlay (xterm or boot text) */
+    /* Terminal overlay (xterm or boot text) — bg starts visible, no flash */
     #terminal-overlay {
       position: absolute; inset: 0;
       z-index: 4;
       opacity: 0;
-      transition: opacity 0.4s ease;
-      background: rgba(10,10,15,0.95);
+      transition: opacity 0.15s ease;
+      background: rgba(10,10,15,0.97);
     }
     #terminal-overlay.visible { opacity: 1; }
 
@@ -427,6 +493,86 @@
     /* ── Idle state: terminal in distance ── */
     #terminal-wrap.idle {
       transform: scale(0.42) translateY(8%);
+    }
+
+    /* ── Swipe dismiss (physics in swipe.js) ── */
+    /* SwipeDismiss handles transform directly via rAF spring solver */
+
+    /* ── Dismissed window tiles at bottom ── */
+    #dismissed-tray {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 80px;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 12px;
+      pointer-events: none;
+      overflow-x: auto;
+    }
+    .dismissed-tile {
+      width: 64px; height: 48px;
+      border-radius: 6px;
+      border: 1px solid var(--frame-border);
+      background: var(--frame-bg);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      pointer-events: auto;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Goldman', sans-serif;
+      font-size: 10px;
+      color: var(--accent);
+      opacity: 0.8;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+    .dismissed-tile:hover {
+      transform: translateY(-4px) scale(1.05);
+      opacity: 1;
+    }
+
+    /* ── Responsive: Pixel 9 Pro Fold folded (≤ 380px) ── */
+    @media (max-width: 380px) {
+      #navbar { height: 36px; padding: 0 10px; }
+      .nav-name { font-size: 14px; letter-spacing: 1px; }
+      .nav-vent, .nav-seam, .nav-light, .nav-icon { display: none; }
+      #viewport { top: 36px; }
+      #terminal-wrap {
+        width: calc(100% - 6px);
+        height: calc(100% - 6px);
+      }
+      #terminal-wrap.idle { transform: scale(0.55) translateY(5%); }
+      #terminal-frame { border-radius: 8px; border-width: 1.5px; }
+      #terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
+      .frame-icon { display: none; }
+      .frame-joint { width: 4px; height: 4px; }
+      .bg-icon { width: 20px; height: 20px; }
+      #dismissed-tray { height: 56px; }
+      .dismissed-tile { width: 48px; height: 36px; font-size: 8px; }
+      #boot-text { font-size: 11px; }
+    }
+
+    /* ── Responsive: Pixel 9 Pro Fold expanded / tablet (381px–899px) ── */
+    @media (min-width: 381px) and (max-width: 899px) {
+      #navbar { height: 40px; }
+      #viewport { top: 40px; }
+      #terminal-wrap {
+        width: calc(100% - 8px);
+        height: calc(100% - 8px);
+      }
+      #terminal-wrap.idle { transform: scale(0.48) translateY(6%); }
+      #boot-text { font-size: 13px; }
+    }
+
+    /* ── Responsive: Desktop (≥ 900px) ── */
+    @media (min-width: 900px) {
+      #terminal-wrap {
+        width: calc(100% - 16px);
+        height: calc(100% - 16px);
+      }
+      #terminal-wrap.idle { transform: scale(0.42) translateY(8%); }
     }
 
     /* ── Reduced motion ── */
@@ -535,6 +681,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Dismissed window tray -->
+  <div id="dismissed-tray"></div>
 
   <!-- ── Scripts (deferred, non-blocking) ── -->
   <script type="module" src="js/v9-app.js"></script>

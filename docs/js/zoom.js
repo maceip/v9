@@ -1,15 +1,20 @@
 /**
  * Terminal zoom animation — damped spring physics.
- * Adapted from wobble-project's lerp + GSAP snap interaction
- * that creates natural acceleration → deceleration → soft approach stop.
+ * Adapted from wobble-project's lerp + GSAP snap interaction.
  *
  * Physics model:
  *   velocity *= damping
  *   velocity += (target - current) * stiffness
  *   current += velocity
- *
- * This creates overshoots on fast transitions and smooth asymptotic approach.
  */
+
+// Detect idle scale/y from CSS media queries
+function getIdleParams() {
+  const w = window.innerWidth;
+  if (w <= 380)  return { scale: 0.55, y: 5 };   // Fold folded
+  if (w <= 899)  return { scale: 0.48, y: 6 };   // Fold expanded / tablet
+  return { scale: 0.42, y: 8 };                   // Desktop
+}
 
 export class ZoomController {
   constructor(element, opts = {}) {
@@ -17,14 +22,19 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters (tuned for "smoothest zoom ever")
-    this.stiffness = 0.045;
+    // Spring parameters — slow, smooth, cinematic ease with minimal overshoot
+    // Low stiffness = slow pull, high damping = heavy/smooth feel
+    this.stiffness = 0.018;
     this.damping = 0.88;
-    this.threshold = 0.001;   // Stop when delta < this
+    this.threshold = 0.0005;
 
-    // State
-    this.current = { scale: 0.42, y: 8 }; // idle position (matches CSS .idle)
-    this.target = { scale: 0.42, y: 8 };
+    // State — read idle params from responsive breakpoints
+    this._shrink = 0; // additional scale reduction after dismissals
+    const idle = getIdleParams();
+    this.idleScale = idle.scale;
+    this.idleY = idle.y;
+    this.current = { scale: idle.scale, y: idle.y };
+    this.target = { scale: idle.scale, y: idle.y };
     this.velocity = { scale: 0, y: 0 };
 
     this._running = false;
@@ -32,6 +42,11 @@ export class ZoomController {
     this._done = true;
 
     this._apply();
+  }
+
+  /** Make idle state smaller (called after dismiss) */
+  setShrink(amount) {
+    this._shrink = amount;
   }
 
   /** Trigger zoom to full viewport (scale=1, y=0) */
@@ -42,17 +57,20 @@ export class ZoomController {
     this._startLoop();
   }
 
-  /** Zoom back out to idle */
+  /** Zoom back out to idle (smaller after each dismiss) */
   zoomOut() {
-    this.target.scale = 0.42;
-    this.target.y = 8;
+    const idle = getIdleParams();
+    this.idleScale = Math.max(0.2, idle.scale - this._shrink);
+    this.idleY = idle.y + this._shrink * 10;
+    this.target.scale = this.idleScale;
+    this.target.y = this.idleY;
     this._done = false;
     this._startLoop();
   }
 
   /** Get current zoom progress 0..1 */
   get progress() {
-    return (this.current.scale - 0.42) / (1.0 - 0.42);
+    return Math.max(0, Math.min(1, (this.current.scale - this.idleScale) / (1.0 - this.idleScale)));
   }
 
   _startLoop() {

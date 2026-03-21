@@ -1,9 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
-  <title>Wifi</title>
-  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M7 16c7-7 19-7 26 0" fill="none" />
-    <path d="M11 20c5-5 13-5 18 0" fill="none" />
-    <path d="M15 24c3-3 7-3 10 0" fill="none" />
-    <circle cx="20" cy="29" r="2.2" fill="#9bff00" />
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <path fill="#00034a" stroke="#00034a" d="M20 32a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6ZM2.7 13.3C7.3 8.7 13.4 6 20 6s12.7 2.7 17.3 7.3a3.3 3.3 0 0 1-4.7 4.7A17.6 17.6 0 0 0 20 12.8c-4.7 0-9.2 1.9-12.6 5.2a3.3 3.3 0 1 1-4.7-4.7Zm6 7A16 16 0 0 1 20 15.6c4.3 0 8.3 1.6 11.3 4.7a3 3 0 1 1-4.3 4.2A10.2 10.2 0 0 0 20 21.6c-2.7 0-5.3 1-7.1 3a3 3 0 0 1-4.2-4.3Zm5.8 6a7.8 7.8 0 0 1 11 0 2.8 2.8 0 0 1-4 4 2.2 2.2 0 0 0-3 0 2.8 2.8 0 0 1-4-4Z" stroke-width="1"/>
+    <path fill="#9bff00" stroke="#00034a" d="M20 33.4a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8ZM3.9 14.5a22.8 22.8 0 0 1 32.2 0 2 2 0 0 1-2.9 2.9A18.8 18.8 0 0 0 20 11.4c-5 0-9.8 2-13.2 5.5a2 2 0 1 1-2.9-2.9Zm5.8 7.2a14.5 14.5 0 0 1 20.6 0 1.8 1.8 0 1 1-2.6 2.5A10.8 10.8 0 0 0 20 21c-2.9 0-5.6 1.1-7.7 3.2a1.8 1.8 0 0 1-2.6-2.5Zm5.8 6.3a6.2 6.2 0 0 1 9 0 1.7 1.7 0 0 1-2.4 2.4 2.9 2.9 0 0 0-4.1 0 1.7 1.7 0 0 1-2.4-2.4Z" stroke-width="1"/>
   </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
 </svg>

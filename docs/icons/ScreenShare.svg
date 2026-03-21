@@ -1,10 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
-  <title>ScreenShare</title>
-  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="5" y="8" width="30" height="18" rx="3" fill="#9bff00" />
-    <path d="M15 18h10" fill="none" />
-    <path d="M21 12l4 6-4 6" fill="none" />
-    <line x1="20" y1="26" x2="20" y2="31" />
-    <line x1="15" y1="31" x2="25" y2="31" />
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <rect fill="#00034a" stroke="#00034a" x="4" y="6" width="25" height="18" rx="4" stroke-width="1"/>
+    <rect fill="#9bff00" stroke="#00034a" x="5.5" y="7.5" width="22" height="15" rx="3" stroke-width="1"/>
+    <path stroke="#00034a" stroke-linecap="round" d="M16.5 24v4M12 30h9" stroke-width="1.4"/>
+    <path fill="#ffffff" stroke="#00034a" d="M25 13h8.2c1.3 0 2.3 1 2.3 2.3v8.4L31 20.8l-6 2.9V13Z" stroke-width="1"/>
   </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
 </svg>
