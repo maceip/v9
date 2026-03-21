@@ -97,16 +97,56 @@ async function run() {
   const p2BadStart = badResponses.length;
   const p2FailStart = failedRequests.length;
 
-  // Click the terminal wrapper to trigger zoom
-  const termWrap = page.locator('#terminal-wrap');
-  try {
-    await termWrap.click({ timeout: 5000 });
-  } catch (err) {
-    console.error('⚠ Could not click terminal:', err.message);
+  // Check state before click
+  const stateBefore = await page.evaluate(() => {
+    const el = document.getElementById('terminal-wrap');
+    return { classes: el?.className, hasIdle: el?.classList.contains('idle') };
+  });
+  console.log(`   state before click: ${JSON.stringify(stateBefore)}`);
+
+  // Dispatch a real click event on the terminal (it uses capture:true listener)
+  await page.evaluate(() => {
+    const el = document.getElementById('terminal-wrap');
+    if (el) {
+      const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
+      el.dispatchEvent(evt);
+    }
+  });
+  console.log('   ✓ Dispatched click event via JS');
+
+  // Wait for zoom animation (rAF-based spring, needs real frames)
+  // In headless mode, explicitly pump rAF by waiting with short intervals
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(200);
+    const overlayVisible = await page.evaluate(() =>
+      document.getElementById('terminal-overlay')?.classList.contains('visible')
+    );
+    if (overlayVisible) {
+      console.log(`   ✓ Boot overlay visible after ${(i + 1) * 200}ms`);
+      break;
+    }
   }
 
-  // Wait for zoom animation (~1.5s) + boot sequence (~2s) + CLI iframe load
-  await page.waitForTimeout(8000);
+  // Wait for boot sequence typewriter + CLI iframe load
+  // Headless chromium has slower rAF (~4fps), need generous timeouts
+  // Boot typewriter ~15s at low fps, then 800ms sleep, then HEAD check + iframe load
+  await page.waitForTimeout(30000);
+
+  // Check state after
+  const stateAfter = await page.evaluate(() => {
+    const el = document.getElementById('terminal-wrap');
+    const overlay = document.getElementById('terminal-overlay');
+    const frame = document.getElementById('cli-frame');
+    return {
+      classes: el?.className,
+      overlayVisible: overlay?.classList.contains('visible'),
+      bootTextContent: document.getElementById('boot-text')?.textContent?.slice(0, 200),
+      iframeSrc: frame?.src || '',
+      iframeVisible: frame?.classList.contains('visible'),
+      runtimeUnavailable: !!document.getElementById('runtime-unavailable'),
+    };
+  });
+  console.log(`   state after boot: ${JSON.stringify(stateAfter, null, 2)}`);
 
   // Check if iframe loaded
   const iframeVisible = await page.evaluate(() => {
