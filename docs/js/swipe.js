@@ -287,6 +287,16 @@ export class SwipeDismiss {
     this._raf = requestAnimationFrame(tick);
   }
 
+  /**
+   * Programmatic dismiss — plays the full shrink + fling animation.
+   * Used for desktop Escape key (no touch/drag needed).
+   */
+  dismiss() {
+    if (this._animating) return;
+    // Start from center, fling downward
+    this._animateDismiss(0, 0, 1.0, 0, 800);
+  }
+
   destroy() {
     if (this._raf) cancelAnimationFrame(this._raf);
     for (const evt of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {

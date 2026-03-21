@@ -325,19 +325,12 @@ function resetToIdle() {
   progressBar.style.opacity = '1';
 }
 
-// ── Keyboard shortcut: Escape to zoom out ──
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE')) {
-    resetToIdle();
-  }
-});
-
 // ── Predictive back: Android Quickstep swipe-to-dismiss ──
 // Uses real underdamped spring physics from Android's SpringForce.java
 // Velocity-tracked fling detection (not distance-based)
 const dismissedTray = document.getElementById('dismissed-tray');
 
-new SwipeDismiss(termWrap, {
+const swipeDismiss = new SwipeDismiss(termWrap, {
   canSwipe: () => state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE',
   onDismiss: () => {
     addDismissedTile();
@@ -346,6 +339,13 @@ new SwipeDismiss(termWrap, {
   onSnapBack: () => {
     // Terminal stays in current state — no action needed
   },
+});
+
+// ── Keyboard shortcut: Escape triggers full dismiss animation ──
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE')) {
+    swipeDismiss.dismiss();
+  }
 });
 
 let dismissedCount = 0;
