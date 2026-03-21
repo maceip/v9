@@ -39,10 +39,11 @@ const badResponses = [];
 async function run() {
   // ── Browser launch ──
   const rawProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '';
-  const launchOpts = {
-    headless: true,
-    executablePath: '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome',
-  };
+  const launchOpts = { headless: true };
+  // Use explicit path if set, otherwise let Playwright find its own browser
+  if (process.env.CHROME_BIN) {
+    launchOpts.executablePath = process.env.CHROME_BIN;
+  }
   if (rawProxy) {
     try {
       const proxyParsed = new URL(rawProxy);

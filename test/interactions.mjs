@@ -29,10 +29,10 @@ let browser, context, page;
 
 async function setup() {
   const rawProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '';
-  const launchOpts = {
-    headless: true,
-    executablePath: '/root/.cache/ms-playwright/chromium-1194/chrome-linux/chrome',
-  };
+  const launchOpts = { headless: true };
+  if (process.env.CHROME_BIN) {
+    launchOpts.executablePath = process.env.CHROME_BIN;
+  }
   if (rawProxy) {
     try {
       const p = new URL(rawProxy);

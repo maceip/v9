@@ -1,0 +1,103 @@
+name: Live Site Tests
+
+on:
+  # Run after pages deploy completes
+  workflow_run:
+    workflows: ["Deploy GitHub Pages"]
+    types: [completed]
+  # Also run on PRs and manual trigger
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'URL to test (default: live GitHub Pages)'
+        required: false
+        default: 'https://maceip.github.io/v9/'
+
+concurrency:
+  group: live-site-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    name: Smoke Test (Live Site)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run if pages deploy succeeded (or if manually triggered / PR)
+    if: >
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Run smoke test against live site
+        run: node test/smoke-live.mjs ${{ inputs.target_url || 'https://maceip.github.io/v9/' }}
+
+  interaction-tests:
+    name: Interaction Tests (Live Site)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: smoke-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Run interaction tests against live site
+        run: node test/interactions.mjs ${{ inputs.target_url || 'https://maceip.github.io/v9/' }}
+
+  local-serve-test:
+    name: Local Serve Test (docs/)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build SDK bundle
+        run: |
+          sh scripts/bundle-sdk.sh
+          cp dist/anthropic-sdk-bundle.js docs/dist/anthropic-sdk-bundle.js
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Start local server and run smoke test
+        run: |
+          # Serve docs/ on port 8080 (same as GitHub Pages would)
+          npx serve docs -l 8080 -s &
+          SERVER_PID=$!
+          sleep 2
+
+          # Run smoke test against local server
+          node test/smoke-live.mjs http://localhost:8080/
+
+          # Run interaction tests against local server
+          node test/interactions.mjs http://localhost:8080/
+
+          kill $SERVER_PID 2>/dev/null || true
