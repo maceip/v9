@@ -140,6 +140,7 @@ $(BUILD_DIR)/CMakeCache.txt: $(EDGEJS_SRC)/CMakeLists.txt emscripten-toolchain.c
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 		-DEDGE_NAPI_PROVIDER=imports \
 		-DEDGE_PLATFORM=emscripten \
+		-DEDGE_SHARED_OPENSSL=ON \
 		-DEDGE_EXTRA_INCLUDES="$(SHIMS_DIR)" \
 		2>&1 | tee $(BUILD_DIR)/configure.log
 	@echo ">>> Configuration complete"

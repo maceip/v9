@@ -173,6 +173,8 @@ export const dns = {
   reverse: notAvailable('dns', 'reverse'),
   getServers() { return []; },
   setServers() {},
+  getDefaultResultOrder() { return 'ipv4first'; },
+  setDefaultResultOrder() {},
   lookupService(address, port, callback) {
     if (callback) {
       queueMicrotask(() => callback(null, 'localhost', String(port || '0')));
@@ -197,6 +199,8 @@ export const dns = {
     reverse: notAvailable('dns.promises', 'reverse'),
     getServers() { return []; },
     setServers() {},
+    getDefaultResultOrder() { return 'ipv4first'; },
+    setDefaultResultOrder() {},
     lookupService(address, port) { return dns.lookupService(address, port); },
     Resolver: class Resolver {
       lookup(...args) { return dns.lookup(...args); }

@@ -17,11 +17,9 @@ npx esbuild node_modules/@google/gemini-cli/dist/index.js \
   --outfile=dist/gemini-cli-bundle.js \
   --log-limit=5
 
-# Post-process: fix __toCommonJS for y18n (callable default export)
-# y18n exports a function as default but __toCommonJS wraps it as {default: fn}
-# Yargs calls it as oe2(opts) expecting the function directly
-# Fix: make __toCommonJS return the default if it's a function
-# Fix __toCommonJS CJS interop: if default export is a function, make the module itself callable
-sed -i 's|var __toCommonJS = (mod[0-9]*) => __copyProps(__defProp({}, "__esModule", { value: true }), mod[0-9]*);|var __toCommonJS = (m) => { var r = __copyProps(__defProp({}, "__esModule", { value: true }), m); if (typeof r.default === "function") { var f = function(...a) { return r.default(...a); }; Object.keys(r).forEach(function(k) { f[k] = r[k]; }); return f; } return r; };|g' dist/gemini-cli-bundle.js 2>/dev/null || true
+# Post-process: improve __toCommonJS callable-default interop.
+# Some modules export a callable function with attached members (e.g. Parser.detailed).
+# Return the original callable default object (not a wrapper closure) so attached members survive.
+sed -i 's|var __toCommonJS = (mod[0-9]*) => __copyProps(__defProp({}, "__esModule", { value: true }), mod[0-9]*);|var __toCommonJS = (m) => { var r = __copyProps(__defProp({}, "__esModule", { value: true }), m); if (typeof r.default === "function") { return __copyProps(r.default, r); } return r; };|g' dist/gemini-cli-bundle.js 2>/dev/null || true
 
 echo "✓ dist/gemini-cli-bundle.js ($(wc -c < dist/gemini-cli-bundle.js | tr -d ' ') bytes)"

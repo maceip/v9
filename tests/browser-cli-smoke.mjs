@@ -69,7 +69,8 @@ async function launchBrowser() {
 }
 
 async function testCLI(browser, name, bundlePath) {
-  const fullUrl = `${BASE_URL}/web/index.html?bundle=${bundlePath}`;
+  const cacheBust = Date.now();
+  const fullUrl = `${BASE_URL}/web/index.html?bundle=${bundlePath}&cb=${cacheBust}`;
   console.log(`\n── ${name} ──`);
   console.log(`  URL: ${fullUrl}`);
 
@@ -88,14 +89,20 @@ async function testCLI(browser, name, bundlePath) {
   page.on('console', (msg) => consoleMessages.push({ type: msg.type(), text: msg.text() }));
   page.on('pageerror', (err) => errors.push(err.message));
 
-  // Set API key in sessionStorage before navigation
-  await page.evaluateOnNewDocument((key) => {
-    sessionStorage.setItem('anthropic_api_key', key);
-  }, API_KEY);
+  // Seed only CLI-specific session keys before navigation.
+  // A generic fake key can trigger auth churn in unrelated CLIs.
+  await page.evaluateOnNewDocument((cliName, key) => {
+    sessionStorage.removeItem('anthropic_api_key');
+    sessionStorage.removeItem('gemini_api_key');
+    if (cliName === 'Claude Code') {
+      sessionStorage.setItem('anthropic_api_key', key);
+    }
+  }, name, API_KEY);
 
   try {
-    // Navigate and wait for network idle
-    await page.goto(fullUrl, { waitUntil: 'networkidle2', timeout: TIMEOUT });
+    // Navigate and wait for DOM readiness.
+    // Some CLIs keep long-lived network activity which makes networkidle flaky.
+    await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
     // Wait for the terminal to render something
     await sleep(15_000);
