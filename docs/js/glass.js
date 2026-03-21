@@ -1,11 +1,15 @@
 /**
- * Liquid glass + tumble_r3f background shader.
+ * Liquid glass shader — real refractive glass slab effect.
  * Vanilla WebGL — no Three.js dependency.
  *
- * Renders:
- * 1. Pastel diagonal line palette animation (from tumble_r3f FullscreenShader)
- * 2. Liquid glass overlay (refraction, chromatic aberration, bevel)
- * 3. Fog overlay that fades on interaction
+ * Renders a thick glass pane with:
+ * 1. Flowing organic noise field (not static lines)
+ * 2. Strong visible refraction that warps the background
+ * 3. Caustic light concentrations that swim across the surface
+ * 4. Chromatic aberration (RGB split) especially at edges
+ * 5. Fresnel edge reflections (brighter at glancing angles)
+ * 6. Specular highlights that move with time
+ * 7. Mouse-reactive distortion (gravitational lens + swirl)
  */
 
 const VERT = `
@@ -17,37 +21,17 @@ void main() {
   gl_Position = vec4(position, 0.0, 1.0);
 }`;
 
-// Combined fragment: tumble background + liquid glass + fog
 const FRAG = `
 precision highp float;
 varying vec2 vUv;
 uniform float uTime;
-uniform float uFog;        // 0.0 = no fog, 1.0 = full fog
-uniform float uGlassBlur;  // 0.0 = clear, 1.0 = frosted
+uniform float uFog;
+uniform float uGlassBlur;
 uniform vec2 uResolution;
-uniform vec2 uMouse;       // normalized mouse position
-uniform float uDark;       // 1.0 = dark mode, 0.0 = light mode
+uniform vec2 uMouse;
+uniform float uDark;
 
-// Palette from tumble_r3f
-vec3 palette(float t, float dark) {
-  vec3 topDark = vec3(0.94, 0.82, 0.84);
-  vec3 bottomDark = vec3(0.73, 0.84, 0.91);
-  vec3 lineDark = vec3(1.0, 0.35, 0.72);
-
-  vec3 topLight = vec3(0.85, 0.78, 0.72);
-  vec3 bottomLight = vec3(0.72, 0.76, 0.82);
-  vec3 lineLight = vec3(0.6, 0.25, 0.55);
-
-  vec3 top = mix(topLight, topDark, dark);
-  vec3 bottom = mix(bottomLight, bottomDark, dark);
-  vec3 lineCol = mix(lineLight, lineDark, dark);
-
-  vec3 col = mix(bottom, top, step(t, 0.0));
-  col += lineCol * exp(-120.0 * abs(t));
-  return col;
-}
-
-// Noise for glass distortion
+// ── Noise primitives ──
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -63,88 +47,161 @@ float noise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Fractal Brownian Motion — organic flowing shapes
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  vec2 shift = vec2(100.0);
+  mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+  for (int i = 0; i < 5; i++) {
+    v += a * noise(p);
+    p = rot * p * 2.0 + shift;
+    a *= 0.5;
+  }
+  return v;
+}
+
+// Smooth flowing distortion field — two fbm layers that feed into each other
+vec2 flowField(vec2 p, float t) {
+  float f1 = fbm(p + vec2(t * 0.12, t * 0.08));
+  float f2 = fbm(p + vec2(t * -0.09, t * 0.14) + 4.3);
+  // Second pass feeds the first — creates organic swirls
+  float f3 = fbm(p + vec2(f1, f2) * 1.5 + t * 0.06);
+  float f4 = fbm(p + vec2(f2, f1) * 1.5 - t * 0.07 + 7.7);
+  return vec2(f3, f4);
+}
+
+// Background color — deep, rich tones that look good through glass
+vec3 background(vec2 uv, float t, float dark) {
+  // Flowing color field
+  vec2 flow = flowField(uv * 2.0, t);
+
+  // Dark mode: deep blues, purples, pinks
+  vec3 c1Dark = vec3(0.12, 0.08, 0.22);  // deep purple
+  vec3 c2Dark = vec3(0.08, 0.15, 0.28);  // navy
+  vec3 c3Dark = vec3(0.25, 0.10, 0.20);  // plum
+  vec3 c4Dark = vec3(0.10, 0.20, 0.25);  // teal
+
+  // Light mode: warm pastels
+  vec3 c1Light = vec3(0.92, 0.85, 0.82);
+  vec3 c2Light = vec3(0.82, 0.86, 0.92);
+  vec3 c3Light = vec3(0.90, 0.82, 0.88);
+  vec3 c4Light = vec3(0.84, 0.90, 0.88);
+
+  vec3 c1 = mix(c1Light, c1Dark, dark);
+  vec3 c2 = mix(c2Light, c2Dark, dark);
+  vec3 c3 = mix(c3Light, c3Dark, dark);
+  vec3 c4 = mix(c4Light, c4Dark, dark);
+
+  vec3 col = mix(
+    mix(c1, c2, flow.x),
+    mix(c3, c4, flow.y),
+    sin(flow.x * 3.14159) * 0.5 + 0.5
+  );
+
+  return col;
+}
+
 void main() {
-  vec2 uv = vUv * 2.0 - 1.0;
-  vec2 aspect = vec2(uResolution.x / uResolution.y, 1.0);
+  vec2 uv = vUv;
+  vec2 centered = vUv * 2.0 - 1.0;
+  float aspect = uResolution.x / uResolution.y;
+  vec2 aspected = centered * vec2(aspect, 1.0);
+  float t = uTime;
 
   // ── Mouse warp distortion ──
-  // Distance from mouse creates a gravitational lens / ripple effect
-  vec2 mousePos = uMouse * 2.0 - 1.0;
-  vec2 toMouse = uv - mousePos * aspect;
+  vec2 mousePos = (uMouse * 2.0 - 1.0) * vec2(aspect, 1.0);
+  vec2 toMouse = aspected - mousePos;
   float mouseDist = length(toMouse);
-  float warpStrength = 0.15;
-  // Radial warp: pushes pixels away from cursor in a smooth falloff
-  float warp = exp(-mouseDist * mouseDist * 4.0) * warpStrength;
-  // Swirl: rotates pixels around cursor
-  float swirlAngle = warp * 2.5;
-  float cs = cos(swirlAngle);
-  float sn = sin(swirlAngle);
-  vec2 warped = uv + toMouse * warp * 0.5;
-  // Apply swirl rotation around mouse point
-  vec2 fromMouse = warped - mousePos * aspect;
-  warped = mousePos * aspect + vec2(
+  float warp = exp(-mouseDist * mouseDist * 3.0) * 0.2;
+  float swirlAngle = warp * 3.0;
+  float cs = cos(swirlAngle), sn = sin(swirlAngle);
+  vec2 warped = aspected + toMouse * warp * 0.4;
+  vec2 fromMouse = warped - mousePos;
+  warped = mousePos + vec2(
     fromMouse.x * cs - fromMouse.y * sn,
     fromMouse.x * sn + fromMouse.y * cs
   );
+  // Convert back to 0-1 range
+  vec2 warpedUV = (warped / vec2(aspect, 1.0)) * 0.5 + 0.5;
 
-  // ── Background: tumble diagonal line — animated drift ──
-  float drift = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
-  float line = warped.y - warped.x * 0.28 + drift;
-  vec3 bg = palette(line, uDark);
+  // ── Flowing refraction field ──
+  // This is the core of the liquid glass look — strong, visible distortion
+  vec2 flow = flowField(warpedUV * 3.0, t);
+  // Refraction displacement — strong enough to visibly warp
+  vec2 refractOffset = (flow - 0.5) * 0.08;
 
-  // ── Liquid glass distortion ──
-  float glassStrength = uGlassBlur;
-  vec2 glassUV = vUv;
+  // ── Base background (sampled through refraction) ──
+  vec2 bgUV = warpedUV + refractOffset;
+  vec3 bg = background(bgUV, t, uDark);
 
-  // Refraction offset based on noise
-  float n1 = noise(vUv * 8.0 + uTime * 0.1);
-  float n2 = noise(vUv * 8.0 + uTime * 0.1 + 100.0);
-  vec2 refract = (vec2(n1, n2) - 0.5) * 0.03 * glassStrength;
+  // ── Chromatic aberration — RGB channels refracted differently ──
+  float caStrength = 0.025; // Strong enough to see color fringing
+  // Stronger CA at edges (like real glass — thicker at margins)
+  float edgeFactor = length(centered) * 0.7;
+  float ca = caStrength * (1.0 + edgeFactor * 2.0);
 
-  // Chromatic aberration (from wobble post.frag pattern)
-  float ca = 0.006 * glassStrength;
-  vec2 uvR = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(1.0, 3.0);
-  vec2 uvG = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(2.0, 2.0);
-  vec2 uvB = glassUV + refract + sin(glassUV - 0.5) * ca * vec2(3.0, 1.0);
+  vec2 uvR = warpedUV + refractOffset * 1.1 + vec2(ca, ca * 0.3);
+  vec2 uvG = warpedUV + refractOffset;
+  vec2 uvB = warpedUV + refractOffset * 0.9 - vec2(ca * 0.4, ca);
 
-  // Sample background with per-channel offset + mouse warp applied
-  float driftCA = 0.12 * sin(uTime * 0.4) + 0.04 * sin(uTime * 0.7);
-  // Apply same mouse warp to CA-offset UVs
-  vec2 warpedR = (uvR * 2.0 - 1.0) + toMouse * warp * 0.5;
-  vec2 warpedG = (uvG * 2.0 - 1.0) + toMouse * warp * 0.5;
-  vec2 warpedB = (uvB * 2.0 - 1.0) + toMouse * warp * 0.5;
-  float lineR = warpedR.y - warpedR.x * 0.28 + driftCA;
-  float lineG = warpedG.y - warpedG.x * 0.28 + driftCA;
-  float lineB = warpedB.y - warpedB.x * 0.28 + driftCA;
-
-  vec3 glassCol = vec3(
-    palette(lineR, uDark).r,
-    palette(lineG, uDark).g,
-    palette(lineB, uDark).b
+  vec3 refracted = vec3(
+    background(uvR, t, uDark).r,
+    background(uvG, t, uDark).g,
+    background(uvB, t, uDark).b
   );
 
-  vec3 col = mix(bg, glassCol, glassStrength);
+  // Mix refracted vs direct based on glass strength
+  vec3 col = mix(bg, refracted, 0.7);
 
-  // ── Glass bevel edge highlight ──
-  float bevelEdge = 0.92;
+  // ── Caustics — bright swimming light concentrations ──
+  // Caustics form where refracted light converges
+  float caustic1 = fbm(warpedUV * 6.0 + t * vec2(0.15, 0.1));
+  float caustic2 = fbm(warpedUV * 8.0 - t * vec2(0.12, 0.18) + 3.0);
+  // Sharp caustic lines where two noise fields nearly match
+  float causticPattern = pow(1.0 - abs(caustic1 - caustic2), 8.0);
+  // Caustic color — bright white/cyan
+  vec3 causticColor = mix(
+    vec3(0.95, 0.92, 0.85),  // warm white (light mode)
+    vec3(0.6, 0.8, 1.0),     // cool cyan (dark mode)
+    uDark
+  );
+  col += causticColor * causticPattern * 0.25;
+
+  // ── Specular highlights — moving glints on the glass surface ──
+  float spec1 = fbm(warpedUV * 4.0 + vec2(t * 0.2, -t * 0.15));
+  float spec2 = fbm(warpedUV * 5.0 + vec2(-t * 0.18, t * 0.22) + 5.0);
+  float specular = pow(spec1 * spec2, 3.0) * 2.0;
+  vec3 specColor = mix(vec3(1.0, 0.98, 0.95), vec3(0.8, 0.85, 1.0), uDark);
+  col += specColor * specular * 0.3;
+
+  // ── Fresnel — edges of glass are brighter (glancing angle reflection) ──
+  float dist = length(centered);
+  float fresnel = pow(dist, 2.5) * 0.5;
+  vec3 fresnelColor = mix(
+    vec3(0.95, 0.93, 0.90),  // warm white reflection (light)
+    vec3(0.3, 0.4, 0.6),     // blue-grey reflection (dark)
+    uDark
+  );
+  col += fresnelColor * fresnel;
+
+  // ── Inner glow — subtle light from within the glass ──
+  float innerGlow = exp(-dist * dist * 2.5) * 0.08;
+  col += mix(vec3(1.0, 0.95, 0.9), vec3(0.4, 0.5, 0.7), uDark) * innerGlow;
+
+  // ── Edge bevel — sharp highlight at the very edge ──
   vec2 edgeDist = abs(vUv - 0.5) * 2.0;
-  float edge = smoothstep(bevelEdge, 1.0, max(edgeDist.x, edgeDist.y));
-  col += edge * 0.08 * (1.0 + 0.5 * sin(uTime * 0.5));
+  float edgeMax = max(edgeDist.x, edgeDist.y);
+  float bevel = smoothstep(0.94, 1.0, edgeMax);
+  float bevelShine = 0.15 * (0.8 + 0.2 * sin(t * 0.6 + edgeDist.x * 5.0));
+  col += bevel * bevelShine;
 
-  // ── Spotlight (radial gradient centered slightly above middle) ──
-  float spotDist = length((vUv - vec2(0.5, 0.45)) * aspect);
-  float spot = exp(-spotDist * spotDist * 3.0) * 0.06 * (1.0 - uFog * 0.5);
-  col += spot;
-
-  // ── Fog ──
+  // ── Fog (minimal in idle, fades more on interaction) ──
   vec3 fogColor = mix(vec3(0.91, 0.89, 0.87), vec3(0.04, 0.04, 0.06), uDark);
-  float fogNoise = noise(vUv * 4.0 + uTime * 0.05) * 0.15;
-  float fogAmount = uFog * (0.5 + fogNoise);
-
-  // Radial fog: thicker at edges, thinner at center
-  float radialFog = length(vUv - 0.5) * 0.6;
-  fogAmount += uFog * radialFog * 0.3;
-
+  float fogNoise = noise(vUv * 3.0 + t * 0.04) * 0.1;
+  float fogAmount = uFog * (0.4 + fogNoise);
+  float radialFog = dist * 0.4;
+  fogAmount += uFog * radialFog * 0.2;
   col = mix(col, fogColor, clamp(fogAmount, 0.0, 1.0));
 
   gl_FragColor = vec4(col, 1.0);
@@ -154,8 +211,8 @@ export class GlassScene {
   constructor(canvas) {
     this.canvas = canvas;
     this._raf = null;
-    this.fog = 0.25;       // Light fog — animation clearly visible
-    this.glassBlur = 0.4;  // Light frost — shapes and motion visible
+    this.fog = 0.12;       // Very light fog — glass effect clearly visible
+    this.glassBlur = 0.4;
     this.isDark = true;
     this.mouse = { x: 0.5, y: 0.5 };
 

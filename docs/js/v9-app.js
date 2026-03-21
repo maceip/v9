@@ -117,7 +117,7 @@ const zoom = new ZoomController(termWrap, {
     spotlight.style.opacity = String(0.6 + p * 0.4);
     // Clear glass blur
     if (glass) {
-      glass.fog = 0.25 * (1.0 - p);
+      glass.fog = 0.12 * (1.0 - p);
       glass.glassBlur = 0.4 * (1.0 - p * 0.9);
     }
     // Start fading in the terminal overlay early (at 70% zoom) to prevent black flash
@@ -311,7 +311,7 @@ function resetToIdle() {
   termWrap.classList.remove('zoomed');
   termWrap.classList.add('idle');
   termWrap.style.transform = '';
-  if (glass) { glass.fog = 0.25; glass.glassBlur = 0.4; glass.start(); }
+  if (glass) { glass.fog = 0.12; glass.glassBlur = 0.4; glass.start(); }
 
   // Each dismiss makes idle terminal slightly smaller (stacks)
   const shrink = Math.min(dismissCount * 0.04, 0.15);

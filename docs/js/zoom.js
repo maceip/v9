@@ -22,10 +22,11 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters — overdamped, smooth approach with zero overshoot
-    this.stiffness = 0.045;
-    this.damping = 0.78;
-    this.threshold = 0.001;
+    // Spring parameters — slow, smooth, cinematic ease with minimal overshoot
+    // Low stiffness = slow pull, high damping = heavy/smooth feel
+    this.stiffness = 0.018;
+    this.damping = 0.88;
+    this.threshold = 0.0005;
 
     // State — read idle params from responsive breakpoints
     this._shrink = 0; // additional scale reduction after dismissals

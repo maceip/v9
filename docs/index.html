@@ -90,10 +90,9 @@
       height: 44px; z-index: 100;
       background:
         linear-gradient(180deg,
-          rgba(255,255,255,0.12) 0%,
-          rgba(255,255,255,0.03) 40%,
-          rgba(0,0,0,0.05) 60%,
-          rgba(0,0,0,0.15) 100%),
+          rgba(255,255,255,0.06) 0%,
+          rgba(255,255,255,0.015) 50%,
+          rgba(0,0,0,0.08) 100%),
         var(--nav-bg);
       border-bottom: 1px solid var(--nav-border);
       display: flex; align-items: center; justify-content: flex-end;
@@ -102,23 +101,19 @@
       overflow: hidden;
     }
 
-    /* Beveled edge — layered shadows for machined metal */
+    /* Clean top highlight + subtle drop shadow */
     #navbar::before {
       content: '';
       position: absolute; inset: 0;
-      border-top: 1px solid var(--nav-highlight);
-      border-bottom: 1px solid rgba(0,0,0,0.3);
+      border-top: 1px solid rgba(255,255,255,0.06);
       box-shadow:
-        inset 0 1px 0 var(--nav-highlight),
-        inset 0 2px 0 rgba(255,255,255,0.06),
-        inset 0 -1px 0 rgba(0,0,0,0.25),
-        inset 0 -2px 4px rgba(0,0,0,0.08),
-        0 1px 4px rgba(0,0,0,0.4),
-        0 3px 10px rgba(0,0,0,0.2);
+        inset 0 1px 0 rgba(255,255,255,0.04),
+        0 1px 3px rgba(0,0,0,0.4),
+        0 2px 8px rgba(0,0,0,0.15);
       pointer-events: none;
     }
 
-    /* Brushed aluminum texture — fine horizontal grain */
+    /* Subtle brushed texture — barely perceptible grain */
     #navbar::after {
       content: '';
       position: absolute; inset: 0;
@@ -126,26 +121,18 @@
         repeating-linear-gradient(
           90deg,
           transparent,
-          transparent 1px,
-          rgba(255,255,255,0.015) 1px,
-          rgba(255,255,255,0.015) 2px
-        ),
-        repeating-linear-gradient(
-          90deg,
-          transparent,
-          transparent 3px,
-          rgba(255,255,255,0.008) 3px,
-          rgba(255,255,255,0.008) 4px
+          transparent 2px,
+          rgba(255,255,255,0.008) 2px,
+          rgba(255,255,255,0.008) 3px
         );
       pointer-events: none;
     }
     :root.light #navbar {
       background:
         linear-gradient(180deg,
-          rgba(255,255,255,0.7) 0%,
-          rgba(255,255,255,0.2) 40%,
-          rgba(0,0,0,0.02) 60%,
-          rgba(0,0,0,0.08) 100%),
+          rgba(255,255,255,0.5) 0%,
+          rgba(255,255,255,0.1) 50%,
+          rgba(0,0,0,0.04) 100%),
         var(--nav-bg);
     }
 
@@ -198,44 +185,43 @@
     }
     .light .nav-icon { filter: invert(0); }
 
-    /* Navbar micro-details: air vents */
+    /* Navbar micro-details — subtle and clean */
     .nav-vent {
       position: absolute;
       z-index: 1;
       pointer-events: none;
+      opacity: 0.4;
     }
     .nav-vent::before {
       content: '';
       display: block;
-      width: 24px; height: 8px;
+      width: 20px; height: 6px;
       background: repeating-linear-gradient(
         0deg,
         transparent,
-        transparent 1px,
-        var(--frame-joint) 1px,
+        transparent 1.5px,
+        var(--frame-joint) 1.5px,
         var(--frame-joint) 2px
       );
       border-radius: 1px;
     }
 
-    /* Diagonal seam */
     .nav-seam {
       position: absolute;
-      width: 1px; height: 20px;
+      width: 1px; height: 16px;
       background: var(--frame-joint);
       transform: rotate(35deg);
       z-index: 1;
       pointer-events: none;
+      opacity: 0.35;
     }
 
-    /* Light reflections */
     .nav-light {
       position: absolute;
-      width: 40px; height: 2px;
-      background: linear-gradient(90deg, transparent, var(--nav-highlight), transparent);
+      width: 40px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
       z-index: 1;
       pointer-events: none;
-      border-radius: 1px;
     }
 
     /* ── Main viewport ── */
@@ -296,41 +282,38 @@
     }
     #terminal-wrap.zoomed { cursor: default; }
 
-    /* Terminal frame — CNC machined metal chassis, white border in dark (iRobot) */
+    /* Terminal frame — clean device bezel, white border in dark (iRobot) */
     #terminal-frame {
       position: absolute; inset: 0;
-      border: 2.5px solid var(--frame-border);
-      border-radius: 8px;
+      border: 2px solid var(--frame-border);
+      border-radius: 10px;
       background:
-        linear-gradient(180deg,
-          rgba(255,255,255,0.08) 0%,
-          rgba(255,255,255,0.02) 30%,
-          rgba(0,0,0,0.03) 70%,
-          rgba(0,0,0,0.12) 100%),
+        linear-gradient(170deg,
+          rgba(255,255,255,0.05) 0%,
+          transparent 40%,
+          rgba(0,0,0,0.06) 100%),
         var(--frame-bg);
       overflow: hidden;
       box-shadow:
-        inset 0 1px 0 var(--frame-highlight),
-        inset 0 2px 0 rgba(255,255,255,0.04),
-        inset 0 -1px 0 rgba(0,0,0,0.4),
-        inset 0 -2px 4px rgba(0,0,0,0.1),
-        0 0 12px rgba(255,255,255,0.08),
-        0 0 30px rgba(255,255,255,0.04),
-        0 2px 8px rgba(0,0,0,0.3),
-        0 6px 24px rgba(0,0,0,0.35),
-        0 12px 48px rgba(0,0,0,0.2);
+        inset 0 1px 0 rgba(255,255,255,0.03),
+        inset 0 -1px 0 rgba(0,0,0,0.2),
+        0 0 0 0.5px rgba(255,255,255,0.1),
+        0 0 15px rgba(255,255,255,0.06),
+        0 0 40px rgba(255,255,255,0.03),
+        0 4px 12px rgba(0,0,0,0.25),
+        0 8px 32px rgba(0,0,0,0.3),
+        0 16px 64px rgba(0,0,0,0.15);
     }
     :root.light #terminal-frame {
       background:
-        linear-gradient(180deg,
-          rgba(255,255,255,0.6) 0%,
-          rgba(255,255,255,0.15) 30%,
-          rgba(0,0,0,0.02) 70%,
-          rgba(0,0,0,0.06) 100%),
+        linear-gradient(170deg,
+          rgba(255,255,255,0.4) 0%,
+          transparent 40%,
+          rgba(0,0,0,0.04) 100%),
         var(--frame-bg);
     }
 
-    /* Frame brushed aluminum texture — dual-grain */
+    /* Subtle surface texture — almost invisible, just adds materiality */
     #terminal-frame::before {
       content: '';
       position: absolute; inset: 0;
@@ -338,16 +321,9 @@
         repeating-linear-gradient(
           90deg,
           transparent,
-          transparent 1px,
-          rgba(255,255,255,0.01) 1px,
-          rgba(255,255,255,0.01) 2px
-        ),
-        repeating-linear-gradient(
-          90deg,
-          transparent,
-          transparent 5px,
-          rgba(255,255,255,0.006) 5px,
-          rgba(255,255,255,0.006) 6px
+          transparent 3px,
+          rgba(255,255,255,0.005) 3px,
+          rgba(255,255,255,0.005) 4px
         );
       pointer-events: none;
       z-index: 1;
@@ -367,7 +343,7 @@
     .frame-icon.bl { bottom: 8px; left: 8px; }
     .frame-icon.br { bottom: 8px; right: 8px; }
 
-    /* Frame micro-details */
+    /* Frame micro-details — minimal, clean */
     .frame-vent {
       position: absolute;
       z-index: 2;
@@ -376,15 +352,16 @@
     .frame-vent::before {
       content: '';
       display: block;
-      width: 40px; height: 8px;
+      width: 32px; height: 6px;
       background: repeating-linear-gradient(
         0deg,
         transparent,
         transparent 1.5px,
         var(--frame-joint) 1.5px,
-        var(--frame-joint) 2.5px
+        var(--frame-joint) 2px
       );
       border-radius: 2px;
+      opacity: 0.6;
     }
     .frame-seam {
       position: absolute;
@@ -392,40 +369,32 @@
       background: var(--frame-joint);
       z-index: 2;
       pointer-events: none;
+      opacity: 0.5;
     }
-    /* Screw/bolt joints — machined hardware look */
     .frame-joint {
       position: absolute;
-      width: 6px; height: 6px;
+      width: 4px; height: 4px;
       border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, var(--frame-highlight), var(--frame-joint) 60%, rgba(0,0,0,0.2));
-      border: 0.5px solid rgba(0,0,0,0.25);
-      box-shadow: inset 0 0.5px 0 rgba(255,255,255,0.15), 0 1px 2px rgba(0,0,0,0.2);
+      background: radial-gradient(circle at 40% 40%, rgba(255,255,255,0.08), var(--frame-joint) 70%);
+      border: 0.5px solid rgba(0,0,0,0.15);
       z-index: 2;
       pointer-events: none;
     }
-    /* Screw slot */
-    .frame-joint::after {
-      content: '';
-      position: absolute;
-      top: 50%; left: 20%;
-      width: 60%; height: 1px;
-      background: rgba(0,0,0,0.3);
-      transform: translateY(-50%) rotate(45deg);
-    }
+    .frame-joint::after { display: none; }
     .frame-light {
       position: absolute;
       background: linear-gradient(90deg, transparent, var(--frame-highlight), transparent);
       height: 1px;
       z-index: 2;
       pointer-events: none;
+      opacity: 0.5;
     }
 
     /* Terminal screen (glass) */
     #terminal-screen {
       position: absolute;
-      top: 3px; left: 3px; right: 3px; bottom: 3px;
-      border-radius: 4px;
+      top: 4px; left: 4px; right: 4px; bottom: 4px;
+      border-radius: 6px;
       overflow: hidden;
       background: var(--glass-tint);
       z-index: 3;
@@ -550,8 +519,8 @@
         height: calc(100% - 6px);
       }
       #terminal-wrap.idle { transform: scale(0.55) translateY(5%); }
-      #terminal-frame { border-radius: 6px; border-width: 1.5px; }
-      #terminal-screen { top: 2px; left: 2px; right: 2px; bottom: 2px; border-radius: 3px; }
+      #terminal-frame { border-radius: 8px; border-width: 1.5px; }
+      #terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
       .frame-icon { display: none; }
       .frame-joint { width: 4px; height: 4px; }
       .bg-icon { width: 20px; height: 20px; }
