@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
-  <title>Zap</title>
-  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <polygon points="22,4 10,22 19,22 16,36 30,16 21,16" fill="#9bff00" />
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <path fill="#00034a" stroke="#00034a" d="M21.4 2 7.5 20.7h7l-2 15.3L32.5 17h-7.3L21.4 2Z" stroke-width="1"/>
+    <path fill="#9bff00" stroke="#00034a" d="M20.7 4.2 9.9 19h6.8l-1.5 11.6L30.1 18h-7L20.7 4.2Z" stroke-width="1"/>
   </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
 </svg>

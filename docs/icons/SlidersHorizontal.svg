@@ -1,11 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
-  <title>SlidersHorizontal</title>
-  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="7" y1="12" x2="33" y2="12" />
-    <circle cx="15" cy="12" r="3" fill="#9bff00" />
-    <line x1="7" y1="20" x2="33" y2="20" />
-    <circle cx="25" cy="20" r="3" fill="#ffffff" />
-    <line x1="7" y1="28" x2="33" y2="28" />
-    <circle cx="18" cy="28" r="3" fill="#9bff00" />
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <path fill="#00034a" stroke="#00034a" d="M4 11.5h13.5a3.5 3.5 0 1 1 0 7H4a3.5 3.5 0 1 1 0-7Zm18.5 0H36a3.5 3.5 0 1 1 0 7H22.5a3.5 3.5 0 1 1 0-7Zm-11 12H36a3.5 3.5 0 1 1 0 7H11.5a3.5 3.5 0 1 1 0-7ZM4 23.5h3.5a3.5 3.5 0 1 1 0 7H4a3.5 3.5 0 1 1 0-7Zm0-12H8a3.5 3.5 0 1 1 0 7H4a3.5 3.5 0 1 1 0-7Z" stroke-width="1"/>
+    <path fill="#9bff00" stroke="#00034a" d="M4 12.5h12a2.5 2.5 0 1 1 0 5H4a2.5 2.5 0 1 1 0-5Zm19.5 0H36a2.5 2.5 0 1 1 0 5H23.5a2.5 2.5 0 1 1 0-5ZM11 24.5h25a2.5 2.5 0 1 1 0 5H11a2.5 2.5 0 1 1 0-5Zm-7 0h5a2.5 2.5 0 1 1 0 5H4a2.5 2.5 0 1 1 0-5Zm0-12h4a2.5 2.5 0 1 1 0 5H4a2.5 2.5 0 1 1 0-5Z" stroke-width="1"/>
   </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
 </svg>

@@ -1,14 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="none">
-  <title>Bug</title>
-  <g stroke="#00034a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="20" cy="20" r="7" fill="#9bff00" />
-    <circle cx="20" cy="11" r="4" fill="#9bff00" />
-    <line x1="13" y1="18" x2="8" y2="15" />
-    <line x1="13" y1="22" x2="8" y2="25" />
-    <line x1="27" y1="18" x2="32" y2="15" />
-    <line x1="27" y1="22" x2="32" y2="25" />
-    <line x1="16" y1="9" x2="12" y2="6" />
-    <line x1="24" y1="9" x2="28" y2="6" />
-    <line x1="20" y1="15" x2="20" y2="27" />
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 40 40" height="40" width="40">
+  <g clip-path="url(#a)">
+
+    <path fill="#00034a" stroke="#00034a" d="M20 8c4.8 0 8 3.4 8 8v3c1 0 2 .8 2 1.8s-1 1.8-2 1.8v3.4c0 5-3.7 9-8 9s-8-4-8-9v-3.4c-1 0-2-.8-2-1.8s1-1.8 2-1.8v-3c0-4.6 3.2-8 8-8Z" stroke-width="1"/>
+    <path fill="#9bff00" stroke="#00034a" d="M20 9.5c4 0 6.5 2.7 6.5 6.7v9.3c0 4.2-2.9 7.5-6.5 7.5S13.5 29.7 13.5 25.5v-9.3c0-4 2.5-6.7 6.5-6.7Z" stroke-width="1"/>
+    <path stroke="#00034a" stroke-linecap="round" d="M20 5V2.5M14 10 9.5 6.5M26 10l4.5-3.5M12 18H5.5M12 24H6.5M28 18h6.5M28 24h5.5" stroke-width="1.4"/>
+    <circle fill="#00034a" cx="17.5" cy="15.5" r="1"/>
+    <circle fill="#00034a" cx="22.5" cy="15.5" r="1"/>
   </g>
+  <defs>
+    <clipPath id="a"><path fill="#ffffff" d="M0 0h40v40H0z" stroke-width="1"/></clipPath>
+  </defs>
 </svg>
