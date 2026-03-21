@@ -21,12 +21,12 @@
  *   x(t) = (A + B·t) · e^(-ω₀·t) + endVal
  */
 
-// ── AOSP constants ──
-const MIN_WINDOW_SCALE = 0.85;        // LauncherBackAnimationController.java
-const FLING_THRESHOLD_SPEED = 500;    // quickstep_fling_threshold_speed (0.5dp × ~1000)
-const MAX_SWIPE_DURATION = 350;       // AbsSwipeUpHandler.java
-const DISMISS_TASK_DURATION = 300;    // RecentsView.java
-const MIN_DRAG_DISTANCE = 8;         // px dead zone
+// ── AOSP constants (mutable for dial.js) ──
+let MIN_WINDOW_SCALE = 0.85;        // LauncherBackAnimationController.java
+let FLING_THRESHOLD_SPEED = 500;    // quickstep_fling_threshold_speed (0.5dp × ~1000)
+let MAX_SWIPE_DURATION = 350;       // AbsSwipeUpHandler.java
+let DISMISS_TASK_DURATION = 300;    // RecentsView.java
+let MIN_DRAG_DISTANCE = 8;         // px dead zone
 
 // ── Critically damped spring (ζ = 1.0, zero oscillation) ──
 function createCriticalSpring(stiffness) {
@@ -79,6 +79,20 @@ class VelocityTracker {
   }
   clear() { this.samples = []; }
 }
+
+// ── Exported tunables for dial.js ──
+export const swipeParams = {
+  get minWindowScale() { return MIN_WINDOW_SCALE; },
+  set minWindowScale(v) { MIN_WINDOW_SCALE = v; },
+  get flingThreshold() { return FLING_THRESHOLD_SPEED; },
+  set flingThreshold(v) { FLING_THRESHOLD_SPEED = v; },
+  get maxSwipeDuration() { return MAX_SWIPE_DURATION; },
+  set maxSwipeDuration(v) { MAX_SWIPE_DURATION = v; },
+  get dismissDuration() { return DISMISS_TASK_DURATION; },
+  set dismissDuration(v) { DISMISS_TASK_DURATION = v; },
+  get minDragDistance() { return MIN_DRAG_DISTANCE; },
+  set minDragDistance(v) { MIN_DRAG_DISTANCE = v; },
+};
 
 // ── SwipeDismiss ──
 export class SwipeDismiss {

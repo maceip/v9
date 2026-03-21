@@ -13,7 +13,8 @@ import { NavFluid } from './fluid.js';
 import { GlassScene } from './glass.js';
 import { ZoomController } from './zoom.js';
 import { initIcons } from './icons.js';
-import { SwipeDismiss } from './swipe.js';
+import { SwipeDismiss, swipeParams } from './swipe.js';
+import { Dial } from './dial.js';
 
 // ── State ──
 let state = 'IDLE';
@@ -378,5 +379,38 @@ window.addEventListener('resize', () => {
   if (fluid && fluid.active) fluid.resize();
 });
 
+// ── Dial panel — live parameter tweaking ──
+const dial = new Dial();
+
+// Glass shader
+if (glass) {
+  const gp = glass.params;
+  dial.add('Glass', 'fog',             glass.fog, 0, 0.5,   v => glass.fog = v);
+  dial.add('Glass', 'warpStrength',    gp.warpStrength, 0, 0.5,  v => gp.warpStrength = v);
+  dial.add('Glass', 'swirlMul',        gp.swirlMul, 0, 6,        v => gp.swirlMul = v);
+  dial.add('Glass', 'refraction',      gp.refractStrength, 0, 0.2,v => gp.refractStrength = v);
+  dial.add('Glass', 'caBase',          gp.caBase, 0, 0.1,        v => gp.caBase = v);
+  dial.add('Glass', 'caEdgeMul',       gp.caEdgeMul, 0, 5,       v => gp.caEdgeMul = v);
+  dial.add('Glass', 'refractMix',      gp.refractMix, 0, 1,      v => gp.refractMix = v);
+  dial.add('Glass', 'caustics',        gp.causticIntensity, 0, 0.5, v => gp.causticIntensity = v);
+  dial.add('Glass', 'causticExp',      gp.causticExp, 2, 16,     v => gp.causticExp = v);
+  dial.add('Glass', 'specular',        gp.specIntensity, 0, 0.5,  v => gp.specIntensity = v);
+  dial.add('Glass', 'specPow',         gp.specPow, 1, 8,         v => gp.specPow = v);
+  dial.add('Glass', 'fresnel',         gp.fresnelIntensity, 0, 1, v => gp.fresnelIntensity = v);
+  dial.add('Glass', 'fresnelExp',      gp.fresnelExp, 1, 4,      v => gp.fresnelExp = v);
+  dial.add('Glass', 'bevel',           gp.bevelIntensity, 0, 0.3, v => gp.bevelIntensity = v);
+}
+
+// Zoom spring
+dial.add('Zoom', 'stiffness', zoom.stiffness, 0.005, 0.08, v => zoom.stiffness = v);
+dial.add('Zoom', 'damping',   zoom.damping, 0.5, 0.99,     v => zoom.damping = v);
+dial.add('Zoom', 'threshold', zoom.threshold, 0.0001, 0.005, v => zoom.threshold = v);
+
+// Swipe physics
+dial.add('Swipe', 'minScale',      swipeParams.minWindowScale, 0.6, 0.95, v => swipeParams.minWindowScale = v);
+dial.add('Swipe', 'flingSpeed',    swipeParams.flingThreshold, 200, 1000, v => swipeParams.flingThreshold = v, 10);
+dial.add('Swipe', 'dismissDur',    swipeParams.dismissDuration, 150, 600, v => swipeParams.dismissDuration = v, 10);
+dial.add('Swipe', 'minDrag',       swipeParams.minDragDistance, 2, 20,    v => swipeParams.minDragDistance = v, 1);
+
 // ── Done — page is interactive ──
-console.log('[v9] Page ready.');
+console.log('[v9] Page ready. Press D to open dial panel.');

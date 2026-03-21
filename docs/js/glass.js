@@ -5,6 +5,8 @@
  * Base: Two orbiting color blobs (blue + pink) from bigleaguechew_r3f
  * Glass: Refraction, chromatic aberration, caustics, Fresnel, specular
  * Interactive: Mouse warp (gravitational lens + swirl)
+ *
+ * All visual constants are exposed as uniforms for live tweaking via dial.js.
  */
 
 const VERT = `
@@ -25,6 +27,21 @@ uniform float uGlassBlur;
 uniform vec2 uResolution;
 uniform vec2 uMouse;
 uniform float uDark;
+
+// ── Tunable uniforms (wired to dial.js) ──
+uniform float uWarpStrength;     // mouse warp intensity
+uniform float uSwirlMul;        // swirl rotation multiplier
+uniform float uRefractStrength;  // noise refraction displacement
+uniform float uCABase;           // chromatic aberration base
+uniform float uCAEdgeMul;        // CA edge amplification
+uniform float uRefractMix;       // refracted vs direct mix
+uniform float uCausticIntensity; // caustic brightness
+uniform float uCausticExp;       // caustic sharpness
+uniform float uSpecIntensity;    // specular highlight brightness
+uniform float uSpecPow;          // specular sharpness
+uniform float uFresnelIntensity; // Fresnel edge glow
+uniform float uFresnelExp;       // Fresnel falloff curve
+uniform float uBevelIntensity;   // edge bevel brightness
 
 // ── Noise ──
 float hash(vec2 p) {
@@ -53,34 +70,20 @@ float fbm(vec2 p) {
   return v;
 }
 
-// ── bigleaguechew background: two orbiting blobs ──
+// ── bigleaguechew background ──
 vec3 blcBackground(vec2 uv, float t, float dark) {
   vec2 p = uv - 0.5;
-
-  // Orbiting blob centers
   vec2 c1 = vec2(0.18 * sin(t * 0.2), 0.16 * cos(t * 0.25));
   vec2 c2 = vec2(-0.25 * cos(t * 0.22), -0.1 * sin(t * 0.18));
   float r1 = length(p - c1);
   float r2 = length(p - c2);
 
-  // Dark mode: vivid blue + pink (original bigleaguechew)
-  vec3 blueDark = vec3(0.08, 0.39, 0.98);
-  vec3 pinkDark = vec3(0.85, 0.42, 0.73);
+  vec3 blue = mix(vec3(0.55, 0.72, 0.95), vec3(0.08, 0.39, 0.98), dark);
+  vec3 pink = mix(vec3(0.92, 0.68, 0.78), vec3(0.85, 0.42, 0.73), dark);
 
-  // Light mode: softer pastels
-  vec3 blueLight = vec3(0.55, 0.72, 0.95);
-  vec3 pinkLight = vec3(0.92, 0.68, 0.78);
-
-  vec3 blue = mix(blueLight, blueDark, dark);
-  vec3 pink = mix(pinkLight, pinkDark, dark);
-
-  // Diagonal gradient base
   vec3 col = mix(blue, pink, 0.5 + 0.5 * sin((uv.x + uv.y) * 2.2 + t * 0.15));
-  // Blob 1 — blue dominance
   col = mix(col, blue, smoothstep(0.7, 0.08, r1));
-  // Blob 2 — pink dominance
   col = mix(col, pink, smoothstep(0.65, 0.08, r2));
-
   return col;
 }
 
@@ -95,8 +98,8 @@ void main() {
   vec2 mousePos = (uMouse * 2.0 - 1.0) * vec2(aspect, 1.0);
   vec2 toMouse = aspected - mousePos;
   float mouseDist = length(toMouse);
-  float warp = exp(-mouseDist * mouseDist * 3.0) * 0.2;
-  float swirlAngle = warp * 3.0;
+  float warp = exp(-mouseDist * mouseDist * 3.0) * uWarpStrength;
+  float swirlAngle = warp * uSwirlMul;
   float cs = cos(swirlAngle), sn = sin(swirlAngle);
   vec2 warped = aspected + toMouse * warp * 0.4;
   vec2 fromMouse = warped - mousePos;
@@ -109,15 +112,14 @@ void main() {
   // ── Glass refraction ──
   float n1 = noise(warpedUV * 6.0 + t * 0.15);
   float n2 = noise(warpedUV * 6.0 + t * 0.12 + 50.0);
-  vec2 refract = (vec2(n1, n2) - 0.5) * 0.06;
+  vec2 refract = (vec2(n1, n2) - 0.5) * uRefractStrength;
 
-  // ── Base background through refraction ──
   vec2 bgUV = warpedUV + refract;
   vec3 bg = blcBackground(bgUV, t, uDark);
 
-  // ── Chromatic aberration — stronger at edges ──
+  // ── Chromatic aberration ──
   float edgeFactor = length(centered) * 0.7;
-  float ca = 0.02 * (1.0 + edgeFactor * 2.5);
+  float ca = uCABase * (1.0 + edgeFactor * uCAEdgeMul);
 
   vec3 refracted = vec3(
     blcBackground(warpedUV + refract * 1.1 + vec2(ca, ca * 0.3), t, uDark).r,
@@ -125,30 +127,30 @@ void main() {
     blcBackground(warpedUV + refract * 0.9 - vec2(ca * 0.4, ca), t, uDark).b
   );
 
-  vec3 col = mix(bg, refracted, 0.7);
+  vec3 col = mix(bg, refracted, uRefractMix);
 
   // ── Caustics ──
-  float c1 = fbm(warpedUV * 5.0 + t * vec2(0.15, 0.1));
-  float c2 = fbm(warpedUV * 7.0 - t * vec2(0.12, 0.18) + 3.0);
-  float caustic = pow(1.0 - abs(c1 - c2), 8.0);
+  float fc1 = fbm(warpedUV * 5.0 + t * vec2(0.15, 0.1));
+  float fc2 = fbm(warpedUV * 7.0 - t * vec2(0.12, 0.18) + 3.0);
+  float caustic = pow(1.0 - abs(fc1 - fc2), uCausticExp);
   vec3 causticCol = mix(vec3(0.95, 0.92, 0.88), vec3(0.6, 0.8, 1.0), uDark);
-  col += causticCol * caustic * 0.2;
+  col += causticCol * caustic * uCausticIntensity;
 
-  // ── Specular highlights ──
+  // ── Specular ──
   float s1 = fbm(warpedUV * 4.0 + vec2(t * 0.2, -t * 0.15));
   float s2 = fbm(warpedUV * 5.0 + vec2(-t * 0.18, t * 0.22) + 5.0);
-  float spec = pow(s1 * s2, 3.0) * 2.0;
-  col += mix(vec3(1.0, 0.98, 0.95), vec3(0.8, 0.85, 1.0), uDark) * spec * 0.25;
+  float spec = pow(s1 * s2, uSpecPow) * 2.0;
+  col += mix(vec3(1.0, 0.98, 0.95), vec3(0.8, 0.85, 1.0), uDark) * spec * uSpecIntensity;
 
-  // ── Fresnel edges ──
+  // ── Fresnel ──
   float dist = length(centered);
-  float fresnel = pow(dist, 2.5) * 0.4;
+  float fresnel = pow(dist, uFresnelExp) * uFresnelIntensity;
   col += mix(vec3(0.95, 0.93, 0.90), vec3(0.3, 0.4, 0.6), uDark) * fresnel;
 
-  // ── Edge bevel ──
+  // ── Bevel ──
   vec2 edgeDist = abs(vUv - 0.5) * 2.0;
   float bevel = smoothstep(0.94, 1.0, max(edgeDist.x, edgeDist.y));
-  col += bevel * 0.12 * (0.8 + 0.2 * sin(t * 0.6 + edgeDist.x * 5.0));
+  col += bevel * uBevelIntensity * (0.8 + 0.2 * sin(t * 0.6 + edgeDist.x * 5.0));
 
   // ── Fog ──
   vec3 fogColor = mix(vec3(0.91, 0.89, 0.87), vec3(0.04, 0.04, 0.06), uDark);
@@ -159,6 +161,23 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`;
 
+// Default tunable values (matching previous hardcoded constants)
+const DEFAULTS = {
+  warpStrength: 0.2,
+  swirlMul: 3.0,
+  refractStrength: 0.06,
+  caBase: 0.02,
+  caEdgeMul: 2.5,
+  refractMix: 0.7,
+  causticIntensity: 0.2,
+  causticExp: 8.0,
+  specIntensity: 0.25,
+  specPow: 3.0,
+  fresnelIntensity: 0.4,
+  fresnelExp: 2.5,
+  bevelIntensity: 0.12,
+};
+
 export class GlassScene {
   constructor(canvas) {
     this.canvas = canvas;
@@ -168,8 +187,11 @@ export class GlassScene {
     this.isDark = true;
     this.mouse = { x: 0.5, y: 0.5 };
 
-    const params = { alpha: false, depth: false, stencil: false, antialias: false, preserveDrawingBuffer: false };
-    const gl = canvas.getContext('webgl2', params) || canvas.getContext('webgl', params);
+    // Tunable shader params (live-editable via dial.js)
+    this.params = { ...DEFAULTS };
+
+    const p = { alpha: false, depth: false, stencil: false, antialias: false, preserveDrawingBuffer: false };
+    const gl = canvas.getContext('webgl2', p) || canvas.getContext('webgl', p);
     if (!gl) return;
     this.gl = gl;
 
@@ -234,6 +256,7 @@ export class GlassScene {
     this._raf = requestAnimationFrame(() => this._loop());
     const gl = this.gl;
     const t = (performance.now() - this._t0) / 1000;
+    const pr = this.params;
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.prog);
@@ -244,6 +267,21 @@ export class GlassScene {
     gl.uniform2f(this.u.uResolution, this.canvas.width, this.canvas.height);
     gl.uniform2f(this.u.uMouse, this.mouse.x, this.mouse.y);
     gl.uniform1f(this.u.uDark, this.isDark ? 1.0 : 0.0);
+
+    // Tunable params
+    gl.uniform1f(this.u.uWarpStrength, pr.warpStrength);
+    gl.uniform1f(this.u.uSwirlMul, pr.swirlMul);
+    gl.uniform1f(this.u.uRefractStrength, pr.refractStrength);
+    gl.uniform1f(this.u.uCABase, pr.caBase);
+    gl.uniform1f(this.u.uCAEdgeMul, pr.caEdgeMul);
+    gl.uniform1f(this.u.uRefractMix, pr.refractMix);
+    gl.uniform1f(this.u.uCausticIntensity, pr.causticIntensity);
+    gl.uniform1f(this.u.uCausticExp, pr.causticExp);
+    gl.uniform1f(this.u.uSpecIntensity, pr.specIntensity);
+    gl.uniform1f(this.u.uSpecPow, pr.specPow);
+    gl.uniform1f(this.u.uFresnelIntensity, pr.fresnelIntensity);
+    gl.uniform1f(this.u.uFresnelExp, pr.fresnelExp);
+    gl.uniform1f(this.u.uBevelIntensity, pr.bevelIntensity);
 
     gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
   }
