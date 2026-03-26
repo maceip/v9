@@ -21,11 +21,28 @@ const MIME = {
 // ── File server (8080) ──────────────────────────────────────────────
 const fileServer = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  // Required for SharedArrayBuffer (Emscripten pthreads)
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
   let filePath = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  if (filePath.endsWith('/') || filePath === ROOT) filePath = path.join(ROOT, 'web', 'index.html');
+  if (filePath.endsWith('/') || filePath.endsWith('\\') || filePath === ROOT) filePath = path.join(ROOT, 'web', 'index.html');
 
   fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) { res.writeHead(404); res.end('Not found'); return; }
+    if (err || !stat.isFile()) {
+      // Try appending index.html for directory paths
+      const indexPath = path.join(filePath, 'index.html');
+      fs.stat(indexPath, (err2, stat2) => {
+        if (err2 || !stat2.isFile()) { res.writeHead(404); res.end('Not found: ' + req.url); return; }
+        const ext2 = path.extname(indexPath);
+        res.writeHead(200, {
+          'Content-Type': MIME[ext2] || 'application/octet-stream',
+          'Content-Length': stat2.size,
+          'Cache-Control': 'no-cache',
+        });
+        fs.createReadStream(indexPath).pipe(res);
+      });
+      return;
+    }
     const ext = path.extname(filePath);
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
@@ -50,6 +67,10 @@ const proxy = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Expose-Headers', '*');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+  // Health check: HEAD / — return 200 so the CLI knows the API is available
+  if (req.method === 'HEAD' && (req.url === '/' || req.url === '')) {
+    res.writeHead(200); res.end(); return;
+  }
 
   // Determine target from X-Proxy-Host header or default to Anthropic
   const targetHost = req.headers['x-proxy-host'] || 'api.anthropic.com';

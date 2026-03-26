@@ -15,30 +15,169 @@
 (function() {
   'use strict';
 
+  // ─── global ─────────────────────────────────────────────────────
+  // Node.js uses `global` as the global object; browsers use `globalThis`.
+  if (typeof globalThis.global === 'undefined') {
+    globalThis.global = globalThis;
+  }
+
+  // ─── Error logging for debugging ───────────────────────────────
+  // Log all errors to localStorage for post-mortem inspection
+  globalThis.__v9_errors = [];
+  globalThis.addEventListener('error', (evt) => {
+    const msg = evt.error?.message || String(evt.message);
+    globalThis.__v9_errors.push({type: 'error', msg: msg.substring(0, 200), stack: evt.error?.stack?.substring(0, 300)});
+    try { localStorage.setItem('__v9_errors', JSON.stringify(globalThis.__v9_errors.slice(-10))); } catch(e) {}
+    // Suppress known exit-related errors
+    if (msg === 'unreachable' || evt.error?.code === 'PROCESS_EXIT') {
+      evt.preventDefault();
+    }
+  });
+  globalThis.addEventListener('unhandledrejection', (evt) => {
+    const msg = evt.reason?.message || String(evt.reason);
+    globalThis.__v9_errors.push({type: 'rejection', msg: msg.substring(0, 200), stack: evt.reason?.stack?.substring(0, 300)});
+    try { localStorage.setItem('__v9_errors', JSON.stringify(globalThis.__v9_errors.slice(-10))); } catch(e) {}
+    if (msg === 'unreachable' || evt.reason?.code === 'PROCESS_EXIT') {
+      evt.preventDefault();
+    }
+  });
+
+  // ─── require shim ──────────────────────────────────────────────
+  // Emscripten's generated JS checks process.versions.node and calls
+  // require('node:worker_threads') and require('node:fs').
+  // Provide a minimal shim so the IIFE doesn't crash.
+  if (typeof globalThis.require === 'undefined') {
+    globalThis.require = function(name) {
+      if (name === 'node:worker_threads' || name === 'worker_threads') {
+        return { isMainThread: true, workerData: null, Worker: class {} };
+      }
+      if (name === 'node:fs' || name === 'fs') {
+        return {
+          readFileSync: () => new Uint8Array(0),
+          existsSync: () => false,
+          readdirSync: () => [],
+        };
+      }
+      return {};
+    };
+  }
+
+  // ─── __filename / __dirname ────────────────────────────────────
+  // Emscripten's Node.js path uses these globals.
+  if (typeof globalThis.__filename === 'undefined') {
+    globalThis.__filename = '/app/index.js';
+  }
+  if (typeof globalThis.__dirname === 'undefined') {
+    globalThis.__dirname = '/app';
+  }
+
   // ─── process ──────────────────────────────────────────────────────
   // Minimal process object for code that accesses process without importing.
   // The full processBridge replaces this once browser-builtins.js loads.
 
   if (typeof globalThis.process === 'undefined') {
-    const _env = {};
+    const _env = {
+      // Route API calls through CORS proxy — browser can't call api.anthropic.com directly
+      ANTHROPIC_BASE_URL: 'http://localhost:8081',
+    };
     const _cwd = '/';
+    // Minimal EventEmitter for signal handling (signal-exit library needs this)
+    const _listeners = {};
+    const _on = (evt, fn) => { (_listeners[evt] = _listeners[evt] || []).push(fn); return globalThis.process; };
+    const _off = (evt, fn) => { const a = _listeners[evt]; if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } return globalThis.process; };
+    const _emit = (evt, ...args) => { const a = _listeners[evt]; if (a) a.slice().forEach(fn => fn(...args)); return !!a; };
+
     globalThis.process = {
       env: _env,
-      argv: ['/usr/bin/node', '/app/index.js'],
+      argv: ['/usr/bin/node', '/app/claude-code.js'],
       platform: 'linux',
-      arch: 'wasm32',
-      version: 'v20.0.0',
-      versions: { node: '20.0.0' },
+      arch: 'x64',  // Report x64 to prevent "Unsupported architecture" from CLIs
+      version: 'v22.0.0',
+      versions: { node: '22.0.0' },
       pid: 1,
       ppid: 0,
-      exitCode: 0,
+      // exitCode must remain undefined for the CLI's `process.exitCode !== void 0` check.
+      // signal-exit sets it to 128+N (e.g. 129 for SIGHUP). We block those writes
+      // because there are no real OS signals in the browser.
+      get exitCode() { return this._exitCode; },
+      set exitCode(v) {
+        // Block signal-exit's synthetic signal codes (128+N)
+        if (typeof v === 'number' && v >= 128) return;
+        this._exitCode = v;
+      },
+      _exitCode: undefined,
       cwd: () => _cwd,
       chdir: () => {},
-      exit: (code) => { console.warn('[process.exit] Code:', code); },
+      on: _on,
+      addListener: _on,
+      once: (evt, fn) => { const w = (...a) => { _off(evt, w); fn(...a); }; return _on(evt, w); },
+      off: _off,
+      removeListener: _off,
+      removeAllListeners: (evt) => { if (evt) delete _listeners[evt]; else Object.keys(_listeners).forEach(k => delete _listeners[k]); return globalThis.process; },
+      emit: _emit,
+      listeners: (evt) => (_listeners[evt] || []).slice(),
+      listenerCount: (evt) => (_listeners[evt] || []).length,
+      rawListeners: (evt) => (_listeners[evt] || []).slice(),
+      exit: (code) => {
+        // Do NOT set process.exitCode here — Claude Code checks
+        // process.exitCode !== undefined to detect prior exit calls
+        // and skips initialization if set.
+        globalThis.__exitTraces = globalThis.__exitTraces || [];
+        globalThis.__exitTraces.push({ code, stack: new Error().stack });
+        const err = new Error(`process.exit(${code})`);
+        err.code = 'PROCESS_EXIT';
+        err.exitCode = code ?? 0;
+        throw err;
+      },
+      kill: (pid, signal) => {
+        // No-op — can't kill processes in browser
+      },
+      reallyExit: (code) => {
+        // No-op — signal-exit saves and replaces this
+      },
       nextTick: (fn, ...args) => Promise.resolve().then(() => fn(...args)),
-      stdout: { write: (s) => { if (globalThis._xtermWrite) globalThis._xtermWrite(s); else console.log(s); return true; }, columns: 80, rows: 24, isTTY: true, on: () => globalThis.process.stdout, once: () => globalThis.process.stdout, emit: () => false, fd: 1 },
-      stderr: { write: (s) => { if (globalThis._xtermWrite) globalThis._xtermWrite(s); else console.error(s); return true; }, columns: 80, rows: 24, isTTY: true, on: () => globalThis.process.stderr, once: () => globalThis.process.stderr, emit: () => false, fd: 2 },
-      stdin: { on: () => globalThis.process.stdin, once: () => globalThis.process.stdin, resume: () => {}, pause: () => {}, setEncoding: () => {}, isTTY: true, fd: 0 },
+      stdout: {
+        write: (chunk, encoding, callback) => {
+          if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+          const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+          if (globalThis._xtermWrite) globalThis._xtermWrite(str);
+          else console.log(str);
+          if (callback) callback();
+          return true;
+        },
+        columns: 80, rows: 24, isTTY: true, fd: 1,
+        getColorDepth: () => 8, hasColors: (n) => (n || 1) <= 256,
+        getWindowSize: () => [80, 24],
+        cursorTo: () => true, clearLine: () => true, moveCursor: () => true,
+        on: () => globalThis.process.stdout, once: () => globalThis.process.stdout,
+        removeListener: () => globalThis.process.stdout,
+        emit: () => false,
+      },
+      stderr: {
+        write: (chunk, encoding, callback) => {
+          if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+          const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+          if (globalThis._xtermWrite) globalThis._xtermWrite(str);
+          else console.error(str);
+          if (callback) callback();
+          return true;
+        },
+        columns: 80, rows: 24, isTTY: true, fd: 2,
+        getColorDepth: () => 8, hasColors: (n) => (n || 1) <= 256,
+        getWindowSize: () => [80, 24],
+        on: () => globalThis.process.stderr, once: () => globalThis.process.stderr,
+        removeListener: () => globalThis.process.stderr,
+        emit: () => false,
+      },
+      stdin: {
+        on: () => globalThis.process.stdin, once: () => globalThis.process.stdin,
+        removeListener: () => globalThis.process.stdin,
+        resume: () => {}, pause: () => {}, setEncoding: () => {},
+        setRawMode: () => globalThis.process.stdin,
+        ref: () => globalThis.process.stdin, unref: () => globalThis.process.stdin,
+        read: () => null,
+        isTTY: true, fd: 0, readable: true,
+      },
       hrtime: Object.assign(
         function hrtime(prev) {
           const now = performance.now();
@@ -248,10 +387,12 @@
   // Node.js console module exports a Console constructor.
 
   if (!globalThis.console.Console) {
+    const _nativeLog = globalThis.console.log.bind(globalThis.console);
+    const _nativeError = globalThis.console.error.bind(globalThis.console);
     globalThis.console.Console = class Console {
       constructor(opts) {
-        const out = opts?.stdout || { write: (s) => console.log(s) };
-        const err = opts?.stderr || { write: (s) => console.error(s) };
+        const out = opts?.stdout || { write: (s) => _nativeLog(s) };
+        const err = opts?.stderr || { write: (s) => _nativeError(s) };
         this.log = (...a) => out.write(a.map(String).join(' ') + '\n');
         this.error = (...a) => err.write(a.map(String).join(' ') + '\n');
         this.warn = this.error;
@@ -281,8 +422,8 @@
   const _proxyUrl = (() => {
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
-      return params.get('proxy') || '';
-    } catch { return ''; }
+      return params.get('proxy') || 'http://localhost:8081';
+    } catch { return 'http://localhost:8081'; }
   })();
 
   if (_proxyUrl) {
@@ -290,24 +431,42 @@
       let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
 
       // Route Anthropic API calls through CORS proxy
-      if (url.includes('api.anthropic.com')) {
+      if (url.includes('api.anthropic.com') || url.includes('platform.claude.com')) {
         const target = new URL(url);
+        const origHost = target.hostname;
         const proxy = new URL(_proxyUrl);
         target.hostname = proxy.hostname;
         target.port = proxy.port;
         target.protocol = proxy.protocol;
         url = target.toString();
 
+        // Tell the proxy which host to forward to
+        const proxyInit = { ...init, headers: { ...(init?.headers || {}), 'X-Proxy-Host': origHost } };
+
         if (typeof input === 'string') {
-          return _origFetch.call(globalThis, url, init);
+          return _origFetch.call(globalThis, url, proxyInit);
         }
-        return _origFetch.call(globalThis, new Request(url, input), init);
+        return _origFetch.call(globalThis, new Request(url, { ...input, headers: { ...Object.fromEntries(input.headers?.entries?.() || []), 'X-Proxy-Host': origHost } }), init);
       }
 
       return _origFetch.call(globalThis, input, init);
     };
     // Preserve fetch properties
     Object.setPrototypeOf(globalThis.fetch, _origFetch);
+
+    // Also intercept XMLHttpRequest for telemetry/metrics
+    const _origXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+      if (typeof url === 'string' && (url.includes('api.anthropic.com') || url.includes('platform.claude.com'))) {
+        const target = new URL(url);
+        const proxy = new URL(_proxyUrl);
+        target.hostname = proxy.hostname;
+        target.port = proxy.port;
+        target.protocol = proxy.protocol;
+        url = target.toString();
+      }
+      return _origXHROpen.call(this, method, url, ...rest);
+    };
   }
 
   // ─── queueMicrotask fallback ──────────────────────────────────────

@@ -25,27 +25,42 @@
 let Terminal, FitAddon, WebLinksAddon;
 
 async function loadXterm() {
+  // Load xterm from local node_modules (avoids COEP/CORS issues with CDN)
   try {
-    const xtermMod = await import('https://cdn.jsdelivr.net/npm/xterm@5.3.0/+esm');
-    Terminal = xtermMod.Terminal;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '../node_modules/xterm/lib/xterm.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    Terminal = globalThis.Terminal;
   } catch {
-    if (globalThis.Terminal) {
-      Terminal = globalThis.Terminal;
-    } else {
-      throw new Error('xterm.js not available — include via CDN or npm');
-    }
+    throw new Error('xterm.js not available — include via CDN or npm');
   }
 
   try {
-    const fitMod = await import('https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/+esm');
-    FitAddon = fitMod.FitAddon;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js';
+      script.onload = resolve;
+      script.onerror = () => resolve(); // optional
+      document.head.appendChild(script);
+    });
+    FitAddon = globalThis.FitAddon?.FitAddon || null;
   } catch {
     FitAddon = null;
   }
 
   try {
-    const linksMod = await import('https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/+esm');
-    WebLinksAddon = linksMod.WebLinksAddon;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '../node_modules/xterm-addon-web-links/lib/xterm-addon-web-links.js';
+      script.onload = resolve;
+      script.onerror = () => resolve(); // optional
+      document.head.appendChild(script);
+    });
+    WebLinksAddon = globalThis.WebLinksAddon?.WebLinksAddon || null;
   } catch {
     WebLinksAddon = null;
   }
@@ -104,6 +119,11 @@ async function boot() {
 
   // H4: Prompt for API key via sessionStorage (not URL params)
   let apiKey = sessionStorage.getItem('anthropic_api_key') || '';
+  // Set API key on globalThis.process.env immediately — the CLI reads it from both
+  // globalThis.process.env AND require('process').env
+  if (apiKey && globalThis.process?.env) {
+    globalThis.process.env.ANTHROPIC_API_KEY = apiKey;
+  }
   if (!apiKey) {
     term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
     term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
@@ -120,7 +140,44 @@ async function boot() {
   try {
     const { initEdgeJS } = await import('../napi-bridge/index.js');
 
+    // Load the Emscripten module factory.
+    // edge.js is an IIFE that defines `var EdgeJSModule = ...` — not ESM.
+    // Load it via a script tag so it lands on globalThis.
+    //
+    // IMPORTANT: Temporarily clear process.versions.node so Emscripten
+    // detects a browser environment. Our polyfills set it, which makes
+    // Emscripten call require('node:worker_threads') and crash.
+    let moduleFactory = globalThis.EdgeJSModule;
+    if (typeof moduleFactory !== 'function') {
+      // Temporarily hide process.versions.node so Emscripten's IIFE
+      // detects browser mode instead of Node.js (which calls require()).
+      // Must be cleared BEFORE the script executes — onload is too late.
+      const savedNode = globalThis.process?.versions?.node;
+      if (globalThis.process?.versions) {
+        delete globalThis.process.versions.node;
+      }
+      try {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = '../dist/edgejs.js';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Failed to load edgejs.js'));
+          document.head.appendChild(script);
+        });
+        moduleFactory = globalThis.EdgeJSModule;
+      } catch (err) {
+        term.writeln('\x1b[33m[wasm] Module not found: ' + _safe(err.message) + '\x1b[0m');
+      } finally {
+        // Restore for CLIs that need process.versions.node
+        if (globalThis.process?.versions && savedNode) {
+          globalThis.process.versions.node = savedNode;
+        }
+      }
+    }
+
     runtime = await initEdgeJS({
+      moduleFactory,
+      wasmUrl: '../dist/edgejs.wasm',
       onStdout: (text) => term.write(text),
       onStderr: (text) => term.write(text),
       env: {
@@ -129,12 +186,53 @@ async function boot() {
         COLUMNS: String(term.cols),
         LINES: String(term.rows),
         ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
+        // Route API calls through CORS proxy (browser can't call api.anthropic.com directly)
+        ANTHROPIC_BASE_URL: config.proxyUrl || 'http://localhost:8081',
       },
     });
+
+    // Replace globalThis.process streams with the bridge's Writable streams
+    // so Ink (which uses globalThis.process.stdout) renders to xterm
+    try {
+      const pb = runtime.require('process');
+      if (pb.stdout) globalThis.process.stdout = pb.stdout;
+      if (pb.stderr) globalThis.process.stderr = pb.stderr;
+      if (pb.stdin) globalThis.process.stdin = pb.stdin;
+    } catch {}
 
     // Set initial terminal size
     if (typeof runtime.setTerminalSize === 'function') {
       runtime.setTerminalSize(term.cols, term.rows);
+    }
+
+    // ── Set up filesystem structure for CLI ──────────────────────────
+    // Create home directory, .claude config, and virtual binaries
+    try {
+      const dirs = [
+        '/home/user', '/home/user/.claude', '/home/user/.config',
+        '/usr/bin', '/tmp', '/app',
+      ];
+      for (const dir of dirs) {
+        try { runtime.fs.mkdirSync(dir, { recursive: true }); } catch {}
+      }
+
+      // Virtual binaries so `which` finds them
+      const bins = ['git', 'rg', 'sh', 'node', 'cat', 'ls', 'grep'];
+      for (const bin of bins) {
+        try { runtime.fs.writeFileSync(`/usr/bin/${bin}`, '#!/bin/sh\n', { mode: 0o755 }); } catch {}
+      }
+
+      // Minimal .claude config — must include grove acceptance or CLI exits in -p mode
+      try {
+        runtime.fs.writeFileSync('/home/user/.claude/settings.json', JSON.stringify({
+          permissions: { allow: [] },
+          hasTrustDialogAccepted: true,
+          grove_enabled: true,
+          grove_notice_viewed_at: new Date().toISOString(),
+        }));
+      } catch {}
+    } catch (err) {
+      term.writeln('\x1b[33m[fs] Setup warning: ' + _safe(err.message) + '\x1b[0m');
     }
 
     // ── Register the bundled Anthropic SDK ────────────────────────────
@@ -233,9 +331,15 @@ async function boot() {
         term.writeln('\x1b[32m✓ Claude Code bundle loaded (CJS)\x1b[0m');
         term.writeln('');
         try {
-          runtime.require('/app/claude-code.js', '/app');
+          const exports = runtime.require('/app/claude-code.js', '/app');
+          term.writeln('\x1b[90m[debug] require() returned: ' + Object.keys(exports || {}).join(', ') + '\x1b[0m');
+          term.writeln('\x1b[90m[debug] mhz async chain is running in background...\x1b[0m');
         } catch (err) {
-          term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
+          if (err.code === 'PROCESS_EXIT') {
+            term.writeln('\x1b[33m[exit] Claude Code exited with code ' + (err.exitCode ?? 'unknown') + '\x1b[0m');
+          } else {
+            term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
+          }
         }
       } else {
         term.writeln('');

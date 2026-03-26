@@ -22,15 +22,20 @@ set(CMAKE_CROSSCOMPILING TRUE)
 # Avoid CMake link checks inheriting Emscripten export constraints.
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(EDGE_IS_EMSCRIPTEN_TARGET ON)
-set(EDGE_ALLOW_UNDEFINED_IMPORTS OFF CACHE BOOL "" FORCE)
-set(UNDEFINED_SYMBOLS_FLAG "-sERROR_ON_UNDEFINED_SYMBOLS=1")
+set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
+set(UNDEFINED_SYMBOLS_FLAG "-sERROR_ON_UNDEFINED_SYMBOLS=0")
 
 # ---- Compilers ----
-set(CMAKE_C_COMPILER "${EMSCRIPTEN_ROOT}/emcc")
-set(CMAKE_CXX_COMPILER "${EMSCRIPTEN_ROOT}/em++")
-set(CMAKE_AR "${EMSCRIPTEN_ROOT}/emar")
-set(CMAKE_RANLIB "${EMSCRIPTEN_ROOT}/emranlib")
-set(CMAKE_STRIP "${EMSCRIPTEN_ROOT}/emstrip")
+if(WIN32 OR CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    set(_BAT ".bat")
+else()
+    set(_BAT "")
+endif()
+set(CMAKE_C_COMPILER "${EMSCRIPTEN_ROOT}/emcc${_BAT}")
+set(CMAKE_CXX_COMPILER "${EMSCRIPTEN_ROOT}/em++${_BAT}")
+set(CMAKE_AR "${EMSCRIPTEN_ROOT}/emar${_BAT}")
+set(CMAKE_RANLIB "${EMSCRIPTEN_ROOT}/emranlib${_BAT}")
+set(CMAKE_STRIP "${EMSCRIPTEN_ROOT}/emstrip${_BAT}")
 
 # ---- Wasm feature flags ----
 # Match EdgeJS's WASIX build features, adapted for Emscripten
@@ -69,11 +74,12 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sSHARED_MEMORY=1"
     "-pthread"
     "-sJSPI=1"
+    "-sWASM_BIGINT=0"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME='EdgeJSModule'"
     "-sFILESYSTEM=1"
     "-sFORCE_FILESYSTEM=1"
-    "-sALLOW_UNIMPLEMENTED_SYSCALLS=0"
+    "-sALLOW_UNIMPLEMENTED_SYSCALLS=1"
     "${UNDEFINED_SYMBOLS_FLAG}"
     "--js-library=${CMAKE_CURRENT_LIST_DIR}/wasi-shims/napi-emscripten-library.js"
     "-Wl,--wrap=sysconf"

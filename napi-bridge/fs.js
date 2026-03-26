@@ -78,6 +78,21 @@ export function createFsModule(memfs, getCwd) {
     }
   }
 
+  function appendFileSync(path, data, options) {
+    const opts = parseOptions(options, { encoding: 'utf8' });
+    const buf = typeof data === 'string' ? toBuffer(data, opts.encoding) : data;
+    try {
+      const existing = memfs.readFile(_r(path));
+      const combined = new Uint8Array(existing.length + buf.length);
+      combined.set(existing);
+      combined.set(buf, existing.length);
+      memfs.writeFile(_r(path), combined);
+    } catch {
+      // File doesn't exist — create it
+      memfs.writeFile(_r(path), buf);
+    }
+  }
+
   function readdirSync(path, options) {
     const opts = parseOptions(options, { withFileTypes: false });
     return memfs.readdir(_r(path), opts.withFileTypes);
@@ -190,6 +205,7 @@ export function createFsModule(memfs, getCwd) {
 
   const readFile = wrapAsync(readFileSync);
   const writeFile = wrapAsync(writeFileSync);
+  const appendFile = wrapAsync(appendFileSync);
   const readdir = wrapAsync(readdirSync);
   const stat = wrapAsync(statSync);
   const mkdir = wrapAsync(mkdirSync);
@@ -222,6 +238,7 @@ export function createFsModule(memfs, getCwd) {
   const promises = {
     readFile: wrapPromise(readFileSync),
     writeFile: wrapPromise(writeFileSync),
+    appendFile: wrapPromise(appendFileSync),
     readdir: wrapPromise(readdirSync),
     stat: wrapPromise(statSync),
     mkdir: wrapPromise(mkdirSync),
@@ -330,6 +347,7 @@ export function createFsModule(memfs, getCwd) {
   return {
     readFileSync,
     writeFileSync,
+    appendFileSync,
     readdirSync,
     statSync,
     mkdirSync,
@@ -350,6 +368,7 @@ export function createFsModule(memfs, getCwd) {
 
     readFile,
     writeFile,
+    appendFile,
     readdir,
     stat,
     mkdir,

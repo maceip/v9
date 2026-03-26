@@ -1,141 +1,108 @@
-diff --git a/edgejs-src/CMakeLists.txt b/edgejs-src/CMakeLists.txt
-index 4d08630b..1e974128 100644
---- a/edgejs-src/CMakeLists.txt
-+++ b/edgejs-src/CMakeLists.txt
-@@ -63,6 +63,12 @@ if(CMAKE_SYSTEM_NAME MATCHES "WASI|WASIX" OR
-   set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4d08630b..03d86bee 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -227,11 +227,13 @@ set(BUILD_MINIZIP_BIN OFF CACHE BOOL "" FORCE)
+ set(BUILD_ZPIPE OFF CACHE BOOL "" FORCE)
+ set(BUILD_MINIGZIP OFF CACHE BOOL "" FORCE)
+ add_subdirectory("${PROJECT_ROOT}/deps/zlib" "${CMAKE_CURRENT_BINARY_DIR}/deps/zlib")
+-if(EDGE_IS_WASIX_TARGET AND TARGET zlib_bench)
+-  # zlib_bench links against the shared zlib target, which fails under WASIX
+-  # static-linking constraints. Keep the libraries but skip the benchmark tool.
++if((EDGE_IS_WASIX_TARGET OR EDGE_IS_EMSCRIPTEN_TARGET) AND TARGET zlib_bench)
+   set_target_properties(zlib_bench PROPERTIES EXCLUDE_FROM_ALL TRUE)
  endif()
++if(EDGE_IS_EMSCRIPTEN_TARGET AND TARGET zlib)
++  # Shared libraries cannot be linked as standalone wasm (no main).
++  set_target_properties(zlib PROPERTIES EXCLUDE_FROM_ALL TRUE)
++endif()
  
+ find_package(Threads REQUIRED)
+ 
+@@ -368,7 +370,28 @@ target_compile_definitions(edge_nghttp2
+     _U_=
+ )
+ 
+-if(EDGE_IS_WASIX_TARGET)
 +set(EDGE_IS_EMSCRIPTEN_TARGET OFF)
 +if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 +  set(EDGE_IS_EMSCRIPTEN_TARGET ON)
 +  set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
 +endif()
 +
- function(edge_detect_native_openssl_target_os out_var)
-   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-     set(_value "linux")
-@@ -70,6 +76,8 @@ function(edge_detect_native_openssl_target_os out_var)
-     set(_value "mac")
-   elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-     set(_value "win")
-+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-+    set(_value "linux")
-   else()
-     message(FATAL_ERROR
-       "Vendored OpenSSL is not yet wired for native target system '${CMAKE_SYSTEM_NAME}'. "
-@@ -85,6 +93,8 @@ function(edge_detect_native_openssl_target_arch out_var)
-     set(_value "x86")
-   elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
-     set(_value "arm64")
-+  elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "wasm32")
-+    set(_value "x64")
-   else()
-     message(FATAL_ERROR
-       "Vendored OpenSSL is not yet wired for native target architecture '${CMAKE_SYSTEM_PROCESSOR}'. "
-@@ -444,6 +454,10 @@ else()
-     set(_edge_vendored_openssl_manifest
-       "${CMAKE_CURRENT_BINARY_DIR}/edge_vendored_openssl.cmake"
++if(EDGE_IS_EMSCRIPTEN_TARGET)
++  # Emscripten: OpenSSL crypto is not available in the browser.
++  # Create stub imported targets so downstream target_link_libraries() calls resolve.
++  # The actual crypto operations must be shimmed via JS at runtime.
++  set(_edge_openssl_include_dir "${PROJECT_ROOT}/deps/openssl/openssl/include")
++  add_library(OpenSSL::Crypto INTERFACE IMPORTED GLOBAL)
++  set_target_properties(OpenSSL::Crypto PROPERTIES
++    INTERFACE_INCLUDE_DIRECTORIES "${_edge_openssl_include_dir}"
++    INTERFACE_COMPILE_DEFINITIONS "OPENSSL_NO_ASM=1"
++  )
++  add_library(OpenSSL::SSL INTERFACE IMPORTED GLOBAL)
++  set_target_properties(OpenSSL::SSL PROPERTIES
++    INTERFACE_INCLUDE_DIRECTORIES "${_edge_openssl_include_dir}"
++  )
++  target_link_libraries(OpenSSL::SSL INTERFACE OpenSSL::Crypto)
++elseif(EDGE_IS_WASIX_TARGET)
+   set(EDGE_OPENSSL_WASIX_ROOT
+     "${PROJECT_ROOT}/deps/openssl-wasix"
+     CACHE PATH "Path to wasix-org OpenSSL source/build tree"
+@@ -982,16 +1005,18 @@ if(EDGE_BUILD_CLI)
      )
-+    set(_edge_vendored_openssl_extra_args)
-+    if(EDGE_IS_EMSCRIPTEN_TARGET)
-+      list(APPEND _edge_vendored_openssl_extra_args --disable-asm)
-+    endif()
-     execute_process(
-       COMMAND
-         "${Python3_EXECUTABLE}"
-@@ -454,6 +468,7 @@ else()
-         --compiler-family "${_edge_openssl_compiler_family}"
-         --modules-dir "${EDGE_OPENSSL_MODULES_DIR}"
-         --output "${_edge_vendored_openssl_manifest}"
-+        ${_edge_vendored_openssl_extra_args}
-       RESULT_VARIABLE _edge_vendored_openssl_status
-       OUTPUT_VARIABLE _edge_vendored_openssl_stdout
-       ERROR_VARIABLE _edge_vendored_openssl_stderr
-@@ -506,27 +521,29 @@ else()
-     add_library(OpenSSL::Crypto ALIAS edge_vendored_openssl)
-     add_library(OpenSSL::SSL ALIAS edge_vendored_openssl_ssl)
+   endif()
  
--    add_executable(edge_openssl_cli
--      ${EDGE_VENDORED_OPENSSL_CLI_SOURCES}
--    )
--    set_target_properties(edge_openssl_cli PROPERTIES OUTPUT_NAME "openssl-cli")
--    target_include_directories(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_INCLUDE_DIRS}
--    )
--    target_compile_definitions(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_DEFINES}
--    )
--    target_compile_options(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_COMPILE_OPTIONS}
--    )
--    target_link_libraries(edge_openssl_cli
--      PRIVATE
--        OpenSSL::SSL
--        ${EDGE_VENDORED_OPENSSL_CLI_LINK_LIBRARIES}
--    )
-+    if(NOT EDGE_IS_EMSCRIPTEN_TARGET)
-+      add_executable(edge_openssl_cli
-+        ${EDGE_VENDORED_OPENSSL_CLI_SOURCES}
-+      )
-+      set_target_properties(edge_openssl_cli PROPERTIES OUTPUT_NAME "openssl-cli")
-+      target_include_directories(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_INCLUDE_DIRS}
-+      )
-+      target_compile_definitions(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_DEFINES}
-+      )
-+      target_compile_options(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_COMPILE_OPTIONS}
-+      )
-+      target_link_libraries(edge_openssl_cli
-+        PRIVATE
-+          OpenSSL::SSL
-+          ${EDGE_VENDORED_OPENSSL_CLI_LINK_LIBRARIES}
-+      )
-+    endif()
-   else()
-     if(DEFINED OPENSSL_USE_STATIC_LIBS AND OPENSSL_USE_STATIC_LIBS)
-       message(FATAL_ERROR
-@@ -933,6 +950,17 @@ if(EDGE_IS_WASIX_TARGET)
-     wasix/src/wasix_compat.cc
-   )
+-  add_executable(edgeenv
+-    "${EDGE_ROOT}/src/edgeenv_main.cc"
+-  )
+-  target_include_directories(edgeenv
+-    PRIVATE
+-      "${EDGE_ROOT}/src"
+-  )
++  if(NOT EDGE_IS_EMSCRIPTEN_TARGET)
++    add_executable(edgeenv
++      "${EDGE_ROOT}/src/edgeenv_main.cc"
++    )
++    target_include_directories(edgeenv
++      PRIVATE
++        "${EDGE_ROOT}/src"
++    )
++  endif()
  endif()
-+if(EDGE_IS_EMSCRIPTEN_TARGET AND DEFINED EDGE_EXTRA_INCLUDES)
-+  target_sources(edge_runtime PRIVATE
-+    "${EDGE_EXTRA_INCLUDES}/wasi-emscripten-mmap-overrides.cc"
-+  )
-+  target_compile_options(edge_runtime PRIVATE
-+    "-include" "${EDGE_EXTRA_INCLUDES}/wasi-all-fixes.h"
-+  )
-+  target_include_directories(edge_runtime SYSTEM PRIVATE
-+    "${EDGE_EXTRA_INCLUDES}"
-+  )
-+endif()
- if(EDGE_NAPI_PROVIDER STREQUAL "bundled-v8")
-   target_compile_definitions(edge_runtime PRIVATE EDGE_BUNDLED_NAPI_V8=1)
+ 
+-if(NOT EDGE_IS_WASIX_TARGET)
++if(NOT EDGE_IS_WASIX_TARGET AND NOT EDGE_IS_EMSCRIPTEN_TARGET)
+   enable_testing()
+   add_subdirectory(tests)
  endif()
-diff --git a/edgejs-src/deps/uv/src/unix/thread.c b/edgejs-src/deps/uv/src/unix/thread.c
-index 34fea364..4f28a3be 100644
---- a/edgejs-src/deps/uv/src/unix/thread.c
-+++ b/edgejs-src/deps/uv/src/unix/thread.c
-@@ -897,7 +897,8 @@ void uv_key_set(uv_key_t* key, void* value) {
+diff --git a/deps/uv/src/unix/pipe.c b/deps/uv/src/unix/pipe.c
+index 68e225e2..1ec6a34f 100644
+--- a/deps/uv/src/unix/pipe.c
++++ b/deps/uv/src/unix/pipe.c
+@@ -498,7 +498,7 @@ int uv_pipe_chmod(uv_pipe_t* handle, int mode) {
+ int uv_pipe(uv_os_fd_t fds[2], int read_flags, int write_flags) {
+   uv_os_fd_t temp[2];
+   int err;
+-#if defined(__linux__) || \
++#if (defined(__linux__) && !defined(__EMSCRIPTEN__)) || \
+     defined(__FreeBSD__) || \
+     defined(__OpenBSD__) || \
+     defined(__DragonFly__) || \
+diff --git a/deps/uv/src/unix/thread.c b/deps/uv/src/unix/thread.c
+index 34fea364..9c6fdd56 100644
+--- a/deps/uv/src/unix/thread.c
++++ b/deps/uv/src/unix/thread.c
+@@ -897,7 +897,7 @@ void uv_key_set(uv_key_t* key, void* value) {
      abort();
  }
  
 -#if defined(_AIX) || defined(__MVS__) || defined(__PASE__)
-+#if defined(_AIX) || defined(__MVS__) || defined(__PASE__) || \
-+    defined(__EMSCRIPTEN__)
++#if defined(_AIX) || defined(__MVS__) || defined(__PASE__) || defined(__EMSCRIPTEN__)
  int uv__thread_setname(const char* name) {
    return UV_ENOSYS;
  }
-@@ -938,7 +939,8 @@ int uv__thread_setname(const char* name) {
+@@ -938,7 +938,8 @@ int uv__thread_setname(const char* name) {
  #if (defined(__ANDROID_API__) && __ANDROID_API__ < 26) || \
      defined(_AIX) || \
      defined(__MVS__) || \
@@ -145,199 +112,28 @@ index 34fea364..4f28a3be 100644
  int uv__thread_getname(uv_thread_t* tid, char* name, size_t size) {
    return UV_ENOSYS;
  }
-diff --git a/edgejs-src/scripts/generate_vendored_openssl_cmake.py b/edgejs-src/scripts/generate_vendored_openssl_cmake.py
-index 8f2c35b7..d9380709 100644
---- a/edgejs-src/scripts/generate_vendored_openssl_cmake.py
-+++ b/edgejs-src/scripts/generate_vendored_openssl_cmake.py
-@@ -88,8 +88,12 @@ def emit_list(handle, name, items):
-     handle.write("\n")
+diff --git a/src/edge_runtime.cc b/src/edge_runtime.cc
+index 7afcc7a3..d5b501a8 100644
+--- a/src/edge_runtime.cc
++++ b/src/edge_runtime.cc
+@@ -3570,6 +3570,12 @@ int EdgeRunWorkerThreadMain(napi_env env,
+ }
  
+ bool EdgeInitializeOpenSslForCli(std::string* error_out) {
++#ifdef __EMSCRIPTEN__
++  // Emscripten: OpenSSL is stubbed — crypto operations are shimmed via JS
++  // (WebCrypto API). Skip native OpenSSL initialization entirely to prevent
++  // abort() from null CSPRNG provider.
++  return true;
++#else
+   const edge_options::EffectiveCliState state = edge_options::BuildEffectiveCliState(g_edge_cli_exec_argv);
+   const std::vector<std::string>& exec_argv = state.ok ? state.effective_tokens : g_edge_cli_exec_argv;
+   if (!ConfigureOpenSslFromExecArgv(exec_argv, error_out)) {
+@@ -3581,6 +3587,7 @@ bool EdgeInitializeOpenSslForCli(std::string* error_out) {
+     std::abort();
+   }
+   return true;
++#endif
+ }
  
--def resolve_mode(arch_dir: pathlib.Path, target_os: str, target_arch: str) -> str:
--    if target_os == "win" and target_arch == "arm64":
-+def resolve_mode(
-+    arch_dir: pathlib.Path, target_os: str, target_arch: str, disable_asm: bool
-+) -> str:
-+    if disable_asm:
-+        preferred = ["no-asm"]
-+    elif target_os == "win" and target_arch == "arm64":
-         preferred = ["no-asm"]
-     else:
-         preferred = ["asm", "asm_avx2", "no-asm"]
-@@ -230,6 +234,7 @@ def main():
-     parser.add_argument("--compiler-family", required=True)
-     parser.add_argument("--modules-dir", required=True)
-     parser.add_argument("--output", required=True)
-+    parser.add_argument("--disable-asm", action="store_true")
-     args = parser.parse_args()
- 
-     project_root = pathlib.Path(args.project_root).resolve()
-@@ -242,7 +247,9 @@ def main():
-         )
- 
-     arch_root = deps_root / "config" / "archs" / arch_name
--    mode = resolve_mode(arch_root, args.target_os, args.target_arch)
-+    mode = resolve_mode(
-+        arch_root, args.target_os, args.target_arch, disable_asm=args.disable_asm
-+    )
-     arch_block = load_arch_block(arch_root / mode / "openssl.gypi")
-     cli_block = load_arch_block(arch_root / mode / "openssl-cl.gypi")
-     common = common_block(deps_root / "openssl_common.gypi", args.target_os, args.compiler_family)
-@@ -255,6 +262,8 @@ def main():
-             args.target_os,
-         )
-     )
-+    if args.disable_asm:
-+        base_cflags = [flag for flag in base_cflags if flag not in ("-m64", "-m32")]
-     base_link_libraries = dedupe(
-         split_flag_groups(common["libraries"] + arch_block["libraries"])
-     )
-@@ -274,6 +283,8 @@ def main():
-             args.target_os,
-         )
-     )
-+    if args.disable_asm:
-+        cli_cflags = [flag for flag in cli_cflags if flag not in ("-m64", "-m32")]
-     cli_link_libraries = dedupe(
-         split_flag_groups(common["libraries"] + arch_block["libraries"] + cli_block["libraries"])
-     )
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4d08630b..48c13f1d 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -63,6 +63,12 @@ if(CMAKE_SYSTEM_NAME MATCHES "WASI|WASIX" OR
-   set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
- endif()
- 
-+set(EDGE_IS_EMSCRIPTEN_TARGET OFF)
-+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-+  set(EDGE_IS_EMSCRIPTEN_TARGET ON)
-+  set(EDGE_ALLOW_UNDEFINED_IMPORTS ON CACHE BOOL "" FORCE)
-+endif()
-+
- function(edge_detect_native_openssl_target_os out_var)
-   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-     set(_value "linux")
-@@ -70,6 +76,8 @@ function(edge_detect_native_openssl_target_os out_var)
-     set(_value "mac")
-   elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-     set(_value "win")
-+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-+    set(_value "linux")
-   else()
-     message(FATAL_ERROR
-       "Vendored OpenSSL is not yet wired for native target system '${CMAKE_SYSTEM_NAME}'. "
-@@ -85,6 +93,8 @@ function(edge_detect_native_openssl_target_arch out_var)
-     set(_value "x86")
-   elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64|ARM64)$")
-     set(_value "arm64")
-+  elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "wasm32")
-+    set(_value "x64")
-   else()
-     message(FATAL_ERROR
-       "Vendored OpenSSL is not yet wired for native target architecture '${CMAKE_SYSTEM_PROCESSOR}'. "
-@@ -444,6 +454,10 @@ else()
-     set(_edge_vendored_openssl_manifest
-       "${CMAKE_CURRENT_BINARY_DIR}/edge_vendored_openssl.cmake"
-     )
-+    set(_edge_vendored_openssl_extra_args)
-+    if(EDGE_IS_EMSCRIPTEN_TARGET)
-+      list(APPEND _edge_vendored_openssl_extra_args --disable-asm)
-+    endif()
-     execute_process(
-       COMMAND
-         "${Python3_EXECUTABLE}"
-@@ -454,6 +468,7 @@ else()
-         --compiler-family "${_edge_openssl_compiler_family}"
-         --modules-dir "${EDGE_OPENSSL_MODULES_DIR}"
-         --output "${_edge_vendored_openssl_manifest}"
-+        ${_edge_vendored_openssl_extra_args}
-       RESULT_VARIABLE _edge_vendored_openssl_status
-       OUTPUT_VARIABLE _edge_vendored_openssl_stdout
-       ERROR_VARIABLE _edge_vendored_openssl_stderr
-@@ -506,27 +521,29 @@ else()
-     add_library(OpenSSL::Crypto ALIAS edge_vendored_openssl)
-     add_library(OpenSSL::SSL ALIAS edge_vendored_openssl_ssl)
- 
--    add_executable(edge_openssl_cli
--      ${EDGE_VENDORED_OPENSSL_CLI_SOURCES}
--    )
--    set_target_properties(edge_openssl_cli PROPERTIES OUTPUT_NAME "openssl-cli")
--    target_include_directories(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_INCLUDE_DIRS}
--    )
--    target_compile_definitions(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_DEFINES}
--    )
--    target_compile_options(edge_openssl_cli
--      PRIVATE
--        ${EDGE_VENDORED_OPENSSL_CLI_COMPILE_OPTIONS}
--    )
--    target_link_libraries(edge_openssl_cli
--      PRIVATE
--        OpenSSL::SSL
--        ${EDGE_VENDORED_OPENSSL_CLI_LINK_LIBRARIES}
--    )
-+    if(NOT EDGE_IS_EMSCRIPTEN_TARGET)
-+      add_executable(edge_openssl_cli
-+        ${EDGE_VENDORED_OPENSSL_CLI_SOURCES}
-+      )
-+      set_target_properties(edge_openssl_cli PROPERTIES OUTPUT_NAME "openssl-cli")
-+      target_include_directories(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_INCLUDE_DIRS}
-+      )
-+      target_compile_definitions(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_DEFINES}
-+      )
-+      target_compile_options(edge_openssl_cli
-+        PRIVATE
-+          ${EDGE_VENDORED_OPENSSL_CLI_COMPILE_OPTIONS}
-+      )
-+      target_link_libraries(edge_openssl_cli
-+        PRIVATE
-+          OpenSSL::SSL
-+          ${EDGE_VENDORED_OPENSSL_CLI_LINK_LIBRARIES}
-+      )
-+    endif()
-   else()
-     if(DEFINED OPENSSL_USE_STATIC_LIBS AND OPENSSL_USE_STATIC_LIBS)
-       message(FATAL_ERROR
-@@ -933,6 +950,17 @@ if(EDGE_IS_WASIX_TARGET)
-     wasix/src/wasix_compat.cc
-   )
- endif()
-+if(EDGE_IS_EMSCRIPTEN_TARGET AND DEFINED EDGE_EXTRA_INCLUDES)
-+  target_sources(edge_runtime PRIVATE
-+    "${EDGE_EXTRA_INCLUDES}/wasi-emscripten-mmap-overrides.cc"
-+  )
-+  target_compile_options(edge_runtime PRIVATE
-+    "-include" "${EDGE_EXTRA_INCLUDES}/wasi-all-fixes.h"
-+  )
-+  target_include_directories(edge_runtime SYSTEM PRIVATE
-+    "${EDGE_EXTRA_INCLUDES}"
-+  )
-+endif()
- if(EDGE_NAPI_PROVIDER STREQUAL "bundled-v8")
-   target_compile_definitions(edge_runtime PRIVATE EDGE_BUNDLED_NAPI_V8=1)
- endif()
-@@ -982,13 +1010,15 @@ if(EDGE_BUILD_CLI)
-     )
-   endif()
- 
--  add_executable(edgeenv
-+  if(NOT EDGE_IS_EMSCRIPTEN_TARGET)
-+    add_executable(edgeenv
-     "${EDGE_ROOT}/src/edgeenv_main.cc"
-   )
-   target_include_directories(edgeenv
-     PRIVATE
-       "${EDGE_ROOT}/src"
-   )
-+  endif()
- endif()
- 
- if(NOT EDGE_IS_WASIX_TARGET)
+ void EdgeSetCurrentScriptPath(const std::string& script_path) {

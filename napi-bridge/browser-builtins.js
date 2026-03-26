@@ -543,6 +543,9 @@ export const urlBridge = {
       u = new URL(url);
     } else if (url instanceof URL) {
       u = url;
+    } else if (url === undefined || url === null) {
+      // import.meta.url is undefined inside new Function() — return a safe fallback
+      return __dirname || '/app';
     } else {
       throw new TypeError('The "url" argument must be of type string or an instance of URL. Received ' + typeof url);
     }
@@ -609,26 +612,27 @@ class Process extends EventEmitter {
   constructor() {
     super();
 
-    this.platform = 'browser';
-    this.arch = 'wasm32';
-    this.version = 'v20.0.0-edgejs';
-    this.versions = {
-      node: '20.0.0',
-      v8: 'browser-native',
-      edgejs: '0.1.0',
-    };
+    this.platform = globalThis.process?.platform || 'linux';
+    this.arch = globalThis.process?.arch || 'x64';
+    this.version = globalThis.process?.version || 'v22.0.0';
+    this.versions = globalThis.process?.versions
+      ? { ...globalThis.process.versions }
+      : { node: '22.0.0', v8: 'browser-native' };
     // Proxy coerces all values to strings on set (Node.js contract)
-    this.env = new Proxy({}, {
+    // Inherit env from globalThis.process if set (polyfills/initEdgeJS may configure it)
+    const _inheritedEnv = globalThis.process?.env ? { ...globalThis.process.env } : {};
+    this.env = new Proxy(_inheritedEnv, {
       set(target, key, value) {
         target[key] = String(value);
         return true;
       },
     });
-    this.argv = ['node', 'script.js'];
+    // Inherit argv from globalThis.process if set (polyfills may configure it)
+    this.argv = globalThis.process?.argv?.slice() || ['node', 'script.js'];
     this.pid = 1;
     this.ppid = 0;
     this.title = 'edgejs';
-    this.exitCode = 0;
+    this.exitCode = undefined; // Must be undefined — Node.js default. Claude Code checks !== void 0
 
     this._cwd = '/';
 
@@ -640,44 +644,76 @@ class Process extends EventEmitter {
       self._cwd = dir;
     };
 
-    // stdout — Writable stream that logs to console
+    // stdout — Writable stream that forwards to xterm or console
     this.stdout = new Writable({
       write(chunk, encoding, callback) {
         const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        // Use process.stdout.write — console.log adds newline, we don't
-        if (typeof globalThis.postMessage === 'function' && typeof globalThis.document === 'undefined') {
-          // Worker context
-          console.log(str);
+        if (typeof globalThis._xtermWrite === 'function') {
+          globalThis._xtermWrite(str);
         } else {
           console.log(str);
         }
         callback();
       },
     });
-    this.stdout.isTTY = false;
+    this.stdout.isTTY = true;
     this.stdout.columns = 80;
     this.stdout.rows = 24;
+    this.stdout.fd = 1;
+    this.stdout.getColorDepth = () => 24; // true color (xterm supports it)
+    this.stdout.hasColors = () => true;
+    this.stdout.getWindowSize = () => [this.stdout.columns, this.stdout.rows];
+    this.stdout.clearLine = () => true;
+    this.stdout.clearScreenDown = () => true;
+    this.stdout.cursorTo = () => true;
+    this.stdout.moveCursor = () => true;
+    this.stdout.ref = () => this.stdout;
+    this.stdout.unref = () => this.stdout;
+    this.stdout._isStdio = true;
 
-    // stderr — Writable stream that logs to console.error
+    // stderr — Writable stream that forwards to xterm or console.error
     this.stderr = new Writable({
       write(chunk, encoding, callback) {
         const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        console.error(str);
+        if (typeof globalThis._xtermWrite === 'function') {
+          globalThis._xtermWrite(str);
+        } else {
+          console.error(str);
+        }
         callback();
       },
     });
-    this.stderr.isTTY = false;
+    this.stderr.isTTY = true;
     this.stderr.columns = 80;
     this.stderr.rows = 24;
+    this.stderr.fd = 2;
+    this.stderr.getColorDepth = () => 24;
+    this.stderr.hasColors = () => true;
+    this.stderr.getWindowSize = () => [this.stderr.columns, this.stderr.rows];
+    this.stderr.clearLine = () => true;
+    this.stderr.clearScreenDown = () => true;
+    this.stderr.cursorTo = () => true;
+    this.stderr.moveCursor = () => true;
+    this.stderr.ref = () => this.stderr;
+    this.stderr.unref = () => this.stderr;
+    this.stderr._isStdio = true;
 
-    // stdin — Readable stream (no data by default in browser)
+    // stdin — Readable stream with TTY support for interactive CLIs
     this.stdin = new Readable({
       read() {
         // No data available in browser environment — data is pushed
         // externally via runtime.pushStdin() from the terminal UI.
       },
     });
-    this.stdin.isTTY = false;
+    this.stdin.isTTY = true;
+    this.stdin.isRaw = false;
+    this.stdin.setRawMode = (mode) => {
+      this.stdin.isRaw = !!mode;
+      return this.stdin;
+    };
+    this.stdin.ref = () => this.stdin;
+    this.stdin.unref = () => this.stdin;
+    this.stdin.fd = 0;
 
     this.hrtime = Object.assign(
       function hrtime(prev) {
@@ -713,7 +749,19 @@ class Process extends EventEmitter {
 
   exit(code) {
     if (code !== undefined) this.exitCode = code;
-    this.emit('exit', this.exitCode);
+    // Throw to stop execution — signal-exit expects process.exit to never return.
+    const err = new Error(`process.exit(${this.exitCode})`);
+    err.code = 'PROCESS_EXIT';
+    err.exitCode = this.exitCode;
+    throw err;
+  }
+
+  kill(pid, signal) {
+    // No-op in browser — can't send OS signals
+  }
+
+  reallyExit(code) {
+    // No-op — signal-exit saves/replaces this
   }
 
   nextTick(fn, ...args) {
@@ -1211,7 +1259,13 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'inspector/promises': inspectorModule,
     'diagnostics_channel': diagnosticsChannelModule,
 
+    'stream/promises': { pipeline: (...args) => Promise.resolve(), finished: (...args) => Promise.resolve() },
+    'path/win32': { ...pathBridge, default: pathBridge },
+
     // ── Missing builtins (stubs for modules not yet fully implemented) ──
+    'v8': { deserialize: () => undefined, serialize: (v) => new Uint8Array(0), getHeapStatistics: () => ({ total_heap_size: 0, used_heap_size: 0, heap_size_limit: 0 }), getHeapSpaceStatistics: () => [], setFlagsFromString: () => {}, writeHeapSnapshot: () => '', GCProfiler: class { start() {} stop() { return {}; } } },
+    'perf_hooks': { performance: globalThis.performance || { now: () => Date.now() }, PerformanceObserver: class { observe() {} disconnect() {} }, monitorEventLoopDelay: () => ({ enable() {}, disable() {}, min: 0, max: 0, mean: 0, percentile: () => 0 }) },
+    'querystring': { parse: (s) => Object.fromEntries(new URLSearchParams(s)), stringify: (o) => new URLSearchParams(o).toString(), encode: (o) => new URLSearchParams(o).toString(), decode: (s) => Object.fromEntries(new URLSearchParams(s)), escape: encodeURIComponent, unescape: decodeURIComponent },
     'punycode': { encode: (s) => s, decode: (s) => s, toASCII: (s) => s, toUnicode: (s) => s, ucs2: { decode: (s) => [...s].map(c => c.codePointAt(0)), encode: (a) => String.fromCodePoint(...a) }, version: '2.3.1' },
     'http2': { constants: {}, connect: () => { throw new Error('http2 not available in browser'); }, createServer: () => { throw new Error('http2 not available in browser'); }, createSecureServer: () => { throw new Error('http2 not available in browser'); } },
     'console': Object.assign({}, globalThis.console, {

@@ -149,6 +149,19 @@ export class EventEmitter {
   }
 
   emit(event, ...args) {
+    // errorMonitor: fire before 'error' listeners, even if there are none.
+    // Allows observation without consuming the error.
+    if (event === 'error') {
+      const monitorSym = EventEmitter.errorMonitor;
+      const monitors = this._events[monitorSym];
+      if (monitors) {
+        const copy = monitors.slice();
+        for (let i = 0; i < copy.length; i++) {
+          copy[i].apply(this, args);
+        }
+      }
+    }
+
     // Special 'error' event handling: throw if no listener
     if (event === 'error' && !this._events.error) {
       const err = args[0];
@@ -167,7 +180,26 @@ export class EventEmitter {
     // Listeners removed during emit still fire for the current emit.
     const copy = listeners.slice();
     for (let i = 0; i < copy.length; i++) {
-      copy[i].apply(this, args);
+      const result = copy[i].apply(this, args);
+      // captureRejections: if the listener returns a rejected promise,
+      // emit it as an 'error' event or call the rejection handler.
+      if (EventEmitter.captureRejections && result && typeof result.then === 'function') {
+        result.then(undefined, (err) => {
+          const rejectionHandler = this[EventEmitter.captureRejectionSymbol];
+          if (typeof rejectionHandler === 'function') {
+            rejectionHandler.call(this, err, event, ...args);
+          } else {
+            // Temporarily disable captureRejections to avoid infinite loop
+            const prev = EventEmitter.captureRejections;
+            try {
+              EventEmitter.captureRejections = false;
+              this.emit('error', err);
+            } finally {
+              EventEmitter.captureRejections = prev;
+            }
+          }
+        });
+      }
     }
     return true;
   }
@@ -207,8 +239,215 @@ export class EventEmitter {
   }
 }
 
-// Static
+// ---- Static properties ----
+
 EventEmitter.defaultMaxListeners = DEFAULT_MAX_LISTENERS;
+
+// Symbol used by captureRejections to define a rejection handler on emitters.
+EventEmitter.captureRejectionSymbol = Symbol.for('nodejs.rejection');
+
+// When true, emitters auto-capture unhandled promise rejections from async listeners.
+EventEmitter.captureRejections = false;
+
+// Symbol for observing 'error' events without consuming them.
+EventEmitter.errorMonitor = Symbol.for('events.errorMonitor');
+
+// ---- Static methods ----
+
+/**
+ * Static once() — returns a Promise that resolves with the event args
+ * the first time `event` fires, or rejects on 'error'.
+ */
+EventEmitter.once = function once(emitter, event, options) {
+  return new Promise((resolve, reject) => {
+    const signal = options && options.signal;
+    if (signal && signal.aborted) {
+      reject(new DOMException('The operation was aborted', 'AbortError'));
+      return;
+    }
+
+    const onEvent = (...args) => {
+      cleanup();
+      resolve(args);
+    };
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException('The operation was aborted', 'AbortError'));
+    };
+
+    function cleanup() {
+      emitter.removeListener(event, onEvent);
+      if (event !== 'error') emitter.removeListener('error', onError);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+
+    emitter.on(event, onEvent);
+    if (event !== 'error') emitter.on('error', onError);
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  });
+};
+
+/**
+ * Static on() — returns an AsyncIterable that yields event args each time
+ * `event` fires.  Rejects the iterator on 'error'.
+ */
+EventEmitter.on = function on(emitter, event, options) {
+  const signal = options && options.signal;
+  const unconsumedEvents = [];
+  const unconsumedPromises = [];
+  let error = null;
+  let finished = false;
+
+  const eventHandler = (...args) => {
+    if (unconsumedPromises.length > 0) {
+      unconsumedPromises.shift().resolve(args);
+    } else {
+      unconsumedEvents.push(args);
+    }
+  };
+
+  const errorHandler = (err) => {
+    error = err;
+    if (unconsumedPromises.length > 0) {
+      unconsumedPromises.shift().reject(err);
+    }
+  };
+
+  const abortHandler = () => {
+    errorHandler(new DOMException('The operation was aborted', 'AbortError'));
+  };
+
+  function cleanup() {
+    finished = true;
+    emitter.removeListener(event, eventHandler);
+    emitter.removeListener('error', errorHandler);
+    if (signal) signal.removeEventListener('abort', abortHandler);
+    // Reject any remaining pending consumers
+    for (const p of unconsumedPromises) {
+      p.resolve({ value: undefined, done: true });
+    }
+    unconsumedPromises.length = 0;
+  }
+
+  emitter.on(event, eventHandler);
+  if (event !== 'error') emitter.on('error', errorHandler);
+  if (signal) {
+    if (signal.aborted) {
+      abortHandler();
+    } else {
+      signal.addEventListener('abort', abortHandler, { once: true });
+    }
+  }
+
+  const iterator = {
+    next() {
+      if (unconsumedEvents.length > 0) {
+        return Promise.resolve({ value: unconsumedEvents.shift(), done: false });
+      }
+      if (error) {
+        const err = error;
+        error = null;
+        return Promise.reject(err);
+      }
+      if (finished) {
+        return Promise.resolve({ value: undefined, done: true });
+      }
+      return new Promise((resolve, reject) => {
+        unconsumedPromises.push({ resolve: (val) => resolve({ value: val, done: false }), reject });
+      });
+    },
+    return() {
+      cleanup();
+      return Promise.resolve({ value: undefined, done: true });
+    },
+    throw(err) {
+      error = err;
+      cleanup();
+      return Promise.resolve({ value: undefined, done: true });
+    },
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
+
+  return iterator;
+};
+
+/**
+ * Static getEventListeners() — returns a copy of the listener array for
+ * `event` on the given emitter/EventTarget.
+ */
+EventEmitter.getEventListeners = function getEventListeners(emitter, event) {
+  if (typeof emitter.listeners === 'function') {
+    return emitter.listeners(event);
+  }
+  return [];
+};
+
+/**
+ * Static listenerCount() — returns the number of listeners for `event`.
+ */
+EventEmitter.listenerCount = function listenerCount(emitter, event) {
+  if (typeof emitter.listenerCount === 'function') {
+    return emitter.listenerCount(event);
+  }
+  return 0;
+};
+
+/**
+ * Static setMaxListeners() — sets default max listeners across multiple emitters.
+ */
+EventEmitter.setMaxListeners = function setMaxListeners(n, ...emitters) {
+  if (typeof n !== 'number' || n < 0 || Number.isNaN(n)) {
+    throw new RangeError('The value of "n" is out of range.');
+  }
+  if (emitters.length === 0) {
+    EventEmitter.defaultMaxListeners = n;
+  } else {
+    for (const emitter of emitters) {
+      // Handle both EventEmitter instances and EventTarget/other objects
+      if (typeof emitter.setMaxListeners === 'function') {
+        emitter.setMaxListeners(n);
+      }
+      // Silently skip objects without setMaxListeners (e.g. AbortSignal)
+    }
+  }
+};
+
+/**
+ * Static getMaxListeners() — returns the max listeners setting for an emitter.
+ */
+EventEmitter.getMaxListeners = function getMaxListeners(emitter) {
+  if (typeof emitter.getMaxListeners === 'function') {
+    return emitter.getMaxListeners();
+  }
+  return EventEmitter.defaultMaxListeners;
+};
+
+/**
+ * addAbortListener() — attaches a one-time listener to an AbortSignal.
+ * Returns a Disposable that removes the listener when disposed.
+ */
+EventEmitter.addAbortListener = function addAbortListener(signal, listener) {
+  if (signal.aborted) {
+    queueMicrotask(() => listener());
+  } else {
+    signal.addEventListener('abort', listener, { once: true });
+  }
+  return {
+    [Symbol.dispose]() {
+      signal.removeEventListener('abort', listener);
+    },
+  };
+};
+
+// Values (not functions) — these are exported directly
+EventEmitter.usingDomains = false;
+EventEmitter.init = EventEmitter; // compat alias
 
 // For compatibility: EventEmitter.EventEmitter = EventEmitter
 EventEmitter.EventEmitter = EventEmitter;

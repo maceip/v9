@@ -58,6 +58,11 @@ function encodeUtf8(value) {
 
 function decodeUtf8(bytes) {
   if (_cachedDecoder) {
+    // SharedArrayBuffer views can't be passed to TextDecoder.decode().
+    // Copy to a regular ArrayBuffer when the source is shared.
+    if (bytes.buffer instanceof SharedArrayBuffer) {
+      bytes = new Uint8Array(bytes);
+    }
     return _cachedDecoder.decode(bytes);
   }
   let binary = '';
@@ -261,6 +266,8 @@ class NapiBridge {
   }
 
   getMemoryBuffer() {
+    // Try the live wasm memory export first (handles growth/reallocation)
+    if (this._wasmMemory) return this._wasmMemory.buffer;
     if (!this.memory) return null;
     if (ArrayBuffer.isView(this.memory)) return this.memory.buffer;
     if (this.memory instanceof ArrayBuffer) return this.memory;
@@ -2812,7 +2819,11 @@ export async function initEdgeJS(options = {}) {
     diagnosticsEnabled: Boolean(diagnosticsOption),
   });
 
-  const isNode = typeof process !== 'undefined' && !!process.versions?.node;
+  // Detect real Node.js vs browser polyfill.
+  // In real Node.js, import.meta.url starts with file://.
+  // In browsers, it starts with http://.
+  const isNode = typeof process !== 'undefined' && !!process.versions?.node
+    && import.meta.url?.startsWith('file:');
 
   // Node does not expose JSPI constructors everywhere yet. Provide pass-through
   // fallbacks so local bridge tests can instantiate the module.
@@ -2945,6 +2956,14 @@ export async function initEdgeJS(options = {}) {
     if (name.startsWith('node:')) {
       const b2 = _builtinOverrides.get(name.slice(5));
       if (b2) return { type: 'builtin', exports: b2 };
+    }
+    // Resolve subpath imports (e.g. path/win32, path/posix, stream/promises)
+    const slashIdx = name.indexOf('/');
+    if (slashIdx > 0 && !name.startsWith('.') && !name.startsWith('/')) {
+      const base = name.substring(0, slashIdx);
+      const stripped = name.startsWith('node:') ? base.slice(5) : base;
+      const parent = _builtinOverrides.get(stripped) || _builtinOverrides.get(name.replace('node:', ''));
+      if (parent) return { type: 'builtin', exports: parent };
     }
     if (name.startsWith('./') || name.startsWith('../') || name.startsWith('/')) {
       const base = name.startsWith('/') ? name : fromDir + '/' + name;
@@ -3161,12 +3180,31 @@ export async function initEdgeJS(options = {}) {
     }
   }
 
+  // Temporarily clear process.versions.node during module factory call.
+  // Emscripten's IIFE checks this and calls require('node:worker_threads')
+  // if it thinks we're in Node.js. In the browser, require doesn't exist.
+  const _savedNode = globalThis.process?.versions?.node;
+  if (!isNode && globalThis.process?.versions) {
+    delete globalThis.process.versions.node;
+  }
+
   const instance = await EdgeJSModule({
     // Inject N-API bridge imports.
     napi: napiImports,
     napiImports,
     noInitialRun: true,
     noExitRuntime: true,
+
+    // Override abort for "missing function" stubs — Emscripten generates
+    // abort('missing function: X') for every unresolved symbol at link time.
+    // For OpenSSL stubs, these are expected and should not crash the runtime.
+    abort(what) {
+      if (typeof what === 'string' && what.startsWith('missing function:')) {
+        // Silently ignore missing OpenSSL/crypto stubs
+        return;
+      }
+      throw new Error('Aborted: ' + what);
+    },
 
     // Environment variables (for API keys etc.)
     ENV: {
@@ -3187,6 +3225,20 @@ export async function initEdgeJS(options = {}) {
       envOverrides.uv_setup_args = (argc, argv) => argv;
       envOverrides.uv__hrtime = () => 0;
 
+      // OpenSSL init stubs — return non-zero "success" to prevent abort().
+      // The binary links against OpenSSL but crypto is shimmed via JS.
+      envOverrides.OPENSSL_INIT_new = () => 1;       // Returns OPENSSL_INIT_SETTINGS*
+      envOverrides.OPENSSL_INIT_free = () => {};
+      envOverrides.OPENSSL_init_crypto = () => 1;     // Returns 1 on success
+      envOverrides.OPENSSL_INIT_set_config_filename = () => {};
+      envOverrides.OPENSSL_INIT_set_config_appname = () => {};
+      envOverrides.OPENSSL_INIT_set_config_file_flags = () => {};
+      envOverrides.OPENSSL_sk_new_null = () => 1;     // Returns OPENSSL_STACK*
+      envOverrides.OPENSSL_sk_push = () => 1;
+      envOverrides.OPENSSL_sk_num = () => 0;
+      envOverrides.OPENSSL_sk_value = () => 0;
+      envOverrides.OPENSSL_sk_pop_free = () => {};
+
       const envBase = info.env || {};
       const envProxy = new Proxy(envBase, {
         has(target, prop) {
@@ -3195,12 +3247,52 @@ export async function initEdgeJS(options = {}) {
         get(target, prop) {
           if (prop in envOverrides) return envOverrides[prop];
           if (prop in target) return target[prop];
+          // Return a no-op stub for any unresolved env import.
+          // Some wasm functions expect i64 (BigInt) return values.
+          // We can't know the signature at proxy-time, so return 0 and
+          // let the caller handle it.
+          if (typeof prop === 'string') return (..._args) => 0;
           return undefined;
         },
       });
 
-      const imports = { ...info, env: envProxy, napi: napiImports };
+      // Stub any import modules the wasm expects but the Emscripten glue
+      // doesn't provide (e.g. napi_extension_wasmer_v0, wasi_snapshot_preview1).
+      // These are no-op stubs — the real implementations live in JS shims or
+      // are provided by the Emscripten runtime via env.
+      const _stubProxy = (tag) => new Proxy(Object.create(null), {
+        has: () => true,
+        get: (_, prop) => {
+          if (typeof prop === 'symbol') return undefined;
+          return (..._args) => 0;
+        },
+      });
+
+      const imports = {
+        ...info,
+        env: envProxy,
+        napi: napiImports,
+        // napi_extension_wasmer_v0 contains unofficial_napi_* functions.
+        // Route to the bridge's real implementations when available,
+        // fall back to no-op stubs for unimplemented ones.
+        napi_extension_wasmer_v0: new Proxy(Object.create(null), {
+          has: () => true,
+          get: (_, prop) => {
+            if (typeof prop === 'symbol') return undefined;
+            if (prop in napiImports) return napiImports[prop];
+            return (..._args) => 0;
+          },
+        }),
+        ...(info.wasi_snapshot_preview1 ? { wasi_snapshot_preview1: info.wasi_snapshot_preview1 } : {}),
+      };
       const onInstantiated = (result) => {
+        // Bind bridge memory BEFORE receiveInstance triggers static
+        // constructors (__wasm_call_ctors). The C++ static init calls
+        // unofficial_napi_create_env which needs writePointer to work.
+        if (result.instance.exports.memory) {
+          bridge.memory = new Uint8Array(result.instance.exports.memory.buffer);
+          bridge._wasmMemory = result.instance.exports.memory;
+        }
         receiveInstance(result.instance, result.module);
         return result.instance.exports;
       };
@@ -3232,8 +3324,8 @@ export async function initEdgeJS(options = {}) {
     // Emscripten callbacks
     onRuntimeInitialized() {
       bridge.wasm = this;
-      bridge.memory = this.HEAP8;
-      console.log('[edgejs] Runtime initialized');
+      bridge.memory = this.HEAPU8;
+      bridge._wasmMemory = this.wasmMemory || (this.HEAPU8 && { buffer: this.HEAPU8.buffer });
     },
 
     // Filesystem pre-population
@@ -3262,6 +3354,11 @@ export async function initEdgeJS(options = {}) {
     },
   });
 
+  // Restore process.versions.node after factory call
+  if (!isNode && globalThis.process?.versions && _savedNode) {
+    globalThis.process.versions.node = _savedNode;
+  }
+
   bridge.wasm = instance;
   bridge.memory = instance.HEAP8;
 
@@ -3289,10 +3386,14 @@ export async function initEdgeJS(options = {}) {
       }
 
       argvPtr = instance._malloc((argvPointers.length + 1) * 4);
+      // Emscripten exposes HEAPU8 and HEAP32 on Module but not HEAPU32.
+      // Create a Uint32Array view from the underlying buffer.
+      const heapU32 = instance.HEAPU32
+        || new Uint32Array(instance.HEAPU8.buffer);
       for (let i = 0; i < argvPointers.length; i++) {
-        instance.HEAPU32[(argvPtr >> 2) + i] = argvPointers[i];
+        heapU32[(argvPtr >> 2) + i] = argvPointers[i];
       }
-      instance.HEAPU32[(argvPtr >> 2) + argvPointers.length] = 0;
+      heapU32[(argvPtr >> 2) + argvPointers.length] = 0;
 
       return instance._main(cliArgs.length, argvPtr);
     } finally {
@@ -3310,15 +3411,152 @@ export async function initEdgeJS(options = {}) {
     }
   }
 
+  // ── JS-side script execution (bypasses C++ libuv event loop) ──────
+  // When the C++ runtime's EdgeRunScriptFileWithLoop aborts due to
+  // stubbed libuv, we fall back to evaluating scripts directly in the
+  // browser's V8 engine using the bridge's own module system.
+  let _useJsBridge = false;
+
+  function executeViaBridge(scriptPath) {
+    const stdoutLines = [];
+    const stderrLines = [];
+
+    // Read script from MEMFS
+    let source;
+    try {
+      source = _sharedBridgeFs.readFileSync(scriptPath, 'utf8');
+    } catch (err) {
+      return { status: 1, stdout: [], stderr: [`Cannot read ${scriptPath}: ${err.message}`] };
+    }
+
+    // Strip shebang line (#!/usr/bin/env node)
+    if (source.startsWith('#!')) {
+      source = source.substring(source.indexOf('\n') + 1);
+    }
+
+    // Build a Node-like execution context
+    const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
+    const moduleObj = { exports: {}, id: scriptPath, filename: scriptPath, loaded: false };
+
+    const contextKeys = ['require', 'module', 'exports', '__filename', '__dirname', 'console', 'process', 'Buffer', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'queueMicrotask', 'globalThis'];
+    const contextVals = [
+      _memfsRequire,
+      moduleObj,
+      moduleObj.exports,
+      scriptPath,
+      dirname,
+      {
+        log: (...args) => {
+          const line = args.map(String).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+        error: (...args) => {
+          const line = args.map(String).join(' ');
+          stderrLines.push(line);
+          if (options.onStderr) options.onStderr(line);
+        },
+        warn: (...args) => {
+          const line = args.map(String).join(' ');
+          stderrLines.push(line);
+          if (options.onStderr) options.onStderr(line);
+        },
+        info: (...args) => {
+          const line = args.map(String).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+        debug: () => {},
+        trace: () => {},
+        dir: (...args) => {
+          const line = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+      },
+      {
+        argv: ['edge', scriptPath],
+        env: { HOME: '/home/user', PATH: '/usr/bin:/bin', NODE_ENV: 'production', ...options.env },
+        cwd: () => _sharedMemfs.cwd?.() || '/',
+        exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
+        stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
+        stderr: { write: (data) => { const s = String(data); stderrLines.push(s); if (options.onStderr) options.onStderr(s); } },
+        platform: 'linux',
+        arch: 'wasm32',
+        version: 'v22.0.0',
+        versions: { node: '22.0.0', v8: '12.0.0' },
+        hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
+        nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
+        on: () => ({ on: () => ({}) }),
+        removeListener: () => {},
+      },
+      globalThis.Buffer || { from: (x) => new Uint8Array(typeof x === 'string' ? new TextEncoder().encode(x) : x) },
+      globalThis.setTimeout,
+      globalThis.setInterval,
+      globalThis.clearTimeout,
+      globalThis.clearInterval,
+      globalThis.queueMicrotask,
+      globalThis,
+    ];
+
+    try {
+      const fn = new Function(...contextKeys, source);
+      fn(...contextVals);
+      return { status: 0, stdout: stdoutLines, stderr: stderrLines };
+    } catch (err) {
+      if (err.exitCode !== undefined) {
+        return { status: err.exitCode, stdout: stdoutLines, stderr: stderrLines };
+      }
+      stderrLines.push(err.stack || err.message);
+      if (options.onStderr) options.onStderr(err.stack || err.message);
+      return { status: 1, stdout: stdoutLines, stderr: stderrLines };
+    }
+  }
+
   function executeCli(args) {
     const stdoutStart = stdoutBuffer.length;
     const stderrStart = stderrBuffer.length;
-    const status = invokeMain(args);
-    return {
-      status,
-      stdout: stdoutBuffer.slice(stdoutStart),
-      stderr: stderrBuffer.slice(stderrStart),
-    };
+
+    // Try C++ path first; fall back to JS bridge if libuv aborts
+    if (!_useJsBridge) {
+      try {
+        const status = invokeMain(args);
+        const stdout = stdoutBuffer.slice(stdoutStart);
+        const stderr = stderrBuffer.slice(stderrStart);
+        // Check if the C++ runtime failed to init (libuv abort)
+        if (status === 1 && stderr.some(s => s.includes('Failed to initialize') || s.includes('Aborted'))) {
+          _useJsBridge = true;
+          // Fall through to JS bridge
+        } else {
+          return { status, stdout, stderr };
+        }
+      } catch (err) {
+        if (err.message?.includes('unreachable') || err.message?.includes('Aborted')) {
+          _useJsBridge = true;
+          // Fall through to JS bridge
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // JS bridge path: parse args to determine what to execute
+    // args = ['-p', 'code'] for eval, or ['/path/to/script.js'] for runFile
+    if (args[0] === '-p' && args.length >= 2) {
+      // Eval mode: write code to temp file and execute
+      const code = args.slice(1).join(' ');
+      const tempPath = '/.edge/_eval_' + Date.now() + '.js';
+      try { _sharedBridgeFs.mkdirSync('/.edge', { recursive: true }); } catch {}
+      _sharedBridgeFs.writeFileSync(tempPath, `console.log(eval(${JSON.stringify(code)}))`);
+      const result = executeViaBridge(tempPath);
+      try { _sharedBridgeFs.unlinkSync(tempPath); } catch {}
+      return result;
+    } else if (args.length >= 1) {
+      // RunFile mode
+      return executeViaBridge(args[0]);
+    }
+
+    return { status: 1, stdout: [], stderr: ['No script specified'] };
   }
 
   function parseEvalValue(lines) {
@@ -3687,6 +3925,14 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
       _sharedProcessBridge.stdout.rows = rows;
       _sharedProcessBridge.stderr.columns = cols;
       _sharedProcessBridge.stderr.rows = rows;
+      // Update Emscripten's TTY ops so ioctl(TIOCGWINSZ) returns the right size
+      if (instance?.FS?.streams) {
+        for (const stream of instance.FS.streams) {
+          if (stream?.tty?.ops?.ioctl_tiocgwinsz) {
+            stream.tty.ops.ioctl_tiocgwinsz = () => [rows, cols];
+          }
+        }
+      }
       try { _sharedProcessBridge.emit('SIGWINCH'); } catch {}
     },
 

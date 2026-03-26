@@ -15,7 +15,7 @@ import { initEdgeJS } from '../napi-bridge/index.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
 const wasmPath = join(rootDir, 'dist', 'edgejs.wasm');
-const moduleFactoryPath = join(rootDir, 'build', 'edge');
+const moduleFactoryPath = join(rootDir, 'build', 'edge.js');
 
 console.log('=== EdgeJS Wasm Load Tests (strict) ===\n');
 
