@@ -70,5 +70,80 @@ export const uptime = typeof _impl.uptime !== 'undefined' ? _impl.uptime : _notI
 export const version = typeof _impl.version !== 'undefined' ? _impl.version : _notImplemented('process.version');
 export const versions = typeof _impl.versions !== 'undefined' ? _impl.versions : _notImplemented('process.versions');
 
-const _module = { abort, allowedNodeEnvironmentFlags, arch, argv, argv0, availableMemory, binding, chdir, config, constrainedMemory, cpuUsage, cwd, debugPort, dlopen, domain, emitWarning, env, execArgv, execPath, execve, exit, exitCode, features, finalization, getActiveResourcesInfo, getBuiltinModule, hasUncaughtExceptionCaptureCallback, hrtime, kill, loadEnvFile, memoryUsage, moduleLoadList, nextTick, openStdin, pid, platform, ppid, reallyExit, ref, release, report, resourceUsage, setSourceMapsEnabled, setUncaughtExceptionCaptureCallback, sourceMapsEnabled, stderr, stdin, stdout, threadCpuUsage, title, umask, unref, uptime, version, versions };
+const PROCESS_EXPORT_NAMES = Object.keys({
+  abort,
+  allowedNodeEnvironmentFlags,
+  arch,
+  argv,
+  argv0,
+  availableMemory,
+  binding,
+  chdir,
+  config,
+  constrainedMemory,
+  cpuUsage,
+  cwd,
+  debugPort,
+  dlopen,
+  domain,
+  emitWarning,
+  env,
+  execArgv,
+  execPath,
+  execve,
+  exit,
+  exitCode,
+  features,
+  finalization,
+  getActiveResourcesInfo,
+  getBuiltinModule,
+  hasUncaughtExceptionCaptureCallback,
+  hrtime,
+  kill,
+  loadEnvFile,
+  memoryUsage,
+  moduleLoadList,
+  nextTick,
+  openStdin,
+  pid,
+  platform,
+  ppid,
+  reallyExit,
+  ref,
+  release,
+  report,
+  resourceUsage,
+  setSourceMapsEnabled,
+  setUncaughtExceptionCaptureCallback,
+  sourceMapsEnabled,
+  stderr,
+  stdin,
+  stdout,
+  threadCpuUsage,
+  title,
+  umask,
+  unref,
+  uptime,
+  version,
+  versions,
+});
+
+const _module = {};
+for (const name of PROCESS_EXPORT_NAMES) {
+  Object.defineProperty(_module, name, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      const value = _impl[name];
+      if (typeof value === 'undefined') {
+        return _notImplemented(`process.${name}`);
+      }
+      return typeof value === 'function' ? value.bind(_impl) : value;
+    },
+    set(value) {
+      _impl[name] = value;
+    },
+  });
+}
+
 export default _module;

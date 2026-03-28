@@ -5,7 +5,7 @@
  */
 
 import { Transform, PassThrough } from './streams.js';
-import * as fflate from 'fflate';
+import * as fflate from '../node_modules/fflate/esm/browser.js';
 
 // ─── Sync APIs ───────────────────────────────────────────────────────
 

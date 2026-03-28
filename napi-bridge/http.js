@@ -662,6 +662,89 @@ function _get(requestFn) {
   };
 }
 
+// ─── Fake HTTP server for OAuth callback capture ────────────────────
+// Instead of binding a real TCP socket, we intercept the OAuth redirect
+// by opening the auth URL in a popup and polling for the localhost redirect.
+// When the popup navigates to localhost:PORT/callback?code=XYZ, we read the
+// URL (which fails to load but the URL is captured), then fire the stored
+// request handler with synthetic req/res objects.
+
+class FakeServer extends EventEmitter {
+  constructor(requestHandler) {
+    super();
+    this._handler = requestHandler;
+    this._port = 0;
+    this._listening = false;
+  }
+
+  listen(port, host, callback) {
+    if (typeof host === 'function') { callback = host; host = undefined; }
+    if (typeof port === 'function') { callback = port; port = 0; }
+    this._port = port || 19836;
+    this._listening = true;
+
+    // Register this server globally so the open() intercept can find it
+    if (!globalThis.__fakeServers) globalThis.__fakeServers = {};
+    globalThis.__fakeServers[this._port] = this;
+
+    // Emit 'listening' async (Node.js behavior)
+    queueMicrotask(() => {
+      this.emit('listening');
+      if (typeof callback === 'function') callback();
+    });
+    return this;
+  }
+
+  address() {
+    return { address: '127.0.0.1', family: 'IPv4', port: this._port };
+  }
+
+  close(cb) {
+    this._listening = false;
+    if (globalThis.__fakeServers) delete globalThis.__fakeServers[this._port];
+    if (typeof cb === 'function') queueMicrotask(cb);
+    queueMicrotask(() => this.emit('close'));
+    return this;
+  }
+
+  ref() { return this; }
+  unref() { return this; }
+
+  // Called by the open() intercept when the OAuth redirect is captured
+  _handleRedirect(url) {
+    if (!this._handler) return;
+
+    const parsed = new URL(url);
+    // Build a synthetic IncomingMessage-like request
+    const req = new Readable({ read() {} });
+    req.method = 'GET';
+    req.url = parsed.pathname + parsed.search;
+    req.headers = { host: `localhost:${this._port}` };
+    req.httpVersion = '1.1';
+    req.connection = { remoteAddress: '127.0.0.1' };
+    req.push(null); // no body
+
+    // Build a synthetic ServerResponse-like response
+    const res = new Writable({ write(chunk, enc, cb) { cb(); } });
+    res.statusCode = 200;
+    res._headers = {};
+    res.setHeader = (k, v) => { res._headers[k.toLowerCase()] = v; };
+    res.getHeader = (k) => res._headers[k.toLowerCase()];
+    res.writeHead = (code, headers) => {
+      res.statusCode = code;
+      if (headers) Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
+      return res;
+    };
+    res.end = (data) => {
+      if (data) res.write(data);
+      // Auto-close the popup after response is sent
+      queueMicrotask(() => res.emit('finish'));
+    };
+
+    this._handler(req, res);
+  }
+}
+
 // ─── http module ────────────────────────────────────────────────────
 
 const httpRequest = _request('http:');
@@ -671,11 +754,11 @@ const httpGet = _get(httpRequest);
 export const http = {
   request: httpRequest,
   get: httpGet,
-  createServer() {
-    throw new Error('http.createServer() is not available in browser — use a service worker or external proxy');
+  createServer(handler) {
+    return new FakeServer(handler);
   },
-  Agent: class Agent {},
-  globalAgent: {},
+  Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
+  globalAgent: new (class extends EventEmitter { constructor() { super(); this.options = { ca: [], keepAlive: false }; this.maxSockets = Infinity; this.maxFreeSockets = 256; this.maxTotalSockets = Infinity; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} })(),
   ClientRequest,
   IncomingMessage,
   ServerResponse: class ServerResponse {},
@@ -715,11 +798,11 @@ const httpsGet = _get(httpsRequest);
 export const https = {
   request: httpsRequest,
   get: httpsGet,
-  createServer() {
-    throw new Error('https.createServer() is not available in browser');
+  createServer(handler) {
+    return new FakeServer(handler);
   },
-  Agent: class Agent {},
-  globalAgent: {},
+  Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
+  globalAgent: new (class extends EventEmitter { constructor() { super(); this.options = { ca: [], keepAlive: false }; this.maxSockets = Infinity; this.maxFreeSockets = 256; this.maxTotalSockets = Infinity; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} })(),
   ClientRequest,
   IncomingMessage,
   ServerResponse: class ServerResponse {},

@@ -1,84 +1,318 @@
 /**
- * Terminal UI — xterm.js integration with EdgeJS runtime.
+ * Terminal UI - xterm.js integration with EdgeJS runtime.
  *
- * Full conversation loop:
- *   1. User types in xterm.js
- *   2. Keyboard data → runtime.pushStdin(data)
- *   3. Claude Code reads stdin, constructs API request
- *   4. https.request() → fetch() proxy → Anthropic API
- *   5. Streaming SSE response → IncomingMessage Readable
- *   6. Claude Code processes response chunks
- *   7. If tool_use: execute tool (file read/write via fs, bash via child_process)
- *   8. Tool result → next API call
- *   9. Final response → process.stdout → xterm.js
- *  10. Loop back to 1
- *
- * SDK bundling (run once):
- *   sh scripts/bundle-sdk.sh
- *
- * CORS proxy (deploy once):
- *   npx wrangler deploy web/cors-proxy-worker.js --name edgejs-cors-proxy
+ * The browser page exposes a small controller on `globalThis.__edgeCli`
+ * so tests can launch Claude Code with deterministic argv/env settings
+ * without relying on brittle onboarding-only keyboard flows.
  */
-
-// ─── Dynamic imports for xterm.js (loaded from CDN or node_modules) ──
 
 let Terminal, FitAddon, WebLinksAddon;
 
+const DEFAULT_HOME = '/home/user';
+const DEFAULT_WORKSPACE = '/workspace';
+const DEFAULT_BUNDLE_ENTRY = '/app/claude-code.js';
+const DEFAULT_ANTHROPIC_BASE_URL = 'http://localhost:8081/anthropic';
+
 async function loadXterm() {
-  // Load xterm from local node_modules (avoids COEP/CORS issues with CDN)
   try {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '../node_modules/xterm/lib/xterm.js';
-      script.onload = resolve;
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-    Terminal = globalThis.Terminal;
+    const xtermMod = await import('https://cdn.jsdelivr.net/npm/xterm@5.3.0/+esm');
+    Terminal = xtermMod.Terminal;
   } catch {
-    throw new Error('xterm.js not available — include via CDN or npm');
+    if (globalThis.Terminal) {
+      Terminal = globalThis.Terminal;
+    } else {
+      throw new Error('xterm.js not available - include via CDN or npm');
+    }
   }
 
   try {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js';
-      script.onload = resolve;
-      script.onerror = () => resolve(); // optional
-      document.head.appendChild(script);
-    });
-    FitAddon = globalThis.FitAddon?.FitAddon || null;
+    const fitMod = await import('https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/+esm');
+    FitAddon = fitMod.FitAddon;
   } catch {
     FitAddon = null;
   }
 
   try {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = '../node_modules/xterm-addon-web-links/lib/xterm-addon-web-links.js';
-      script.onload = resolve;
-      script.onerror = () => resolve(); // optional
-      document.head.appendChild(script);
-    });
-    WebLinksAddon = globalThis.WebLinksAddon?.WebLinksAddon || null;
+    const linksMod = await import('https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/+esm');
+    WebLinksAddon = linksMod.WebLinksAddon;
   } catch {
     WebLinksAddon = null;
   }
 }
 
-// ─── Configuration ───────────────────────────────────────────────────
-// H4: API key is prompted, NOT read from URL query string.
-// Only proxy and bundle URLs come from query params.
-
 function getConfig() {
   const params = new URLSearchParams(globalThis.location?.search || '');
   return {
-    proxyUrl: params.get('proxy') || '',
-    claudeCodeBundle: params.get('bundle') || '',
+    proxyUrl: params.get('proxy') || 'http://localhost:8081',
+    claudeCodeBundle: params.get('bundle') || '/dist/claude-code-cli.js',
+    autorun: params.get('autorun') !== '0',
   };
 }
 
-// ─── Runtime initialization ──────────────────────────────────────────
+function getAnthropicKey() {
+  return sessionStorage.getItem('anthropic_api_key') || '';
+}
+
+function baseEnv(apiKey) {
+  return {
+    HOME: DEFAULT_HOME,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    SHELL: '/bin/bash',
+    USER: 'user',
+    LANG: 'en_US.UTF-8',
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+    ANTHROPIC_BASE_URL: DEFAULT_ANTHROPIC_BASE_URL,
+    ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
+  };
+}
+
+function writeBanner(term, { apiKey, bundleUrl, autorun }) {
+  term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
+  term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code - Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
+  term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
+  term.writeln('');
+  term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
+  if (apiKey) {
+    term.writeln('\x1b[32m✓ Anthropic API key configured\x1b[0m');
+  } else {
+    term.writeln('\x1b[33m⚠ No Anthropic API key configured\x1b[0m');
+    term.writeln('\x1b[90mSet via: sessionStorage.setItem("anthropic_api_key", "sk-ant-...")\x1b[0m');
+    term.writeln('\x1b[90mThen reload the page.\x1b[0m');
+  }
+  term.writeln(`\x1b[32m✓ Anthropic proxy path: ${DEFAULT_ANTHROPIC_BASE_URL}\x1b[0m`);
+  term.writeln(`\x1b[32m✓ Workspace root: ${DEFAULT_WORKSPACE}\x1b[0m`);
+  if (bundleUrl) {
+    const mode = autorun ? 'autorun enabled' : 'deferred start';
+    term.writeln(`\x1b[32m✓ Claude bundle: ${bundleUrl} (${mode})\x1b[0m`);
+  } else {
+    term.writeln('\x1b[90mNo Claude bundle configured. Add ?bundle=/dist/claude-code-cli.js\x1b[0m');
+  }
+}
+
+function ensureDirectory(runtime, path) {
+  try {
+    runtime.fs.mkdirSync(path, { recursive: true });
+  } catch {
+    // Directory may already exist in MEMFS.
+  }
+}
+
+function claudeProjectStateDir(cwd) {
+  const projectKey = String(cwd || DEFAULT_WORKSPACE).replace(/[\\/]/g, '-');
+  return `${DEFAULT_HOME}/.claude/projects/${projectKey}`;
+}
+
+function configureProcessBridge(processBridge, { argv, cwd, apiKey, extraEnv = {} }) {
+  const nextEnv = {
+    ...baseEnv(apiKey),
+    ...extraEnv,
+  };
+
+  for (const key of Object.keys(processBridge.env || {})) {
+    delete processBridge.env[key];
+  }
+  for (const [key, value] of Object.entries(nextEnv)) {
+    processBridge.env[key] = value;
+  }
+
+  if (!Array.isArray(processBridge.argv)) {
+    processBridge.argv = [];
+  }
+  processBridge.argv.length = 0;
+  for (const arg of argv) {
+    processBridge.argv.push(arg);
+  }
+
+  processBridge.argv0 = argv[0] || 'node';
+  processBridge.execArgv = [];
+  processBridge.execPath = '/usr/local/bin/node';
+  processBridge.title = 'claude-code-browser';
+  processBridge.exitCode = undefined;
+  processBridge.chdir(cwd);
+  globalThis.process = processBridge;
+}
+
+function resetProcessBridge(processBridge) {
+  if (typeof processBridge.removeAllListeners === 'function') {
+    for (const eventName of ['beforeExit', 'exit', 'SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection', 'warning']) {
+      processBridge.removeAllListeners(eventName);
+    }
+  }
+  if (typeof processBridge.stdin?.removeAllListeners === 'function') {
+    processBridge.stdin.removeAllListeners();
+  }
+}
+
+function syncProcessTerminalSize(processBridge, cols, rows) {
+  for (const stream of [processBridge?.stdout, processBridge?.stderr]) {
+    if (!stream) {
+      continue;
+    }
+    stream.columns = cols;
+    stream.rows = rows;
+  }
+}
+
+function resolveCliMain(cliModule) {
+  const main = cliModule.main || cliModule.default?.main || cliModule.default;
+  return typeof main === 'function' ? main : null;
+}
+
+function createCliController({ term, runtime, processBridge, config }) {
+  let currentExitPromise = null;
+  let resolveCurrentExit = null;
+  let lastExitCode = null;
+  let lastError = null;
+  let runCounter = 0;
+
+  const finishExit = (code) => {
+    lastExitCode = code;
+    if (resolveCurrentExit) {
+      resolveCurrentExit(code);
+      resolveCurrentExit = null;
+    }
+  };
+
+  const recordExit = (code = 0) => {
+    if (lastExitCode !== null) {
+      return lastExitCode;
+    }
+    term.writeln(`\r\n\x1b[90m[claude exit ${code}]\x1b[0m`);
+    finishExit(code);
+    return code;
+  };
+
+  const start = async (options = {}) => {
+    const bundleUrl = options.bundle || config.claudeCodeBundle;
+    if (!bundleUrl) {
+      throw new Error('No Claude Code bundle configured');
+    }
+
+    const apiKey = options.apiKey ?? getAnthropicKey();
+    const cwd = options.cwd || DEFAULT_WORKSPACE;
+    const argv = options.argv || ['node', DEFAULT_BUNDLE_ENTRY];
+    const clearTerminal = options.clear !== false;
+
+    runCounter += 1;
+    lastExitCode = null;
+    lastError = null;
+    currentExitPromise = new Promise((resolve) => {
+      resolveCurrentExit = resolve;
+    });
+
+    if (clearTerminal) {
+      term.reset();
+    }
+    writeBanner(term, { apiKey, bundleUrl, autorun: false });
+    term.writeln('');
+    term.writeln(`\x1b[32m✓ Launching Claude Code run ${runCounter}\x1b[0m`);
+    term.writeln('');
+
+    ensureDirectory(runtime, DEFAULT_HOME);
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude`);
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude/projects`);
+    ensureDirectory(runtime, claudeProjectStateDir(cwd));
+    ensureDirectory(runtime, DEFAULT_WORKSPACE);
+    resetProcessBridge(processBridge);
+    configureProcessBridge(processBridge, { argv, cwd, apiKey, extraEnv: options.env || {} });
+
+    processBridge.once('exit', (code = 0) => {
+      recordExit(code);
+    });
+
+    try {
+      const cacheBustedBundleUrl = bundleUrl.includes('?')
+        ? `${bundleUrl}&edgeRun=${runCounter}`
+        : `${bundleUrl}?edgeRun=${runCounter}`;
+      const cliModule = await import(cacheBustedBundleUrl);
+      const main = resolveCliMain(cliModule);
+      if (main) {
+        const launchResult = main(runtime);
+        Promise.resolve(launchResult).catch((runtimeError) => {
+          lastError = runtimeError;
+          term.writeln(`\x1b[31m✗ Claude Code failed: ${_safe(runtimeError.message)}\x1b[0m`);
+          finishExit(1);
+        });
+      }
+    } catch (esmError) {
+      term.writeln(`\x1b[33m[bundle] ESM load failed: ${_safe(esmError.message)}\x1b[0m`);
+      try {
+        const response = await fetch(bundleUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const bundleSource = await response.text();
+        ensureDirectory(runtime, '/app');
+        runtime.fs.writeFileSync(DEFAULT_BUNDLE_ENTRY, bundleSource);
+        if (typeof runtime.require?.cache?.delete === 'function') {
+          runtime.require.cache.delete(DEFAULT_BUNDLE_ENTRY);
+        }
+        runtime.require(DEFAULT_BUNDLE_ENTRY, '/app');
+      } catch (fallbackError) {
+        lastError = fallbackError;
+        term.writeln(`\x1b[31m✗ Claude Code failed: ${_safe(fallbackError.message)}\x1b[0m`);
+        finishExit(1);
+        throw fallbackError;
+      }
+    }
+  };
+
+  const waitForExit = async ({ timeoutMs } = {}) => {
+    if (!currentExitPromise) {
+      return lastExitCode;
+    }
+    const exitCodePoll = new Promise((resolve) => {
+      const poll = () => {
+        if (lastExitCode !== null) {
+          resolve(lastExitCode);
+          return;
+        }
+        if (processBridge.exitCode !== undefined) {
+          resolve(recordExit(processBridge.exitCode));
+          return;
+        }
+        setTimeout(poll, 100);
+      };
+      poll();
+    });
+    if (!timeoutMs) {
+      return Promise.race([currentExitPromise, exitCodePoll]);
+    }
+    return Promise.race([
+      currentExitPromise,
+      exitCodePoll,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Timed out waiting for Claude exit after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  };
+
+  return {
+    start,
+    waitForExit,
+    getState() {
+      return {
+        argv: Array.from(processBridge.argv || []),
+        cwd: typeof processBridge.cwd === 'function' ? processBridge.cwd() : DEFAULT_WORKSPACE,
+        runCounter,
+        lastExitCode,
+        processExitCode: processBridge.exitCode ?? null,
+        lastError: lastError?.message || null,
+      };
+    },
+  };
+}
+
+async function registerAnthropicSdk(runtime, term) {
+  try {
+    const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
+    runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
+    runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
+  } catch {
+    term.writeln('\x1b[33m[sdk] Bundle not found. Run: node scripts/prepare-browser-assets.mjs\x1b[0m');
+  }
+}
 
 async function boot() {
   await loadXterm();
@@ -95,7 +329,6 @@ async function boot() {
     },
   });
 
-  // Load addons
   let fitAddon = null;
   if (FitAddon) {
     fitAddon = new FitAddon();
@@ -105,264 +338,114 @@ async function boot() {
     term.loadAddon(new WebLinksAddon());
   }
 
-  // Mount terminal
   const container = document.getElementById('terminal');
   term.open(container);
-  if (fitAddon) fitAddon.fit();
+  if (fitAddon) {
+    fitAddon.fit();
+  }
 
-  // Wire global process.stdout to xterm BEFORE loading any CLI
   globalThis._xtermWrite = (data) => term.write(data);
 
-  // ── Load EdgeJS runtime ────────────────────────────────────────────
-
   const config = getConfig();
-
-  // H4: Prompt for API key via sessionStorage (not URL params)
-  let apiKey = sessionStorage.getItem('anthropic_api_key') || '';
-  // Set API key on globalThis.process.env immediately — the CLI reads it from both
-  // globalThis.process.env AND require('process').env
-  if (apiKey && globalThis.process?.env) {
-    globalThis.process.env.ANTHROPIC_API_KEY = apiKey;
-  }
-  if (!apiKey) {
-    term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
-    term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
-    term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
-    term.writeln('');
-    term.writeln('\x1b[33mNo API key found in session.\x1b[0m');
-    term.writeln('\x1b[90mSet via: sessionStorage.setItem("anthropic_api_key", "sk-ant-...")\x1b[0m');
-    term.writeln('\x1b[90mThen reload the page.\x1b[0m');
-  }
-
-  let runtime;
-  let cliModule = null;
+  let runtime = null;
+  let processBridge = null;
 
   try {
-    const { initEdgeJS } = await import('../napi-bridge/index.js');
+    const ts = Date.now();
+    const [{ initEdgeJS }, bridgeModule] = await Promise.all([
+      import(`../napi-bridge/index.js?t=${ts}`),
+      import(`../napi-bridge/browser-builtins.js?t=${ts}`),
+    ]);
 
-    // Load the Emscripten module factory.
-    // edge.js is an IIFE that defines `var EdgeJSModule = ...` — not ESM.
-    // Load it via a script tag so it lands on globalThis.
-    //
-    // IMPORTANT: Temporarily clear process.versions.node so Emscripten
-    // detects a browser environment. Our polyfills set it, which makes
-    // Emscripten call require('node:worker_threads') and crash.
-    let moduleFactory = globalThis.EdgeJSModule;
-    if (typeof moduleFactory !== 'function') {
-      // Temporarily hide process.versions.node so Emscripten's IIFE
-      // detects browser mode instead of Node.js (which calls require()).
-      // Must be cleared BEFORE the script executes — onload is too late.
-      const savedNode = globalThis.process?.versions?.node;
-      if (globalThis.process?.versions) {
-        delete globalThis.process.versions.node;
-      }
-      try {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = '../dist/edgejs.js';
-          script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load edgejs.js'));
-          document.head.appendChild(script);
-        });
-        moduleFactory = globalThis.EdgeJSModule;
-      } catch (err) {
-        term.writeln('\x1b[33m[wasm] Module not found: ' + _safe(err.message) + '\x1b[0m');
-      } finally {
-        // Restore for CLIs that need process.versions.node
-        if (globalThis.process?.versions && savedNode) {
-          globalThis.process.versions.node = savedNode;
-        }
-      }
-    }
+    processBridge = bridgeModule.processBridge;
+    globalThis.process = processBridge;
+
+    const initialFiles = globalThis.__edgeInitialFiles && typeof globalThis.__edgeInitialFiles === 'object'
+      ? globalThis.__edgeInitialFiles
+      : {};
 
     runtime = await initEdgeJS({
-      moduleFactory,
-      wasmUrl: '../dist/edgejs.wasm',
       onStdout: (text) => term.write(text),
       onStderr: (text) => term.write(text),
-      env: {
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-        COLUMNS: String(term.cols),
-        LINES: String(term.rows),
-        ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
-        // Route API calls through CORS proxy (browser can't call api.anthropic.com directly)
-        ANTHROPIC_BASE_URL: config.proxyUrl || 'http://localhost:8081',
-      },
+      env: baseEnv(getAnthropicKey()),
+      files: initialFiles,
     });
 
-    // Replace globalThis.process streams with the bridge's Writable streams
-    // so Ink (which uses globalThis.process.stdout) renders to xterm
-    try {
-      const pb = runtime.require('process');
-      if (pb.stdout) globalThis.process.stdout = pb.stdout;
-      if (pb.stderr) globalThis.process.stderr = pb.stderr;
-      if (pb.stdin) globalThis.process.stdin = pb.stdin;
-    } catch {}
+    ensureDirectory(runtime, DEFAULT_HOME);
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude`);
+    ensureDirectory(runtime, DEFAULT_WORKSPACE);
+    configureProcessBridge(processBridge, {
+      argv: ['node', DEFAULT_BUNDLE_ENTRY],
+      cwd: DEFAULT_WORKSPACE,
+      apiKey: getAnthropicKey(),
+    });
 
-    // Set initial terminal size
     if (typeof runtime.setTerminalSize === 'function') {
       runtime.setTerminalSize(term.cols, term.rows);
     }
+    syncProcessTerminalSize(processBridge, term.cols, term.rows);
 
-    // ── Set up filesystem structure for CLI ──────────────────────────
-    // Create home directory, .claude config, and virtual binaries
-    try {
-      const dirs = [
-        '/home/user', '/home/user/.claude', '/home/user/.config',
-        '/usr/bin', '/tmp', '/app',
-      ];
-      for (const dir of dirs) {
-        try { runtime.fs.mkdirSync(dir, { recursive: true }); } catch {}
-      }
+    await registerAnthropicSdk(runtime, term);
 
-      // Virtual binaries so `which` finds them
-      const bins = ['git', 'rg', 'sh', 'node', 'cat', 'ls', 'grep'];
-      for (const bin of bins) {
-        try { runtime.fs.writeFileSync(`/usr/bin/${bin}`, '#!/bin/sh\n', { mode: 0o755 }); } catch {}
-      }
+    const controller = createCliController({ term, runtime, processBridge, config });
+    globalThis.__edgeCli = controller;
+    globalThis.__edgeTerm = term;
+    globalThis.__edgeRuntime = runtime;
+    globalThis.__edgeProcess = processBridge;
 
-      // Minimal .claude config — must include grove acceptance or CLI exits in -p mode
-      try {
-        runtime.fs.writeFileSync('/home/user/.claude/settings.json', JSON.stringify({
-          permissions: { allow: [] },
-          hasTrustDialogAccepted: true,
-          grove_enabled: true,
-          grove_notice_viewed_at: new Date().toISOString(),
-        }));
-      } catch {}
-    } catch (err) {
-      term.writeln('\x1b[33m[fs] Setup warning: ' + _safe(err.message) + '\x1b[0m');
-    }
-
-    // ── Register the bundled Anthropic SDK ────────────────────────────
-    try {
-      const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
-      runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
-      runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
-    } catch (err) {
-      term.writeln('\x1b[33m[sdk] Bundle not found. Run: sh scripts/bundle-sdk.sh\x1b[0m');
-    }
-
-    // ── Load Claude Code bundle if provided ──────────────────────────
-    // ESM path: import() the bundle directly so the browser resolves
-    // node:* specifiers via the import map. This avoids fetch+MEMFS+require.
-    if (config.claudeCodeBundle) {
-      try {
-        cliModule = await import(config.claudeCodeBundle);
-      } catch (err) {
-        term.writeln('\x1b[33m[bundle] Failed to load as ESM: ' + _safe(err.message) + '\x1b[0m');
-        // Fallback: fetch source and write to MEMFS for CJS require path
-        try {
-          const resp = await fetch(config.claudeCodeBundle);
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-          const bundleSrc = await resp.text();
-          runtime.fs.mkdirSync('/app', { recursive: true });
-          runtime.fs.writeFileSync('/app/claude-code.js', bundleSrc);
-        } catch (fetchErr) {
-          term.writeln('\x1b[33m[bundle] Fallback fetch failed: ' + _safe(fetchErr.message) + '\x1b[0m');
-        }
+    if (config.claudeCodeBundle && config.autorun) {
+      await controller.start();
+    } else {
+      writeBanner(term, {
+        apiKey: getAnthropicKey(),
+        bundleUrl: config.claudeCodeBundle,
+        autorun: config.autorun,
+      });
+      if (config.claudeCodeBundle) {
+        term.writeln('');
+        term.writeln('\x1b[90mDeferred start mode. Use __edgeCli.start() to launch Claude Code.\x1b[0m');
       }
     }
-
   } catch (err) {
-    term.writeln('\x1b[33m[edgejs] Runtime not available: ' + _safe(err.message) + '\x1b[0m');
-    term.writeln('\x1b[90mTerminal UI loaded — runtime will connect when Wasm is built.\x1b[0m');
-    runtime = null;
+    term.writeln(`\x1b[33m[edgejs] Runtime not available: ${_safe(err.message)}\x1b[0m`);
+    term.writeln('\x1b[90mTerminal UI loaded - runtime will connect when Wasm is built.\x1b[0m');
   }
 
-  // ── Keyboard input → process.stdin ─────────────────────────────────
-
   term.onData((data) => {
+    if (typeof globalThis._stdinPush === 'function') {
+      globalThis._stdinPush(data);
+    }
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
     }
   });
 
-  // ── Window resize → terminal size ──────────────────────────────────
-
   window.addEventListener('resize', () => {
-    if (fitAddon) fitAddon.fit();
+    if (fitAddon) {
+      fitAddon.fit();
+    }
   });
 
   term.onResize(({ cols, rows }) => {
     if (runtime && typeof runtime.setTerminalSize === 'function') {
       runtime.setTerminalSize(cols, rows);
     }
+    syncProcessTerminalSize(processBridge, cols, rows);
   });
 
-  // ── Status display ─────────────────────────────────────────────────
-
-  if (runtime) {
-    term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
-    term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code — Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
-    term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
-    term.writeln('');
-    term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
-
-    if (apiKey) {
-      term.writeln('\x1b[32m✓ API key configured\x1b[0m');
-    } else {
-      term.writeln('\x1b[33m⚠ No API key\x1b[0m');
-    }
-
-    if (config.proxyUrl) {
-      term.writeln('\x1b[32m✓ CORS proxy configured\x1b[0m');
-    }
-
-    // Run Claude Code — ESM path (cliModule) or CJS fallback (MEMFS)
-    if (cliModule) {
-      term.writeln('\x1b[32m✓ Claude Code loaded (ESM)\x1b[0m');
-      term.writeln('');
-      try {
-        const main = cliModule.main || cliModule.default?.main || cliModule.default;
-        if (typeof main === 'function') {
-          main(runtime);
-        }
-      } catch (err) {
-        term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
-      }
-    } else {
-      const hasBundle = (() => {
-        try { runtime.fs.statSync('/app/claude-code.js'); return true; } catch { return false; }
-      })();
-
-      if (hasBundle) {
-        term.writeln('\x1b[32m✓ Claude Code bundle loaded (CJS)\x1b[0m');
-        term.writeln('');
-        try {
-          const exports = runtime.require('/app/claude-code.js', '/app');
-          term.writeln('\x1b[90m[debug] require() returned: ' + Object.keys(exports || {}).join(', ') + '\x1b[0m');
-          term.writeln('\x1b[90m[debug] mhz async chain is running in background...\x1b[0m');
-        } catch (err) {
-          if (err.code === 'PROCESS_EXIT') {
-            term.writeln('\x1b[33m[exit] Claude Code exited with code ' + (err.exitCode ?? 'unknown') + '\x1b[0m');
-          } else {
-            term.writeln('\x1b[31m✗ Claude Code failed: ' + _safe(err.message) + '\x1b[0m');
-          }
-        }
-      } else {
-        term.writeln('');
-        term.writeln('\x1b[90mNo Claude Code bundle. Add ?bundle=<url> to URL\x1b[0m');
-      }
-    }
-  }
-
-  // Expose for debugging
   globalThis.__edgeTerm = term;
   globalThis.__edgeRuntime = runtime;
 }
 
-// C4: Safe text output — never use innerHTML with untrusted data
 function _safe(str) {
-  if (typeof str !== 'string') return String(str || '');
-  // Truncate to prevent terminal flooding
-  return str.length > 200 ? str.slice(0, 200) + '...' : str;
+  if (typeof str !== 'string') {
+    return String(str || '');
+  }
+  return str.length > 200 ? `${str.slice(0, 200)}...` : str;
 }
 
 boot().catch((err) => {
   console.error('[terminal] Boot failed:', err);
-  // C4: Use textContent, never innerHTML, to prevent XSS
   const pre = document.createElement('pre');
   pre.style.cssText = 'color:#f00;padding:1em';
   pre.textContent = 'Terminal boot failed: ' + (err.message || String(err));

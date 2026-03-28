@@ -166,6 +166,11 @@ class NapiBridge {
     this.wrapDataByObject = new WeakMap();
     // Monotonic wrap ID to detect stale lookups
     this.nextWrapId = 1;
+    this.deferreds = new Map();
+    this.nextDeferredId = 0x4000;
+    this.envCleanupHooks = new Map();
+    this.typeTags = new WeakMap();
+    this.objectFinalizers = new WeakMap();
     // Explicit counter for WeakMap size (WeakMap is not iterable)
     this.wrappedNativePointersByObjectCount = 0;
     this.arrayBufferMetadata = new Map(); // handle -> { dataPtr, byteLength }
@@ -511,6 +516,31 @@ class NapiBridge {
     dv.setFloat64(ptr, value, true);
   }
 
+  writeBigInt64(ptr, value) {
+    if (!ptr) return;
+    const dv = this._getDataView();
+    if (!dv) return;
+    if (!this.isMemoryRangeValid(ptr, 8)) return;
+    dv.setBigInt64(ptr, BigInt(value), true);
+  }
+
+  writeBigUInt64(ptr, value) {
+    if (!ptr) return;
+    const dv = this._getDataView();
+    if (!dv) return;
+    if (!this.isMemoryRangeValid(ptr, 8)) return;
+    dv.setBigUint64(ptr, BigInt(value), true);
+  }
+
+  readTypeTag(tagPtr) {
+    if (!tagPtr) return null;
+    const dv = this._getDataView();
+    if (!dv || !this.isMemoryRangeValid(tagPtr, 16)) return null;
+    const lo = dv.getBigUint64(tagPtr, true);
+    const hi = dv.getBigUint64(tagPtr + 8, true);
+    return `${hi.toString(16)}:${lo.toString(16)}`;
+  }
+
   // --- N-API Function Implementations ---
 
   /**
@@ -547,6 +577,36 @@ class NapiBridge {
           bridge.readCString(strPtr) :
           bridge.readString(strPtr, length);
         bridge.writeI32(resultPtr, bridge.createHandle(str));
+        return NAPI_OK;
+      },
+
+      napi_create_string_latin1(env, strPtr, length, resultPtr) {
+        void env;
+        const str = length === -1
+          ? bridge.readCString(strPtr)
+          : bridge.readString(strPtr, length);
+        bridge.writeI32(resultPtr, bridge.createHandle(str));
+        return NAPI_OK;
+      },
+
+      napi_create_string_utf16(env, strPtr, length, resultPtr) {
+        void env;
+        const buffer = bridge.getMemoryBuffer();
+        if (!buffer) {
+          bridge.setLastError(NAPI_GENERIC_FAILURE, 'Wasm memory not initialized');
+          return NAPI_GENERIC_FAILURE;
+        }
+        const maxUnits = length === -1 ? Number.MAX_SAFE_INTEGER : (length >>> 0);
+        const view = new DataView(buffer);
+        const chars = [];
+        let offset = 0;
+        while (offset < maxUnits) {
+          const codeUnit = view.getUint16(strPtr + offset * 2, true);
+          if (length === -1 && codeUnit === 0) break;
+          chars.push(String.fromCharCode(codeUnit));
+          offset += 1;
+        }
+        bridge.writeI32(resultPtr, bridge.createHandle(chars.join('')));
         return NAPI_OK;
       },
 
@@ -599,6 +659,54 @@ class NapiBridge {
       napi_create_array_with_length(env, length, resultPtr) {
         const arr = new Array(Math.max(0, length >>> 0));
         bridge.writeI32(resultPtr, bridge.createHandle(arr));
+        return NAPI_OK;
+      },
+
+      napi_create_date(env, time, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.createHandle(new Date(Number(time))));
+        return NAPI_OK;
+      },
+
+      napi_create_bigint_uint64(env, value, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.createHandle(BigInt(value)));
+        return NAPI_OK;
+      },
+
+      napi_create_promise(env, deferredPtr, promisePtr) {
+        void env;
+        const deferredId = bridge.nextDeferredId++;
+        let resolveFn;
+        let rejectFn;
+        const promise = new Promise((resolve, reject) => {
+          resolveFn = resolve;
+          rejectFn = reject;
+        });
+        bridge.deferreds.set(deferredId, { resolve: resolveFn, reject: rejectFn, promise });
+        if (deferredPtr) bridge.writePointer(deferredPtr, deferredId);
+        if (promisePtr) bridge.writeI32(promisePtr, bridge.createHandle(promise));
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_resolve_deferred(env, deferred, resolutionHandle) {
+        void env;
+        const entry = bridge.deferreds.get(deferred >>> 0);
+        if (!entry) return NAPI_INVALID_ARG;
+        entry.resolve(bridge.getHandle(resolutionHandle));
+        bridge.deferreds.delete(deferred >>> 0);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_reject_deferred(env, deferred, rejectionHandle) {
+        void env;
+        const entry = bridge.deferreds.get(deferred >>> 0);
+        if (!entry) return NAPI_INVALID_ARG;
+        entry.reject(bridge.getHandle(rejectionHandle));
+        bridge.deferreds.delete(deferred >>> 0);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
@@ -864,6 +972,12 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      napi_get_value_int64(env, handle, resultPtr) {
+        void env;
+        bridge.writeBigInt64(resultPtr, BigInt(Math.trunc(Number(bridge.getHandle(handle) || 0))));
+        return NAPI_OK;
+      },
+
       napi_get_value_uint32(env, handle, resultPtr) {
         void env;
         const value = bridge.getHandle(handle);
@@ -940,10 +1054,42 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      napi_get_value_string_latin1(env, handle, bufPtr, bufSize, resultPtr) {
+        void env;
+        const str = String(bridge.getHandle(handle));
+        const latin1 = Array.from(str, (char) => String.fromCharCode(char.charCodeAt(0) & 0xff)).join('');
+        if (bufPtr && bufSize > 0) {
+          const written = bridge.writeString(bufPtr, latin1, bufSize);
+          if (resultPtr) bridge.writeI32(resultPtr, written);
+        } else if (resultPtr) {
+          bridge.writeI32(resultPtr, latin1.length);
+        }
+        return NAPI_OK;
+      },
+
       napi_coerce_to_string(env, valueHandle, resultPtr) {
         void env;
         const value = bridge.getHandle(valueHandle);
         bridge.writeI32(resultPtr, bridge.createHandle(String(value)));
+        return NAPI_OK;
+      },
+
+      napi_coerce_to_number(env, valueHandle, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.createHandle(Number(bridge.getHandle(valueHandle))));
+        return NAPI_OK;
+      },
+
+      napi_coerce_to_bool(env, valueHandle, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.createHandle(Boolean(bridge.getHandle(valueHandle))));
+        return NAPI_OK;
+      },
+
+      napi_coerce_to_object(env, valueHandle, resultPtr) {
+        void env;
+        const value = bridge.getHandle(valueHandle);
+        bridge.writeI32(resultPtr, bridge.createHandle(Object(value)));
         return NAPI_OK;
       },
 
@@ -1002,6 +1148,49 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      napi_create_buffer(env, length, dataPtrOut, resultPtr) {
+        void env;
+        const size = length >>> 0;
+        const buffer = typeof Buffer !== 'undefined' ? Buffer.alloc(size) : new Uint8Array(size);
+        const handle = bridge.createHandle(buffer);
+        let dataPtr = 0;
+        if (dataPtrOut && bridge.wasm && typeof bridge.wasm._malloc === 'function') {
+          dataPtr = bridge.wasm._malloc(size || 1) >>> 0;
+          bridge.writePointer(dataPtrOut, dataPtr);
+        } else if (dataPtrOut) {
+          bridge.writePointer(dataPtrOut, 0);
+        }
+        bridge.arrayBufferMetadata.set(handle, { dataPtr, byteLength: size });
+        bridge.writeI32(resultPtr, handle);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_create_buffer_copy(env, length, dataPtr, resultDataPtrOut, resultPtr) {
+        void env;
+        const size = length >>> 0;
+        const buffer = typeof Buffer !== 'undefined' ? Buffer.alloc(size) : new Uint8Array(size);
+        const wasmBuffer = bridge.getMemoryBuffer();
+        if (wasmBuffer && dataPtr) {
+          buffer.set(new Uint8Array(wasmBuffer, dataPtr >>> 0, size));
+        }
+        let copiedPtr = 0;
+        if (resultDataPtrOut && bridge.wasm && typeof bridge.wasm._malloc === 'function') {
+          copiedPtr = bridge.wasm._malloc(size || 1) >>> 0;
+          bridge.writePointer(resultDataPtrOut, copiedPtr);
+          if (wasmBuffer && size > 0) {
+            new Uint8Array(wasmBuffer, copiedPtr, size).set(buffer);
+          }
+        } else if (resultDataPtrOut) {
+          bridge.writePointer(resultDataPtrOut, 0);
+        }
+        const handle = bridge.createHandle(buffer);
+        bridge.arrayBufferMetadata.set(handle, { dataPtr: copiedPtr, byteLength: size });
+        bridge.writeI32(resultPtr, handle);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
       napi_get_buffer_info(env, valueHandle, dataPtrOut, lengthPtr) {
         void env;
         const value = bridge.getHandle(valueHandle);
@@ -1055,6 +1244,53 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      node_api_create_sharedarraybuffer(env, byteLength, resultPtr) {
+        void env;
+        if (typeof SharedArrayBuffer !== 'function') {
+          bridge.setLastError(NAPI_GENERIC_FAILURE, 'SharedArrayBuffer is not available');
+          return NAPI_GENERIC_FAILURE;
+        }
+        const length = byteLength >>> 0;
+        const handle = bridge.createHandle(new SharedArrayBuffer(length));
+        bridge.arrayBufferMetadata.set(handle, { dataPtr: 0, byteLength: length });
+        bridge.writeI32(resultPtr, handle);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_create_external(env, dataPtr, finalizeCb, finalizeHint, resultPtr) {
+        void env; void finalizeCb; void finalizeHint;
+        bridge.writeI32(resultPtr, bridge.createHandle({ __externalPtr: dataPtr >>> 0 }));
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_get_value_external(env, valueHandle, resultPtr) {
+        void env;
+        const value = bridge.getHandle(valueHandle);
+        const ptr = value && typeof value === 'object' && '__externalPtr' in value
+          ? value.__externalPtr >>> 0
+          : 0;
+        bridge.writePointer(resultPtr, ptr);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_create_external_buffer(env, length, dataPtr, finalizeCb, finalizeHint, resultPtr) {
+        void env; void finalizeCb; void finalizeHint;
+        const size = length >>> 0;
+        const buffer = typeof Buffer !== 'undefined' ? Buffer.alloc(size) : new Uint8Array(size);
+        const wasmBuffer = bridge.getMemoryBuffer();
+        if (wasmBuffer && dataPtr) {
+          buffer.set(new Uint8Array(wasmBuffer, dataPtr >>> 0, size));
+        }
+        const handle = bridge.createHandle(buffer);
+        bridge.arrayBufferMetadata.set(handle, { dataPtr: dataPtr >>> 0, byteLength: size });
+        bridge.writeI32(resultPtr, handle);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
       napi_create_typedarray(env, type, length, arraybufferHandle, byteOffset, resultPtr) {
         void env;
         const arrayBuffer = bridge.getHandle(arraybufferHandle);
@@ -1096,6 +1332,36 @@ class NapiBridge {
         }
 
         bridge.writeI32(resultPtr, bridge.createHandle(value));
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_is_dataview(env, valueHandle, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.getHandle(valueHandle) instanceof DataView ? 1 : 0);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      node_api_is_sharedarraybuffer(env, valueHandle, resultPtr) {
+        void env;
+        const value = bridge.getHandle(valueHandle);
+        bridge.writeI32(resultPtr, typeof SharedArrayBuffer === 'function' && value instanceof SharedArrayBuffer ? 1 : 0);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_get_dataview_info(env, valueHandle, byteLengthPtr, dataPtr, arraybufferPtr, byteOffsetPtr) {
+        void env;
+        const value = bridge.getHandle(valueHandle);
+        if (!(value instanceof DataView)) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'DataView expected');
+          return NAPI_INVALID_ARG;
+        }
+        if (byteLengthPtr) bridge.writePointer(byteLengthPtr, value.byteLength >>> 0);
+        if (dataPtr) bridge.writePointer(dataPtr, 0);
+        if (arraybufferPtr) bridge.writeI32(arraybufferPtr, bridge.createHandle(value.buffer));
+        if (byteOffsetPtr) bridge.writePointer(byteOffsetPtr, value.byteOffset >>> 0);
         bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
@@ -1378,9 +1644,60 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      napi_is_promise(env, valueHandle, resultPtr) {
+        void env;
+        bridge.writeI32(resultPtr, bridge.getHandle(valueHandle) instanceof Promise ? 1 : 0);
+        return NAPI_OK;
+      },
+
       napi_is_date(env, valueHandle, resultPtr) {
         void env;
         bridge.writeI32(resultPtr, bridge.getHandle(valueHandle) instanceof Date ? 1 : 0);
+        return NAPI_OK;
+      },
+
+      napi_is_detached_arraybuffer(env, valueHandle, resultPtr) {
+        void env; void valueHandle;
+        bridge.writeI32(resultPtr, 0);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_instanceof(env, objectHandle, constructorHandle, resultPtr) {
+        void env;
+        const value = bridge.getHandle(objectHandle);
+        const ctor = bridge.getHandle(constructorHandle);
+        bridge.writeI32(resultPtr, typeof ctor === 'function' && value instanceof ctor ? 1 : 0);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_get_new_target(env, cbinfo, resultPtr) {
+        void env; void cbinfo;
+        bridge.writeI32(resultPtr, 1);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_run_script(env, scriptHandle, resultPtr) {
+        void env;
+        try {
+          const result = globalThis.eval(String(bridge.getHandle(scriptHandle)));
+          bridge.writeI32(resultPtr, bridge.createHandle(result));
+          bridge.setLastError(NAPI_OK, '');
+          return NAPI_OK;
+        } catch (error) {
+          bridge.setPendingException(error);
+          return NAPI_PENDING_EXCEPTION;
+        }
+      },
+
+      napi_get_value_bigint_int64(env, handle, resultPtr, losslessPtr) {
+        void env;
+        const value = BigInt(bridge.getHandle(handle) || 0);
+        bridge.writeBigInt64(resultPtr, value);
+        if (losslessPtr) bridge.writeI32(losslessPtr, 1);
+        bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },
 
@@ -1533,6 +1850,18 @@ class NapiBridge {
 
       napi_get_property_names(env, objHandle, resultPtr) {
         void env;
+        const obj = bridge.getHandle(objHandle);
+        if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
+          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+          return NAPI_OBJECT_EXPECTED;
+        }
+        bridge.writeI32(resultPtr, bridge.createHandle(Reflect.ownKeys(obj)));
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_get_all_property_names(env, objHandle, keyMode, keyFilter, keyConversion, resultPtr) {
+        void env; void keyMode; void keyFilter; void keyConversion;
         const obj = bridge.getHandle(objHandle);
         if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
           bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
@@ -1852,6 +2181,29 @@ class NapiBridge {
         return NAPI_OK;
       },
 
+      napi_add_finalizer(env, objectHandle, nativePtr, finalizeCb, finalizeHint, resultPtr, finalizeResultPtr) {
+        void resultPtr;
+        const value = bridge.getHandle(objectHandle);
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+          return NAPI_OBJECT_EXPECTED;
+        }
+        const finalizers = bridge.objectFinalizers.get(value) || [];
+        finalizers.push({
+          env: env >>> 0,
+          nativePtr: nativePtr >>> 0,
+          finalizeCb: finalizeCb >>> 0,
+          finalizeHint: finalizeHint >>> 0,
+        });
+        bridge.objectFinalizers.set(value, finalizers);
+        if (finalizeResultPtr) {
+          bridge.refs.set(objectHandle, { count: 1, isWeak: false });
+          bridge.writeI32(finalizeResultPtr, objectHandle);
+        }
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
       // --- Function Calls ---
       napi_call_function(env, thisHandle, fnHandle, argc, argvPtr, resultPtr) {
         const fn = bridge.getHandle(fnHandle);
@@ -2144,6 +2496,54 @@ class NapiBridge {
             wrapData.refCount = 0;
           }
         }
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_add_env_cleanup_hook(env, hook, arg) {
+        const envId = env >>> 0;
+        const hooks = bridge.envCleanupHooks.get(envId) || [];
+        hooks.push({ hook: hook >>> 0, arg: arg >>> 0 });
+        bridge.envCleanupHooks.set(envId, hooks);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_adjust_external_memory(env, changeBytes, adjustedValuePtr) {
+        void env;
+        const adjusted = typeof changeBytes === 'bigint' ? changeBytes : BigInt(Number(changeBytes) || 0);
+        if (adjustedValuePtr) {
+          bridge.writeBigInt64(adjustedValuePtr, adjusted);
+        }
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_type_tag_object(env, objectHandle, typeTagPtr) {
+        void env;
+        const value = bridge.getHandle(objectHandle);
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+          bridge.setLastError(NAPI_OBJECT_EXPECTED, 'Object expected');
+          return NAPI_OBJECT_EXPECTED;
+        }
+        const tag = bridge.readTypeTag(typeTagPtr);
+        if (!tag) {
+          bridge.setLastError(NAPI_INVALID_ARG, 'Type tag pointer expected');
+          return NAPI_INVALID_ARG;
+        }
+        bridge.typeTags.set(value, tag);
+        bridge.setLastError(NAPI_OK, '');
+        return NAPI_OK;
+      },
+
+      napi_check_object_type_tag(env, objectHandle, typeTagPtr, resultPtr) {
+        void env;
+        const value = bridge.getHandle(objectHandle);
+        const expectedTag = bridge.readTypeTag(typeTagPtr);
+        const actualTag = value && (typeof value === 'object' || typeof value === 'function')
+          ? bridge.typeTags.get(value) || null
+          : null;
+        bridge.writeI32(resultPtr, expectedTag !== null && actualTag === expectedTag ? 1 : 0);
         bridge.setLastError(NAPI_OK, '');
         return NAPI_OK;
       },

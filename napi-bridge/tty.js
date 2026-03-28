@@ -17,12 +17,27 @@ export class ReadStream extends Readable {
     this.fd = fd;
     this.isTTY = true;
     this.isRaw = false;
+    const stdinRef = this;
+    const previousPush = globalThis._stdinPush;
+    globalThis._stdinPush = (data) => {
+      try {
+        stdinRef.push(typeof data === 'string' ? data : new TextDecoder().decode(data));
+      } catch {}
+      stdinRef.emit('data', data);
+      stdinRef.emit('readable');
+      if (typeof previousPush === 'function') {
+        previousPush(data);
+      }
+    };
   }
 
   setRawMode(mode) {
     this.isRaw = !!mode;
     return this;
   }
+
+  ref() { return this; }
+  unref() { return this; }
 }
 
 // Shared size state — updated by setTerminalSize() in initEdgeJS
@@ -45,8 +60,13 @@ export class WriteStream extends Writable {
     super({
       write(chunk, encoding, callback) {
         const str = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        if (fd === 2) console.error(str);
-        else console.log(str);
+        if (typeof globalThis._xtermWrite === 'function') {
+          globalThis._xtermWrite(str);
+        } else if (fd === 2) {
+          console.error(str);
+        } else {
+          console.log(str);
+        }
         callback();
       },
     });
@@ -72,6 +92,8 @@ export class WriteStream extends Writable {
   clearScreenDown() {}
   cursorTo() {}
   moveCursor() {}
+  ref() { return this; }
+  unref() { return this; }
 }
 
 export default { isatty, ReadStream, WriteStream, _updateTerminalSize };

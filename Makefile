@@ -9,7 +9,7 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test clean distclean size help
+.PHONY: all setup fetch configure build test test-integration test-nightly clean distclean size help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -86,12 +86,23 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	cmake --build "$(BUILD_DIR)" -j $(JOBS)
 	@cp -f "$(BUILD_DIR)/edge.js" "$(JS_OUT)" 2>/dev/null || echo "Warning: edge.js not found"
 	@cp -f "$(BUILD_DIR)/edge.wasm" "$(WASM_OUT)" 2>/dev/null || echo "Warning: edge.wasm not found"
+	@printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst filename = path.join(__dirname, 'edge.js');\nconst source = fs.readFileSync(filename, 'utf8');\nconst wrapped = new Function('exports', 'require', 'module', '__filename', '__dirname', `${source}\\n;return module.exports || globalThis.EdgeJSModule || global.EdgeJSModule;`);\nmodule.exports = wrapped(module.exports, require, module, filename, __dirname);\n" > "$(BUILD_DIR)/edge"
 	@echo ">>> Build complete"
 
 # ---- Release Gate ----
 release-gate:
 	@echo ">>> Running phase close release gate..."
 	cd "$(ROOT_DIR)" && node scripts/release-gate.mjs
+
+# ---- Test Tiers ----
+test:
+	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs
+
+test-integration:
+	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs
+
+test-nightly:
+	cd "$(ROOT_DIR)" && EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly
 
 # ---- Clean ----
 clean:

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code — Browser</title>
-  <link rel="stylesheet" href="../node_modules/xterm/css/xterm.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #1a1b26; overflow: hidden; }
@@ -14,55 +14,177 @@
   {
     "imports": {
       "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm",
-      "node:module": "../napi-bridge/module-shim.js",
-      "node:fs": "../napi-bridge/fs.js",
-      "node:fs/promises": "../napi-bridge/fs-promises.js",
-      "node:path": "../napi-bridge/path-exports.js",
-      "node:path/posix": "../napi-bridge/path-exports.js",
-      "node:path/win32": "../napi-bridge/path-exports.js",
-      "node:os": "../napi-bridge/os.js",
-      "node:crypto": "../napi-bridge/crypto-exports.js",
-      "node:http": "../napi-bridge/http-exports.js",
-      "node:https": "../napi-bridge/https-exports.js",
-      "node:net": "../napi-bridge/net-exports.js",
-      "node:tls": "../napi-bridge/net-exports.js",
-      "node:dns": "../napi-bridge/net-exports.js",
-      "node:url": "../napi-bridge/url-exports.js",
-      "node:util": "../napi-bridge/util.js",
-      "node:events": "../napi-bridge/eventemitter.js",
-      "node:buffer": "../napi-bridge/buffer-exports.js",
-      "node:stream": "../napi-bridge/streams.js",
-      "node:stream/consumers": "../napi-bridge/stream-consumers.js",
-      "node:child_process": "../napi-bridge/child-process.js",
-      "node:process": "../napi-bridge/process-exports.js",
-      "node:readline": "../napi-bridge/readline.js",
-      "node:readline/promises": "../napi-bridge/readline.js",
-      "node:tty": "../napi-bridge/tty.js",
-      "node:zlib": "../napi-bridge/zlib.js",
-      "node:async_hooks": "../napi-bridge/async-hooks.js",
-      "node:timers/promises": "../napi-bridge/timers-promises.js",
-      "node:worker_threads": "../napi-bridge/worker-threads.js",
-      "node:assert": "../napi-bridge/assert.js",
-      "node:string_decoder": "../napi-bridge/string-decoder.js",
-      "node:constants": "../napi-bridge/constants.js",
-      "node:diagnostics_channel": "../napi-bridge/diagnostics-channel.js",
-      "diagnostics_channel": "../napi-bridge/diagnostics-channel.js",
-      "undici": "../napi-bridge/undici-stub.js",
-      "http2": "../napi-bridge/net-exports.js",
-      "http2-wrapper": "../napi-bridge/net-exports.js",
-      "inspector": "../napi-bridge/inspector.js"
+
+      "fs": "/napi-bridge/fs-exports.js",     "node:fs": "/napi-bridge/fs-exports.js",
+      "fs/promises": "/napi-bridge/fs-promises.js", "node:fs/promises": "/napi-bridge/fs-promises.js",
+      "path": "/napi-bridge/path-exports.js",  "node:path": "/napi-bridge/path-exports.js",
+      "node:path/posix": "/napi-bridge/path-exports.js", "node:path/win32": "/napi-bridge/path-exports.js",
+      "os": "/napi-bridge/os-exports.js",      "node:os": "/napi-bridge/os-exports.js",
+      "crypto": "/napi-bridge/crypto-exports.js", "node:crypto": "/napi-bridge/crypto-exports.js",
+      "http": "/napi-bridge/http-exports.js",  "node:http": "/napi-bridge/http-exports.js",
+      "https": "/napi-bridge/https-exports.js", "node:https": "/napi-bridge/https-exports.js",
+      "http2": "/napi-bridge/http2-exports.js", "node:http2": "/napi-bridge/http2-exports.js",
+      "http2-wrapper": "/napi-bridge/http2-exports.js",
+      "net": "/napi-bridge/net-exports.js",    "node:net": "/napi-bridge/net-exports.js",
+      "tls": "/napi-bridge/tls-exports.js",    "node:tls": "/napi-bridge/tls-exports.js",
+      "dns": "/napi-bridge/dns-exports.js",    "node:dns": "/napi-bridge/dns-exports.js",
+      "dns/promises": "/napi-bridge/dns-exports.js", "node:dns/promises": "/napi-bridge/dns-exports.js",
+      "url": "/napi-bridge/url-exports.js",    "node:url": "/napi-bridge/url-exports.js",
+      "util": "/napi-bridge/util-exports.js",  "node:util": "/napi-bridge/util-exports.js",
+      "events": "/napi-bridge/events-exports.js", "node:events": "/napi-bridge/events-exports.js",
+      "buffer": "/napi-bridge/buffer-exports.js", "node:buffer": "/napi-bridge/buffer-exports.js",
+      "stream": "/napi-bridge/stream-exports.js", "node:stream": "/napi-bridge/stream-exports.js",
+      "stream/consumers": "/napi-bridge/stream-consumers.js", "node:stream/consumers": "/napi-bridge/stream-consumers.js",
+      "stream/promises": "/napi-bridge/stream-exports.js", "node:stream/promises": "/napi-bridge/stream-exports.js",
+      "stream/web": "/napi-bridge/stream-web-exports.js", "node:stream/web": "/napi-bridge/stream-web-exports.js",
+      "child_process": "/napi-bridge/child_process-exports.js", "node:child_process": "/napi-bridge/child_process-exports.js",
+      "process": "/napi-bridge/process-exports.js", "node:process": "/napi-bridge/process-exports.js",
+      "readline": "/napi-bridge/readline-exports.js", "node:readline": "/napi-bridge/readline-exports.js",
+      "node:readline/promises": "/napi-bridge/readline-exports.js",
+      "tty": "/napi-bridge/tty-exports.js",    "node:tty": "/napi-bridge/tty-exports.js",
+      "zlib": "/napi-bridge/zlib-exports.js",  "node:zlib": "/napi-bridge/zlib-exports.js",
+      "assert": "/napi-bridge/assert-exports.js", "node:assert": "/napi-bridge/assert-exports.js",
+      "module": "/napi-bridge/module-exports.js", "node:module": "/napi-bridge/module-exports.js",
+      "string_decoder": "/napi-bridge/string_decoder-exports.js", "node:string_decoder": "/napi-bridge/string_decoder-exports.js",
+      "constants": "/napi-bridge/constants-exports.js", "node:constants": "/napi-bridge/constants-exports.js",
+      "worker_threads": "/napi-bridge/worker_threads-exports.js", "node:worker_threads": "/napi-bridge/worker_threads-exports.js",
+      "async_hooks": "/napi-bridge/async_hooks-exports.js", "node:async_hooks": "/napi-bridge/async_hooks-exports.js",
+      "timers": "/napi-bridge/timers-exports.js", "node:timers": "/napi-bridge/timers-exports.js",
+      "timers/promises": "/napi-bridge/timers-promises.js", "node:timers/promises": "/napi-bridge/timers-promises.js",
+      "v8": "/napi-bridge/v8-exports.js",      "node:v8": "/napi-bridge/v8-exports.js",
+      "inspector": "/napi-bridge/inspector.js", "node:inspector": "/napi-bridge/inspector.js",
+      "diagnostics_channel": "/napi-bridge/diagnostics-channel-exports.js", "node:diagnostics_channel": "/napi-bridge/diagnostics-channel-exports.js",
+      "perf_hooks": "/napi-bridge/perf-hooks-exports.js", "node:perf_hooks": "/napi-bridge/perf-hooks-exports.js",
+      "querystring": "/napi-bridge/querystring-exports.js", "node:querystring": "/napi-bridge/querystring-exports.js",
+      "console": "/napi-bridge/console-exports.js",  "node:console": "/napi-bridge/console-exports.js",
+      "punycode": "/napi-bridge/inspector.js",
+      "undici": "/napi-bridge/undici-stub.js",
+      "react-devtools-core": "/napi-bridge/inspector.js",
+      "@google/gemini-cli-devtools": "/napi-bridge/inspector.js",
+      "node-pty": "/napi-bridge/node-pty-shim.js",
+      "read-pkg": "/napi-bridge/npm-stubs.js",
+      "npm-run-path": "/napi-bridge/npm-stubs.js",
+      "execa": "/napi-bridge/npm-stubs.js",
+      "unicorn-magic": "/napi-bridge/npm-stubs.js",
+      "@vscode/ripgrep": "/napi-bridge/npm-stubs.js",
+      "aws4fetch": "/napi-bridge/npm-stubs.js",
+      "open": "/napi-bridge/npm-stubs.js",
+      "pino": "/napi-bridge/npm-stubs.js",
+      "pino-pretty": "/napi-bridge/npm-stubs.js",
+      "bufferutil": "/napi-bridge/npm-stubs.js",
+      "utf-8-validate": "/napi-bridge/npm-stubs.js",
+      "supports-color": "/napi-bridge/npm-stubs.js",
+      "typescript": "/napi-bridge/npm-stubs.js",
+      "encoding": "/napi-bridge/npm-stubs.js",
+      "domain": "/napi-bridge/npm-stubs.js",
+      "react": "https://esm.sh/react@18.3.1",
+      "ink": "https://esm.sh/ink@5.2.0?external=react",
+      "ink-spinner": "https://esm.sh/ink-spinner@5.0.0?external=react,ink",
+      "require-in-the-middle": "/napi-bridge/npm-stubs.js",
+      "import-in-the-middle": "/napi-bridge/npm-stubs.js",
+      "stack-utils": "/napi-bridge/npm-stubs.js"
     }
   }
   </script>
-  <!-- Node.js global polyfills — MUST load before any module imports.
-       Provides process, Buffer, setImmediate, setTimeout.unref, console.Console,
-       hrtime, and CORS proxy intercept. All 4 CLIs depend on this.
-       Do NOT inline this block — keep it in node-polyfills.js so it survives
-       automated pushes and import map regeneration. -->
-  <script src="node-polyfills.js"></script>
 </head>
 <body>
   <div id="terminal"></div>
+  <script>
+    // ── Node.js global polyfills (must run before any ESM module loads) ──
+    globalThis.global = globalThis;
+
+    // setImmediate (Ink needs it)
+    if (typeof globalThis.setImmediate === 'undefined') {
+      globalThis.setImmediate = (fn, ...args) => globalThis.setTimeout(fn, 0, ...args);
+      globalThis.clearImmediate = (id) => globalThis.clearTimeout(id);
+    }
+
+    // console.Console
+    if (!globalThis.console.Console) {
+      globalThis.console.Console = class Console {
+        constructor(opts) {
+          const out = opts?.stdout || { write: (s) => console.log(s) };
+          const err = opts?.stderr || { write: (s) => console.error(s) };
+          Object.assign(this, { log: (...a) => out.write(a.join(' ')+'\n'), error: (...a) => err.write(a.join(' ')+'\n'), warn: (...a) => err.write(a.join(' ')+'\n'), info: (...a) => out.write(a.join(' ')+'\n'), debug: (...a) => out.write(a.join(' ')+'\n'), trace: (...a) => out.write(a.join(' ')+'\n'), dir: (...a) => out.write(a.join(' ')+'\n'), time: ()=>{}, timeEnd: ()=>{}, timeLog: ()=>{}, assert: ()=>{}, count: ()=>{}, countReset: ()=>{}, group: ()=>{}, groupEnd: ()=>{}, table: (...a) => out.write(a.join(' ')+'\n'), clear: ()=>{} });
+        }
+      };
+    }
+
+    // CORS proxy intercept
+    const PROXY_URL = 'http://localhost:8081'; // Local dev-server proxy
+    const DOMAIN_PREFIX = { 'api.anthropic.com': '/anthropic', 'platform.claude.com': '/anthropic-platform', 'api.openai.com': '/openai', 'generativelanguage.googleapis.com': '/google' };
+    const _origFetch = globalThis.fetch;
+    globalThis.fetch = function(input, init) { let url = typeof input === 'string' ? input : input?.url || String(input); try { const u = new URL(url, location.href); const p = DOMAIN_PREFIX[u.hostname]; if (p) { url = PROXY_URL + p + u.pathname + u.search; if (typeof input === 'string') input = url; else if (input instanceof Request) input = new Request(url, input); } } catch {} return _origFetch.call(globalThis, input, init); };
+
+    // Global process
+    globalThis.process = { 
+      env: {}, 
+      ref() { return this; }, 
+      unref() { return this; },
+      on() { return this; },
+      once() { return this; },
+      emit() { return false; },
+      removeListener() { return this; }
+    };
+
+    // Patch setTimeout/setInterval to return objects with .unref()/.ref()
+    const _origST = globalThis.setTimeout, _origSI = globalThis.setInterval;
+    globalThis.setTimeout = function(fn, ms, ...args) { 
+      const id = _origST.call(globalThis, fn, ms, ...args); 
+      const obj = { 
+        [Symbol.toPrimitive]() { return id; }, 
+        unref() { return this; }, 
+        ref() { return this; }, 
+        hasRef() { return true; }, 
+        refresh() { return this; }, 
+        _id: id 
+      };
+      // console.log(`[setTimeout] id=${id}`);
+      return obj;
+    };
+    globalThis.setInterval = function(fn, ms, ...args) { 
+      const id = _origSI.call(globalThis, fn, ms, ...args); 
+      const obj = { 
+        [Symbol.toPrimitive]() { return id; }, 
+        unref() { return this; }, 
+        ref() { return this; }, 
+        hasRef() { return true; }, 
+        refresh() { return this; }, 
+        _id: id 
+      };
+      // console.log(`[setInterval] id=${id}`);
+      return obj;
+    };
+    const _origCT = globalThis.clearTimeout, _origCI = globalThis.clearInterval;
+    globalThis.clearTimeout = function(t) { return _origCT(t?._id ?? t); };
+    globalThis.clearInterval = function(t) { return _origCI(t?._id ?? t); };
+
+    // Global require fallback (for CJS bundles that expect it)
+    globalThis.require = (id) => {
+      if (globalThis.__edgeRuntime && typeof globalThis.__edgeRuntime.require === 'function') {
+        return globalThis.__edgeRuntime.require(id);
+      }
+      // Check builtins directly if runtime not yet fully ready
+      const clean = id.startsWith('node:') ? id.slice(5) : id;
+      if (clean === 'process') return globalThis.process;
+      if (clean === 'buffer') return { Buffer: globalThis.Buffer };
+      throw new Error(`require('${id}') failed: runtime not initialized`);
+    };
+
+    // Global Buffer
+    if (typeof globalThis.Buffer === 'undefined') {
+      globalThis.Buffer = class Buffer extends Uint8Array {
+        static from(v, enc) { return typeof v === 'string' ? new TextEncoder().encode(v) : new Uint8Array(v); }
+        static alloc(n) { return new Uint8Array(n); }
+        static allocUnsafe(n) { return new Uint8Array(n); }
+        static isBuffer(o) { return o instanceof Uint8Array; }
+        static byteLength(str) { return typeof str === 'string' ? new TextEncoder().encode(str).length : str.length; }
+        static concat(list, len) { const t = len ?? list.reduce((s,b) => s+b.length, 0); const r = new Uint8Array(t); let o = 0; for (const b of list) { r.set(b, o); o += b.length; } return r; }
+        toString() { return new TextDecoder().decode(this); }
+        slice(s, e) { return this.subarray(s, e); }
+      };
+    }
+  </script>
   <script type="module" src="terminal.js"></script>
 </body>
 </html>

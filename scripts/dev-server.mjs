@@ -21,36 +21,48 @@ const MIME = {
 // ── File server (8080) ──────────────────────────────────────────────
 const fileServer = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  // Required for SharedArrayBuffer (Emscripten pthreads)
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-  let filePath = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  if (filePath.endsWith('/') || filePath.endsWith('\\') || filePath === ROOT) filePath = path.join(ROOT, 'web', 'index.html');
+  const url = new URL(req.url, 'http://x');
+  let pathname = decodeURIComponent(url.pathname);
+  let filePath;
+  
+  if (pathname === '/') {
+    filePath = path.join(ROOT, 'web', 'index.html');
+  } else {
+    filePath = path.join(ROOT, pathname);
+  }
 
-  fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) {
-      // Try appending index.html for directory paths
-      const indexPath = path.join(filePath, 'index.html');
-      fs.stat(indexPath, (err2, stat2) => {
-        if (err2 || !stat2.isFile()) { res.writeHead(404); res.end('Not found: ' + req.url); return; }
-        const ext2 = path.extname(indexPath);
-        res.writeHead(200, {
-          'Content-Type': MIME[ext2] || 'application/octet-stream',
-          'Content-Length': stat2.size,
-          'Cache-Control': 'no-cache',
-        });
-        fs.createReadStream(indexPath).pipe(res);
+  console.log(`[fileServer] ${req.method} ${req.url} -> ${filePath}`);
+
+  const serveFile = (pathPtr) => {
+    fs.stat(pathPtr, (err, stat) => {
+      if (err || !stat.isFile()) {
+        // Fallback to docs directory if not found in root
+        if (pathPtr.startsWith(ROOT) && !pathPtr.includes(path.join(ROOT, 'docs'))) {
+          const docsPath = path.join(ROOT, 'docs', pathname);
+          if (docsPath !== pathPtr) {
+            console.log(`[fileServer] FALLBACK: ${pathname} -> ${docsPath}`);
+            serveFile(docsPath);
+            return;
+          }
+        }
+        console.warn(`[fileServer] NOT FOUND: ${pathPtr}`, err?.message);
+        res.writeHead(404);
+        res.end('Not found');
+        return;
+      }
+      const ext = path.extname(pathPtr);
+      res.writeHead(200, {
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-cache',
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
       });
-      return;
-    }
-    const ext = path.extname(filePath);
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': stat.size,
-      'Cache-Control': 'no-cache',
+      fs.createReadStream(pathPtr).pipe(res);
     });
-    fs.createReadStream(filePath).pipe(res);
-  });
+  };
+
+  serveFile(filePath);
 });
 
 // ── CORS proxy (8081) ───────────────────────────────────────────────
@@ -67,12 +79,11 @@ const proxy = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Expose-Headers', '*');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-  // Health check: HEAD / — return 200 so the CLI knows the API is available
+  
   if (req.method === 'HEAD' && (req.url === '/' || req.url === '')) {
     res.writeHead(200); res.end(); return;
   }
 
-  // Determine target from X-Proxy-Host header or default to Anthropic
   const targetHost = req.headers['x-proxy-host'] || 'api.anthropic.com';
   if (!PROXY_TARGETS[targetHost]) {
     res.writeHead(403); res.end('Proxy target not allowed: ' + targetHost); return;
@@ -98,6 +109,6 @@ const proxy = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
-fileServer.listen(8080, () => console.log('File server: http://localhost:8080/web/'));
+fileServer.listen(8080, () => console.log('File server: http://localhost:8080/'));
 proxy.listen(8081, () => console.log('CORS proxy:  http://localhost:8081/'));
 console.log('\nOpen: http://localhost:8080/web/index.html?bundle=/dist/claude-code-cli.js');

@@ -104,9 +104,13 @@ export class Readable extends EventEmitter {
     state.buffer.push(chunk);
     state.length += chunkLen;
 
-    // If flowing, emit data immediately
+    // If flowing, emit data immediately.
     if (state.flowing === true) {
       _emitData(this);
+    } else if (this.listenerCount('readable') > 0) {
+      // Readable-mode consumers (like Ink) wait for this event before calling
+      // read(), so emit it whenever buffered data becomes available.
+      this.emit('readable');
     }
 
     return state.length < state.highWaterMark;
@@ -887,12 +891,22 @@ export function finished(stream, opts, callback) {
 
 // ─── Exports (match Node.js stream module shape) ────────────────────
 
-const Stream = Readable; // Base class alias
-Stream.Readable = Readable;
-Stream.Writable = Writable;
-Stream.Duplex = Duplex;
-Stream.Transform = Transform;
-Stream.PassThrough = PassThrough;
+// Wrap classes so they can be called without 'new' (CJS compat)
+function _wrapClass(Cls) {
+  return new Proxy(Cls, { apply(target, thisArg, args) { return new target(...args); } });
+}
+const _Readable = _wrapClass(Readable);
+const _Writable = _wrapClass(Writable);
+const _Duplex = _wrapClass(Duplex);
+const _Transform = _wrapClass(Transform);
+const _PassThrough = _wrapClass(PassThrough);
+
+const Stream = _Readable;
+Stream.Readable = _Readable;
+Stream.Writable = _Writable;
+Stream.Duplex = _Duplex;
+Stream.Transform = _Transform;
+Stream.PassThrough = _PassThrough;
 Stream.pipeline = pipeline;
 Stream.finished = finished;
 

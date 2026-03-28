@@ -80,17 +80,17 @@ export function createFsModule(memfs, getCwd) {
 
   function appendFileSync(path, data, options) {
     const opts = parseOptions(options, { encoding: 'utf8' });
-    const buf = typeof data === 'string' ? toBuffer(data, opts.encoding) : data;
-    try {
-      const existing = memfs.readFile(_r(path));
-      const combined = new Uint8Array(existing.length + buf.length);
-      combined.set(existing);
-      combined.set(buf, existing.length);
-      memfs.writeFile(_r(path), combined);
-    } catch {
-      // File doesn't exist — create it
-      memfs.writeFile(_r(path), buf);
-    }
+    const resolved = _r(path);
+    const nextChunk = typeof data === 'string'
+      ? toBuffer(data, opts.encoding)
+      : data instanceof Uint8Array
+        ? new Uint8Array(data)
+        : toBuffer(String(data), opts.encoding);
+    const existing = existsSync(resolved) ? memfs.readFile(resolved) : new Uint8Array(0);
+    const combined = new Uint8Array(existing.byteLength + nextChunk.byteLength);
+    combined.set(existing, 0);
+    combined.set(nextChunk, existing.byteLength);
+    memfs.writeFile(resolved, combined);
   }
 
   function readdirSync(path, options) {
@@ -193,6 +193,10 @@ export function createFsModule(memfs, getCwd) {
 
   function wrapAsync(syncFn) {
     return (...args) => {
+      const maybeCallback = args[args.length - 1];
+      if (typeof maybeCallback !== 'function') {
+        return syncFn(...args);
+      }
       const callback = args.pop();
       try {
         const result = syncFn(...args);
@@ -205,7 +209,6 @@ export function createFsModule(memfs, getCwd) {
 
   const readFile = wrapAsync(readFileSync);
   const writeFile = wrapAsync(writeFileSync);
-  const appendFile = wrapAsync(appendFileSync);
   const readdir = wrapAsync(readdirSync);
   const stat = wrapAsync(statSync);
   const mkdir = wrapAsync(mkdirSync);
@@ -220,6 +223,7 @@ export function createFsModule(memfs, getCwd) {
   const chmod = wrapAsync(chmodSync);
   const copyFile = wrapAsync(copyFileSync);
   const rm = wrapAsync(rmSync);
+  const appendFile = wrapAsync(appendFileSync);
 
   // ─── Promises API ───────────────────────────────────────────────────
 
@@ -238,7 +242,6 @@ export function createFsModule(memfs, getCwd) {
   const promises = {
     readFile: wrapPromise(readFileSync),
     writeFile: wrapPromise(writeFileSync),
-    appendFile: wrapPromise(appendFileSync),
     readdir: wrapPromise(readdirSync),
     stat: wrapPromise(statSync),
     mkdir: wrapPromise(mkdirSync),
@@ -251,6 +254,7 @@ export function createFsModule(memfs, getCwd) {
     chmod: wrapPromise(chmodSync),
     copyFile: wrapPromise(copyFileSync),
     rm: wrapPromise(rmSync),
+    appendFile: wrapPromise(appendFileSync),
   };
 
   // ─── Streaming APIs ─────────────────────────────────────────────────
@@ -347,7 +351,6 @@ export function createFsModule(memfs, getCwd) {
   return {
     readFileSync,
     writeFileSync,
-    appendFileSync,
     readdirSync,
     statSync,
     mkdirSync,
@@ -368,7 +371,6 @@ export function createFsModule(memfs, getCwd) {
 
     readFile,
     writeFile,
-    appendFile,
     readdir,
     stat,
     mkdir,
@@ -383,9 +385,48 @@ export function createFsModule(memfs, getCwd) {
     chmod,
     copyFile,
     rm,
+    appendFile,
 
     createReadStream,
     createWriteStream,
+    mkdirTree: (path) => mkdirSync(path, { recursive: true }),
+
+    // Stubs for methods that don't apply to MEMFS but shouldn't throw
+    utimes: (path, atime, mtime, cb) => { if (typeof cb === 'function') cb(null); },
+    utimesSync: () => {},
+    futimes: (fd, atime, mtime, cb) => { if (typeof cb === 'function') cb(null); },
+    futimesSync: () => {},
+    chown: (path, uid, gid, cb) => { if (typeof cb === 'function') cb(null); },
+    chownSync: () => {},
+    fchown: (fd, uid, gid, cb) => { if (typeof cb === 'function') cb(null); },
+    fchownSync: () => {},
+    lchown: (path, uid, gid, cb) => { if (typeof cb === 'function') cb(null); },
+    lchownSync: () => {},
+    fchmod: (fd, mode, cb) => { if (typeof cb === 'function') cb(null); },
+    fchmodSync: () => {},
+    lchmod: (path, mode, cb) => { if (typeof cb === 'function') cb(null); },
+    lchmodSync: () => {},
+    fstat: (fd, opts, cb) => { if (typeof opts === 'function') { cb = opts; } if (typeof cb === 'function') cb(null, { isFile: () => true, isDirectory: () => false, size: 0 }); },
+    fstatSync: () => ({ isFile: () => true, isDirectory: () => false, size: 0 }),
+    fsync: (fd, cb) => { if (typeof cb === 'function') cb(null); },
+    fsyncSync: () => {},
+    fdatasync: (fd, cb) => { if (typeof cb === 'function') cb(null); },
+    fdatasyncSync: () => {},
+    link: (src, dst, cb) => { if (typeof cb === 'function') cb(null); },
+    linkSync: () => {},
+    symlink: (target, path, type, cb) => { if (typeof type === 'function') { cb = type; } if (typeof cb === 'function') cb(null); },
+    symlinkSync: () => {},
+    readlink: (path, opts, cb) => { if (typeof opts === 'function') { cb = opts; } if (typeof cb === 'function') cb(null, path); },
+    readlinkSync: (path) => path,
+    truncate: (path, len, cb) => { if (typeof len === 'function') { cb = len; } if (typeof cb === 'function') cb(null); },
+    truncateSync: () => {},
+    ftruncate: (fd, len, cb) => { if (typeof len === 'function') { cb = len; } if (typeof cb === 'function') cb(null); },
+    ftruncateSync: () => {},
+    watch: () => ({ close() {}, on() { return this; }, once() { return this; }, off() { return this; } }),
+    watchFile: () => {},
+    unwatchFile: () => {},
+    appendFile,
+    appendFileSync,
 
     promises,
 
@@ -400,27 +441,81 @@ export function createFsModule(memfs, getCwd) {
 }
 
 // ─── Default module export (backward compatible) ─────────────────────
-// Uses defaultMemfs singleton with cwd = '/' (no process bridge available
-// at import time). The runtime wires up process.cwd() later via createFsModule().
+// ESM import-map consumers resolve through this mutable facade so they can
+// follow the per-runtime MEMFS instance installed by initEdgeJS().
 
-const fs = createFsModule(defaultMemfs, () => '/');
+let _activeFs = createFsModule(defaultMemfs, () => '/');
+
+const promises = new Proxy({}, {
+  get(_target, prop) {
+    const value = _activeFs.promises?.[prop];
+    if (typeof value === 'function') {
+      return (...args) => _activeFs.promises[prop](...args);
+    }
+    return value;
+  },
+});
+
+const fs = new Proxy({}, {
+  get(_target, prop) {
+    if (prop === 'promises') {
+      return promises;
+    }
+    const value = _activeFs[prop];
+    if (typeof value === 'function') {
+      return (...args) => _activeFs[prop](...args);
+    }
+    return value;
+  },
+});
+
+export function setActiveFsModule(fsModule) {
+  _activeFs = fsModule || createFsModule(defaultMemfs, () => '/');
+  return _activeFs;
+}
 
 // ─── ESM named exports ──────────────────────────────────────────────
 // Required for browser import { readFileSync } from "node:fs" via import map.
 
-export const {
-  readFileSync, writeFileSync, readdirSync, statSync, mkdirSync,
-  unlinkSync, renameSync, existsSync, accessSync, realpathSync,
-  openSync, readSync, writeSync, closeSync, rmdirSync,
-  lstatSync, chmodSync, copyFileSync, rmSync,
-  readFile, writeFile, readdir, stat, mkdir, unlink, rename,
-  access, realpath, open, close, rmdir,
-  lstat, chmod, copyFile, rm,
-  createReadStream, createWriteStream,
-  constants,
-} = fs;
+export const readFileSync = (...args) => fs.readFileSync(...args);
+export const writeFileSync = (...args) => fs.writeFileSync(...args);
+export const readdirSync = (...args) => fs.readdirSync(...args);
+export const statSync = (...args) => fs.statSync(...args);
+export const mkdirSync = (...args) => fs.mkdirSync(...args);
+export const unlinkSync = (...args) => fs.unlinkSync(...args);
+export const renameSync = (...args) => fs.renameSync(...args);
+export const existsSync = (...args) => fs.existsSync(...args);
+export const accessSync = (...args) => fs.accessSync(...args);
+export const realpathSync = (...args) => fs.realpathSync(...args);
+export const openSync = (...args) => fs.openSync(...args);
+export const readSync = (...args) => fs.readSync(...args);
+export const writeSync = (...args) => fs.writeSync(...args);
+export const closeSync = (...args) => fs.closeSync(...args);
+export const rmdirSync = (...args) => fs.rmdirSync(...args);
+export const lstatSync = (...args) => fs.lstatSync(...args);
+export const chmodSync = (...args) => fs.chmodSync(...args);
+export const copyFileSync = (...args) => fs.copyFileSync(...args);
+export const rmSync = (...args) => fs.rmSync(...args);
+export const readFile = (...args) => fs.readFile(...args);
+export const writeFile = (...args) => fs.writeFile(...args);
+export const readdir = (...args) => fs.readdir(...args);
+export const stat = (...args) => fs.stat(...args);
+export const mkdir = (...args) => fs.mkdir(...args);
+export const unlink = (...args) => fs.unlink(...args);
+export const rename = (...args) => fs.rename(...args);
+export const access = (...args) => fs.access(...args);
+export const realpath = (...args) => fs.realpath(...args);
+export const open = (...args) => fs.open(...args);
+export const close = (...args) => fs.close(...args);
+export const rmdir = (...args) => fs.rmdir(...args);
+export const lstat = (...args) => fs.lstat(...args);
+export const chmod = (...args) => fs.chmod(...args);
+export const copyFile = (...args) => fs.copyFile(...args);
+export const rm = (...args) => fs.rm(...args);
+export const createReadStream = (...args) => fs.createReadStream(...args);
+export const createWriteStream = (...args) => fs.createWriteStream(...args);
+export const constants = fs.constants;
 
-export const promises = fs.promises;
-
+export { promises };
 export default fs;
 export { fs };
