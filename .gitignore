@@ -26,3 +26,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local secrets and one-off debug artifacts
+.github/.env
+run_stage1.mjs
+stage1_response.txt
+will_delete/
