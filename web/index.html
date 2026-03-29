@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Code — Browser</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+  <link rel="stylesheet" href="../llm-sidebar-infinite-context/design-system/stitch_metro_memory_panel/metro_sidepanel_320px_high_density/tokens.css">
+  <link rel="stylesheet" href="../llm-sidebar-infinite-context/design-system/stitch_metro_memory_panel/metro_sidepanel_320px_high_density/panel.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1b26; overflow: hidden; }
-    #terminal { width: 100vw; height: 100vh; }
+    body { background: #1a1b26; overflow: hidden; display: flex; }
+    #terminal { flex: 1; height: 100vh; min-width: 0; }
+    #sidepanel { width: 320px; height: 100vh; flex-shrink: 0; }
+    @media (max-width: 767px) { #sidepanel { display: none; } #terminal { width: 100vw; } }
   </style>
   <script type="importmap">
   {
@@ -89,6 +93,7 @@
 </head>
 <body>
   <div id="terminal"></div>
+  <div id="sidepanel"></div>
   <script>
     // ── Node.js global polyfills (must run before any ESM module loads) ──
     globalThis.global = globalThis;

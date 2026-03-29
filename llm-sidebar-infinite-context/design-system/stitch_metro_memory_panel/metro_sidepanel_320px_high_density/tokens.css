@@ -1,0 +1,73 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * Metro Side-Panel Design Tokens — 320px high-density
+ * stitch_metro_memory_panel v1
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root {
+  /* ── Dimensions ── */
+  --mp-panel-width: 320px;
+  --mp-header-height: 40px;
+  --mp-section-gap: 1px;
+  --mp-cell-pad-x: 12px;
+  --mp-cell-pad-y: 8px;
+  --mp-row-height: 28px;
+  --mp-icon-size: 14px;
+  --mp-badge-height: 18px;
+
+  /* ── Typography (high-density monospace) ── */
+  --mp-font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  --mp-font-size-xs: 10px;
+  --mp-font-size-sm: 11px;
+  --mp-font-size-base: 12px;
+  --mp-font-size-lg: 13px;
+  --mp-font-weight-normal: 400;
+  --mp-font-weight-medium: 500;
+  --mp-font-weight-bold: 600;
+  --mp-line-height: 1.4;
+
+  /* ── Palette: Midnight (default) ── */
+  --mp-bg-root: #13141a;
+  --mp-bg-surface: #1a1b26;
+  --mp-bg-elevated: #1f2029;
+  --mp-bg-hover: #252633;
+  --mp-bg-active: #2d2e3f;
+  --mp-bg-badge: #2a2b3d;
+
+  --mp-border: #2e2f42;
+  --mp-border-subtle: #232436;
+  --mp-border-focus: #565880;
+
+  --mp-text-primary: #c0caf5;
+  --mp-text-secondary: #787c9e;
+  --mp-text-muted: #545672;
+  --mp-text-inverse: #13141a;
+
+  /* ── Semantic colors ── */
+  --mp-accent: #7aa2f7;
+  --mp-accent-hover: #89b4fa;
+  --mp-success: #9ece6a;
+  --mp-warning: #e0af68;
+  --mp-error: #f7768e;
+  --mp-info: #7dcfff;
+
+  /* ── Status dot ── */
+  --mp-dot-active: #9ece6a;
+  --mp-dot-idle: #e0af68;
+  --mp-dot-error: #f7768e;
+  --mp-dot-offline: #545672;
+
+  /* ── Transitions ── */
+  --mp-transition-fast: 100ms ease;
+  --mp-transition-base: 150ms ease;
+
+  /* ── Scrollbar ── */
+  --mp-scrollbar-width: 4px;
+  --mp-scrollbar-track: transparent;
+  --mp-scrollbar-thumb: #2e2f42;
+  --mp-scrollbar-thumb-hover: #3d3f57;
+
+  /* ── Z-index ── */
+  --mp-z-panel: 100;
+  --mp-z-header: 110;
+  --mp-z-overlay: 120;
+}

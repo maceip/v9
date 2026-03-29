@@ -20,6 +20,9 @@
  *   npx wrangler deploy web/cors-proxy-worker.js --name edgejs-cors-proxy
  */
 
+// ─── Side-panel import ───────────────────────────────────────────────
+import { SidePanel } from '../llm-sidebar-infinite-context/design-system/stitch_metro_memory_panel/metro_sidepanel_320px_high_density/sidepanel-api.js';
+
 // ─── Dynamic imports for xterm.js (loaded from CDN or node_modules) ──
 
 let Terminal, FitAddon, WebLinksAddon;
@@ -98,6 +101,36 @@ async function boot() {
   // Wire global process.stdout to xterm BEFORE loading any CLI
   globalThis._xtermWrite = (data) => term.write(data);
 
+  // ── Initialize side-panel ──────────────────────────────────────────
+  const sidepanelContainer = document.getElementById('sidepanel');
+  const panel = SidePanel.create(sidepanelContainer);
+  panel.setStatus('idle');
+  panel.setMaxTokens(200_000);
+  panel.setMemory([
+    { label: 'Model', value: 'claude-opus-4-6' },
+    { label: 'Runtime', value: 'EdgeJS/Wasm' },
+    { label: 'Proxy', value: 'cors.stare.network' },
+  ]);
+
+  // Expose panel globally for runtime hooks
+  globalThis.__sidePanel = panel;
+
+  // Hook stdout to track activity in the side-panel
+  const _origXtermWrite = globalThis._xtermWrite;
+  globalThis._xtermWrite = (data) => {
+    _origXtermWrite(data);
+    // Track API calls as activity
+    const str = typeof data === 'string' ? data : '';
+    if (str.includes('tool_use') || str.includes('tool_result')) {
+      panel.pushActivity({ type: 'tool', msg: str.slice(0, 120) });
+    }
+  };
+
+  // Collapse listener to resize terminal
+  panel.on('collapse', (collapsed) => {
+    if (fitAddon) setTimeout(() => fitAddon.fit(), 200);
+  });
+
   // ── Load EdgeJS runtime ────────────────────────────────────────────
 
   const config = getConfig();
@@ -142,8 +175,10 @@ async function boot() {
       const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
       runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
       runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
+      panel.pushActivity({ type: 'success', msg: 'Anthropic SDK registered' });
     } catch (err) {
       term.writeln('\x1b[33m[sdk] Bundle not found. Run: sh scripts/bundle-sdk.sh\x1b[0m');
+      panel.pushActivity({ type: 'info', msg: 'SDK bundle not found' });
     }
 
     // ── Load Claude Code bundle if provided ──────────────────────────
@@ -171,10 +206,13 @@ async function boot() {
     term.writeln('\x1b[33m[edgejs] Runtime not available: ' + _safe(err.message) + '\x1b[0m');
     term.writeln('\x1b[90mTerminal UI loaded — runtime will connect when Wasm is built.\x1b[0m');
     runtime = null;
+    panel.setStatus('error');
+    panel.pushActivity({ type: 'error', msg: 'Runtime not available: ' + _safe(err.message) });
   }
 
   // ── Keyboard input → process.stdin ─────────────────────────────────
 
+  let _inputBuffer = '';
   term.onData((data) => {
     // Push to global process.stdin (ESM CLI path)
     if (typeof globalThis._stdinPush === 'function') {
@@ -183,6 +221,17 @@ async function boot() {
     // Also push to runtime.pushStdin (Wasm runtime path)
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
+    }
+    // Track user input for side-panel context (on Enter)
+    if (data === '\r' || data === '\n') {
+      if (_inputBuffer.trim()) {
+        panel.pushContext({ role: 'user', text: _inputBuffer.trim(), tokens: Math.ceil(_inputBuffer.trim().length / 4) });
+      }
+      _inputBuffer = '';
+    } else if (data === '\x7f') {
+      _inputBuffer = _inputBuffer.slice(0, -1);
+    } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+      _inputBuffer += data;
     }
   });
 
@@ -206,11 +255,16 @@ async function boot() {
     term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
     term.writeln('');
     term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
+    panel.setStatus('active');
+    panel.pushActivity({ type: 'success', msg: 'Runtime initialized' });
 
     if (apiKey) {
       term.writeln('\x1b[32m✓ API key configured\x1b[0m');
+      panel.pushActivity({ type: 'success', msg: 'API key configured' });
     } else {
       term.writeln('\x1b[33m⚠ No API key\x1b[0m');
+      panel.setStatus('idle');
+      panel.pushActivity({ type: 'info', msg: 'No API key — set via sessionStorage' });
     }
 
     if (config.proxyUrl) {
@@ -252,6 +306,7 @@ async function boot() {
   // Expose for debugging
   globalThis.__edgeTerm = term;
   globalThis.__edgeRuntime = runtime;
+  globalThis.__edgePanel = panel;
 }
 
 // C4: Safe text output — never use innerHTML with untrusted data
