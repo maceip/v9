@@ -1,13 +1,17 @@
-# Deploy static landing + full browser runtime (web + napi-bridge + wasm + Claude bundle) to GitHub Pages.
+# Deploy docs/ to GitHub Pages.
 #
-# If the job fails immediately with: "Branch … is not allowed to deploy to github-pages"
-# → Repository Settings → Environments → github-pages → Deployment branches:
-#    add `main` and `dev` (or "All branches"). Otherwise OIDC deploy is rejected and the live site stays stale.
+# The landing page (glass terminal, zoom animations) lives in docs/ and is
+# committed directly — it deploys in ~30 seconds with no build step.
+#
+# Runtime artifacts (wasm, CLI bundle) are built by the separate CI workflow
+# and wasm-rebuild.yml.  Their absence is handled gracefully by the landing
+# page ("RUNTIME UNAVAILABLE").
+#
+# If the job fails immediately with "Branch … is not allowed to deploy":
+# → Settings → Environments → github-pages → Deployment branches → "All branches"
 name: Deploy GitHub Pages
 
 on:
-  # One live URL — deploy from `main` only on push. Pushes to `dev` were starting a second
-  # concurrent deploy; GitHub then cancels with “higher priority waiting request for pages”.
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,14 +23,12 @@ permissions:
 
 concurrency:
   group: pages-${{ github.repository }}
-  # Never cancel mid-deploy: canceled jobs still leave a queued Pages deployment and
-  # trigger the “higher priority waiting request” warning on the next run.
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -41,46 +43,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 3.1.64
-
-      - name: Build EdgeJS (wasm + JS loader)
-        continue-on-error: true
-        run: |
-          source "$EMSDK/emsdk_env.sh"
-          make fetch
-          make configure
-          make build
-
-      # wasm + loader into docs/dist/, rewrite import maps in every web/*.html, .nojekyll
-      - name: Assemble docs/ (web + napi-bridge + edgejs)
+      # Assemble web/ + napi-bridge/ into docs/ and write .nojekyll
+      - name: Assemble docs/ (web + napi-bridge)
         continue-on-error: true
         run: node scripts/prepare-github-pages.mjs
 
-      # After prepare: CLI bundle lands next to edgejs.* (devDependency from npm ci)
-      - name: Bundle Claude Code for browser (Pages + import map externals)
+      # Bundle CLI if @anthropic-ai/claude-code is available (devDependency)
+      - name: Bundle Claude Code for browser
         continue-on-error: true
         run: node scripts/bundle-claude-for-pages.mjs
 
-      - name: Verify Pages artifact (runtime + landing payload)
-        continue-on-error: true
-        shell: bash
+      - name: Verify landing page essentials
         run: |
-          set -euo pipefail
-          test -f docs/.nojekyll
           test -f docs/index.html
           test -f docs/js/v9-app.js
-          test -f docs/web/index.html
-          test -f docs/web/node-polyfills.js
-          test -f docs/web/oauth-bridge.html
-          test -f docs/napi-bridge/http-exports.js
-          test -f docs/dist/edgejs.js
-          test -f docs/dist/edgejs.wasm
-          test -f docs/dist/claude-code-cli.js
-          grep -qF '__V9_ANTHROPIC_FETCH_PROXY__' docs/web/node-polyfills.js
-          grep -qF 'anthropicProxyForCLIiframe' docs/js/v9-app.js
+          test -f docs/js/zoom.js
+          echo "Landing page verified"
 
       - uses: actions/configure-pages@v5
 
