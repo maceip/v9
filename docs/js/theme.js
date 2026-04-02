@@ -10,6 +10,9 @@ const THEMES = [
   { id: 'solarized-dark',   label: 'Solarized Dark' },
   { id: 'catppuccin',       label: 'Catppuccin Mocha' },
   { id: 'tokyo-night',      label: 'Tokyo Night' },
+  { id: 'dracula',          label: 'Dracula' },
+  { id: 'ember',            label: 'Ember' },
+  { id: 'gruvbox',          label: 'Gruvbox' },
   { id: 'lumon',            label: 'Lumon Severance' },
 ];
 
