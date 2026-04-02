@@ -1,4 +1,8 @@
 # Deploy static landing + full browser runtime (web + napi-bridge + wasm + Claude bundle) to GitHub Pages.
+#
+# If the job fails immediately with: "Branch … is not allowed to deploy to github-pages"
+# → Repository Settings → Environments → github-pages → Deployment branches:
+#    add `main` and `dev` (or "All branches"). Otherwise OIDC deploy is rejected and the live site stays stale.
 name: Deploy GitHub Pages
 
 on:

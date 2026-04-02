@@ -86,7 +86,7 @@ Legacy names `test:claude-contract:*` still point at the same commands during mi
 The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) on **`main`** / **`dev`**:
 
 1. **`npm ci`** — includes **`@anthropic-ai/claude-code`** (devDependency), used only as input to the pre-bundle step below.
-2. **`make configure`** / **`make build`** — produces **`dist/edgejs.{js,wasm}`**.
+2. **`make fetch`**, **`make configure`**, **`make build`** — produces **`dist/edgejs.{js,wasm}`**.
 3. **`scripts/prepare-github-pages.mjs`** — copies **`web/`** → **`docs/web/`**, **`napi-bridge/`** → **`docs/napi-bridge/`**, copies wasm into **`docs/dist/`**, rewrites **every** `*.html` import map from **`/napi-bridge/`** to **`../napi-bridge/`** (required for project Pages under **`/<repo>/`**), and writes **`docs/.nojekyll`** so GitHub serves static files as-is.
 4. **`scripts/bundle-claude-for-pages.mjs`** — esbuilds the vendor CLI with Node built-ins left **external** (resolved via the same import map). Output: **`docs/dist/claude-code-cli.js`** next to **`edgejs.*`**.
 
@@ -97,6 +97,8 @@ The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<rep
 Generated trees **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`**, and **`docs/.nojekyll`** are produced by the steps above (under **`docs/`** only what’s needed for deploy); **`docs/web/`** etc. remain gitignored per **`.gitignore`**. Local dry-run after a wasm build:
 
 `node scripts/prepare-github-pages.mjs && node scripts/bundle-claude-for-pages.mjs`
+
+**Deploy failing in ~3s with environment errors:** GitHub’s **`github-pages`** [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) can restrict which branches may deploy. In the repo: **Settings → Environments → `github-pages` → Deployment branches**, allow **`main`** and **`dev`** (or all branches). Until that matches `.github/workflows/pages.yml`, Actions will not publish a new site even though the workflow file and `docs/` build are correct.
 
 ## License / private
 
