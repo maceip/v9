@@ -22,11 +22,12 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters — snappy, organic with smooth deceleration
+    // Spring parameters — snappy pull, crisp landing
     // Higher stiffness = faster pull, lower damping = more organic settle
-    this.stiffness = 0.055;
-    this.damping = 0.80;
-    this.threshold = 0.001;
+    // Higher threshold = snap to final position sooner (avoids creeping tail)
+    this.stiffness = 0.07;
+    this.damping = 0.78;
+    this.threshold = 0.004;
 
     // State — read idle params from responsive breakpoints
     this._shrink = 0; // additional scale reduction after dismissals

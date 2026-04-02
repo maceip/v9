@@ -1,48 +1,56 @@
 /**
- * Icon management — parallax floating background icons.
- * Icons are already placed in HTML; this module adds subtle parallax
- * movement on mouse move for the background icons.
+ * Icon management — smooth floating + parallax for background icons.
+ * All motion is driven by a single rAF loop with lerped values to
+ * prevent jitter from CSS animation / layout conflicts.
  */
 
 export function initIcons() {
   const bgIcons = document.querySelectorAll('.bg-icon');
   if (!bgIcons.length) return;
 
-  // Assign random depths for parallax
-  const depths = Array.from(bgIcons).map(() => 0.3 + Math.random() * 0.7);
-
-  // Gentle floating animation (CSS keyframes injected once)
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes iconFloat {
-      0%, 100% { transform: translateY(0px) rotate(0deg); }
-      50% { transform: translateY(-6px) rotate(2deg); }
-    }
-  `;
-  document.head.appendChild(style);
-
-  bgIcons.forEach((icon, i) => {
-    const dur = 4 + Math.random() * 4;
-    const delay = Math.random() * -dur;
-    icon.style.animation = `iconFloat ${dur}s ease-in-out ${delay}s infinite`;
+  const icons = Array.from(bgIcons).map((el, i) => {
+    const depth = 0.3 + Math.random() * 0.7;
+    const floatDur = 4 + Math.random() * 4;
+    const floatPhase = Math.random() * Math.PI * 2;
+    return { el, depth, floatDur, floatPhase, hovered: false };
   });
 
-  // Mouse parallax
-  let mx = 0, my = 0;
+  // Track hover state per icon (so we don't fight the CSS hover transform)
+  icons.forEach(icon => {
+    icon.el.addEventListener('mouseenter', () => { icon.hovered = true; });
+    icon.el.addEventListener('mouseleave', () => { icon.hovered = false; });
+  });
+
+  // Smoothed mouse position (lerped to prevent jitter)
+  let targetMx = 0, targetMy = 0;
+  let smoothMx = 0, smoothMy = 0;
+
   document.addEventListener('mousemove', (e) => {
-    mx = (e.clientX / window.innerWidth - 0.5) * 2;
-    my = (e.clientY / window.innerHeight - 0.5) * 2;
+    targetMx = (e.clientX / window.innerWidth - 0.5) * 2;
+    targetMy = (e.clientY / window.innerHeight - 0.5) * 2;
   });
 
   function tick() {
     requestAnimationFrame(tick);
-    bgIcons.forEach((icon, i) => {
-      const d = depths[i];
-      const px = mx * d * 12;
-      const py = my * d * 12;
-      // Combine parallax with existing float animation via CSS custom property
-      icon.style.marginLeft = `${px}px`;
-      icon.style.marginTop = `${py}px`;
+
+    // Lerp mouse for smooth movement (0.08 = gentle lag)
+    smoothMx += (targetMx - smoothMx) * 0.08;
+    smoothMy += (targetMy - smoothMy) * 0.08;
+
+    const t = performance.now() / 1000;
+
+    icons.forEach(icon => {
+      if (icon.hovered) return; // let CSS :hover handle transform
+
+      const d = icon.depth;
+      // Parallax
+      const px = smoothMx * d * 12;
+      const py = smoothMy * d * 12;
+      // Gentle float (sine wave)
+      const floatY = Math.sin(t / icon.floatDur * Math.PI * 2 + icon.floatPhase) * 6;
+      const floatR = Math.sin(t / icon.floatDur * Math.PI * 2 + icon.floatPhase + 0.5) * 2;
+
+      icon.el.style.transform = `translate(${px}px, ${py + floatY}px) rotate(${floatR}deg)`;
     });
   }
   tick();
