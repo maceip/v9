@@ -19,12 +19,12 @@ Optional: **Chromium** (integration tests), **Bun** (faster contract bundling).
 
 ```bash
 git clone <repo-url> && cd v9
-make setup                        # installs emsdk 3.1.64 + npm ci
+make setup                        # installs emsdk 4.0.23 + npm ci
 source ~/emsdk/emsdk_env.sh       # activate Emscripten in your shell
 make all                          # fetch → configure → build → test
 ```
 
-`make setup` clones the [Emscripten SDK](https://github.com/emscripten-core/emsdk) to `~/emsdk` and installs version **3.1.64** (matching CI). Override with:
+`make setup` clones the [Emscripten SDK](https://github.com/emscripten-core/emsdk) to `~/emsdk` and installs version **4.0.23** (matching CI). Override with:
 
 ```bash
 EMSDK_VERSION=3.1.70 make setup-emsdk     # different version
@@ -44,7 +44,7 @@ source ~/emsdk/emsdk_env.sh
 Or manual:
 ```bash
 git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
-cd ~/emsdk && ./emsdk install 3.1.64 && ./emsdk activate 3.1.64
+cd ~/emsdk && ./emsdk install 4.0.23 && ./emsdk activate 4.0.23
 source ~/emsdk/emsdk_env.sh
 ```
 
@@ -93,7 +93,7 @@ Run `make help` for the full list. Key targets:
 | `make lint` / `make size` | Lint JS, report artifact sizes |
 | `make clean` / `make distclean` | Remove build outputs / + sources |
 
-Key variables: `EMSDK_VERSION` (default `3.1.64`), `BUILD_TYPE` (`Release`/`Debug`), `JOBS` (parallel jobs).
+Key variables: `EMSDK_VERSION` (default `4.0.23`), `BUILD_TYPE` (`Release`/`Debug`), `JOBS` (parallel jobs).
 
 ## Alternative: shell script
 
@@ -117,15 +117,7 @@ EdgeJS C++ (upstream)  ──→  patches/edgejs-emscripten.patch
 
 ## Troubleshooting
 
-**`wasm-ld` SIGSEGV during link step** — Known LLD 19 bug (`lld::wasm::ImportSection::addImport`). Affects emsdk 3.1.64 on some hosts. Fix:
-
-```bash
-EMSDK_VERSION=tot make setup-emsdk    # installs latest emsdk with fixed LLD
-source ~/emsdk/emsdk_env.sh
-make clean && make configure && make build
-```
-
-CI pins 3.1.64; use `tot` locally if your machine hits this. See `docs/BUILD_TOOLCHAIN.md` for more troubleshooting.
+See [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) for extended troubleshooting (Docker, S3 artifacts, CI parity, Windows).
 
 ## Next steps
 

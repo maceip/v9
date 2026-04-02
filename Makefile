@@ -2,7 +2,6 @@
 # Works in Git Bash / MSYS2 on Windows and native Linux/macOS
 #
 # From-scratch:  make setup && source ~/emsdk/emsdk_env.sh && make all
-# If wasm-ld crashes (SIGSEGV / LLD 19 bug): EMSDK_VERSION=tot make setup-emsdk
 
 # ---- Shell Detection ----
 # Always use bash — Git Bash on Windows, /bin/bash elsewhere.
@@ -25,7 +24,7 @@ OUTPUT_DIR := $(ROOT_DIR)/dist
 
 # ---- Emscripten ----
 # Resolve EMSDK_DIR. On Windows, HOME may be empty in Make, so fall back to USERPROFILE.
-EMSDK_VERSION ?= 3.1.64
+EMSDK_VERSION ?= 4.0.23
 
 ifdef EMSDK
     EMSDK_DIR := $(subst \,/,$(EMSDK))

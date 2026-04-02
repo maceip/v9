@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   - Git, CMake, Python 3, GNU make, bash
-#   - Emscripten SDK 3.1.64 activated: source "$EMSDK/emsdk_env.sh"
+#   - Emscripten SDK 4.0.23 activated: source "$EMSDK/emsdk_env.sh"
 #
 # Usage:
 #   ./build-emscripten.sh          # Release

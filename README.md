@@ -7,7 +7,7 @@ Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-i
 ## Quick start
 
 ```bash
-make setup                        # one-time: install Emscripten 3.1.64 + npm deps
+make setup                        # one-time: install Emscripten 4.0.23 + npm deps
 source ~/emsdk/emsdk_env.sh       # activate Emscripten in your shell
 make all                          # fetch → configure → build → test
 ```
