@@ -287,10 +287,11 @@ function addDismissedTile() {
     if (state === 'IDLE') handleActivate(new Event('click'));
   });
   dismissedTray.appendChild(tile);
-  tile.style.transform = 'translateY(60px) scale(0.5)';
+  // Animate in (scale pop in navbar)
+  tile.style.transform = 'scale(0.3)';
   tile.style.opacity = '0';
   requestAnimationFrame(() => {
-    tile.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease';
+    tile.style.transition = 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease';
     tile.style.transform = '';
     tile.style.opacity = '';
   });
