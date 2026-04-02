@@ -61,15 +61,15 @@ Most blockers for **existing** Node repos are:
 Ordered so each step builds toward “run a real `package.json` repo” without pretending parity where it does not exist.
 
 1. **`node_modules` on MEMFS** — Prove a real tree (copy or unpack) and correct path access from the runtime. **Done (baseline):** `tests/helpers/seed-memfs-from-host.mjs` materializes host paths into `runtime.fs`; `npm run test:memfs-node-modules` checks a real `node_modules/fflate` tree byte-for-byte in MEMFS.
-2. **Minimal resolver** — `main` + simple `exports` object forms; expand to patterns and `imports` later.
-3. **CJS loader** — `require`, cache, `__dirname` / `__filename`, JSON requires as needed by the reference app.
-4. **ESM loader + CJS interop** — Dynamic `import()`, `import.meta.url`, extension rules aligned with on-disk layout.
-5. **Process lifecycle contract** — `argv`, `cwd`, `env`, `exitCode`, `exit`, stdio behavior; documented signal semantics.
-6. **Entrypoint contract** — `node path/to/file.js [args]` equivalence via one host API shared by all substrates.
-7. **Native addon policy** — Structured errors, optional host allowlist or stub table; no opaque breaks.
-8. **Pre-bundle escape hatch** — Document and automate app graph bundling when interpretive resolution is insufficient.
-9. **Reference app CI** — Install (where allowed) → seed MEMFS → run documented entry; track blockers as issues.
-10. **Test execution milestone** — Start with **`node --test`** or the smallest viable runner; add others after subprocess/spawn story is clear.
+2. **Minimal resolver** — `main` + simple `exports` object forms; expand to patterns and `imports` later. **Done (baseline):** `napi-bridge/package-resolve.js` + `_resolveNodeModuleBare` in `napi-bridge/index.js`; nested `node`/`require`/`import` targets (common npm shapes); `npm run test:memfs-exports`.
+3. **CJS loader** — `require`, cache, `__dirname` / `__filename`, JSON requires as needed by the reference app. **Done (baseline):** existing MEMFS `require` + `module-shim` `createRequire.resolve` delegating to `_memfsRequire.resolve(id, dir)`; covered by `test:memfs-reference-app` / `test:memfs-exports`.
+4. **ESM loader + CJS interop** — Dynamic `import()`, `import.meta.url`, extension rules aligned with on-disk layout. **Done (interpretive bridge):** esbuild transpile + `import.meta.url` define + MEMFS `import()` via `globalThis.__memfsDynamicImport` (pending-import drain before run completes); **limits:** no top-level `await` in entries, no circular dynamic imports, `import.meta` only what esbuild defines. Tests: `npm run test:memfs-esm-entry`, `npm run test:memfs-import-meta-dynamic`.
+5. **Process lifecycle contract** — `argv`, `cwd`, `env`, `exitCode`, `exit`, stdio behavior; documented signal semantics. **Done (baseline):** `docs/PROCESS_LIFECYCLE.md` + bridge `process` stubs read `processBridge` `argv`/`env`; `npm run test:run-node-entry` checks argv propagation.
+6. **Entrypoint contract** — `node path/to/file.js [args]` equivalence via one host API shared by all substrates. **Done (baseline):** `runtime.runNodeEntry({ entry, cwd, argv, argv0, env })` and `import { runNodeEntry } from '@aspect/v9-edgejs-browser/napi-bridge/run-in-tab'` (`napi-bridge/run-in-tab.mjs`).
+7. **Native addon policy** — Structured errors, optional host allowlist or stub table; no opaque breaks. **Done (baseline):** `require` throws `ERR_DLOPEN_FAILED` for `*.node`; `npm run test:native-addon-reject`.
+8. **Pre-bundle escape hatch** — Document and automate app graph bundling when interpretive resolution is insufficient. **Done (baseline):** `scripts/bundle-app-graph.mjs` (esbuild `--entry` / `--outfile`); `npm run test:bundle-app-graph`; see roadmap “Pre-bundle path” above.
+9. **Reference app CI** — Install (where allowed) → seed MEMFS → run documented entry; track blockers as issues. **Done:** `npm run test:memfs-reference-app` (host `fflate` → MEMFS → `require('fflate')` + `gzipSync`); runs in `test:integration` / `make test-integration`.
+10. **Test execution milestone** — Start with **`node --test`** or the smallest viable runner; add others after subprocess/spawn story is clear. **Done:** host gate `npm run test:node-test-runner` (`node --test` on `tests/fixtures/node-test-example/parity.test.mjs`); in-tab gate `npm run test:memfs-node-test` (minimal `node:test` stub + ESM entry). Full Node test runner parity is explicitly out of scope for the stub — see `docs/PROCESS_LIFECYCLE.md`.
 
 ---
 
@@ -77,6 +77,19 @@ Ordered so each step builds toward “run a real `package.json` repo” without 
 
 - **Two substrates** is an implementation detail for maintainers, not a choice authors should have to make for day-to-day development.
 - **One npm test command** for the repo should remain the **unified dual gate**; avoid documentation that implies validating only one substrate for “release quality.”
+
+### Testing matrix (what proves what)
+
+| Command / target | Chromium (real tab) | Node hosts Wasm + MEMFS | Same `in-tab-api-contract` suite | MEMFS roadmap / resolver / `node:test` slices |
+|------------------|----------------------|---------------------------|-----------------------------------|-----------------------------------------------|
+| `npm run test:nodejs-in-tab-contract` | Yes (Playwright + `web/nodejs-in-tab-contract.html`) | Yes (bundled suite in MEMFS + `runFileAsync`) | **Yes** — both phases | No |
+| `npm run test:integration` | **Yes** (includes unified contract) + browser smoke | Yes | **Yes** (via unified contract) | **Yes** — seed, exports, ESM, stub, host `node --test`, etc. |
+| `npm run test:memfs-*` (individual) | No | Yes | No | **Subset** — see script names in `package.json` |
+| `npm run test:in-tab-api-contract:bridge` | No | Yes (Node runs bridge target **without** unified wrapper) | Yes (single target) | No |
+
+**Release-quality bar for substrate alignment:** run `npm run test:nodejs-in-tab-contract` (or full `npm run test:integration`). Running only MEMFS roadmap tests validates the resolver and glue but **does not** prove every contract check in **headless Chromium**.
+
+**Gaps (still true):** `exports` patterns / `imports` field, full host `node:test` semantics in-tab, and anything not covered by a file in `tests/conformance/`. Those are **product** gaps, not “the wrong test command.”
 
 ---
 

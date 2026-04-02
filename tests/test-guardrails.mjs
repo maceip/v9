@@ -69,5 +69,19 @@ test('integration/nightly test paths enforce strict import mode', () => {
     'Makefile nightly tier must enable strict import mode');
 });
 
+test('integration tier runs unified Chromium + Wasm contract gate', () => {
+  const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+  const cmd = String(pkg.scripts?.['test:integration'] || '');
+  assert(
+    cmd.includes('test:nodejs-in-tab-contract'),
+    'package.json test:integration must include npm run test:nodejs-in-tab-contract',
+  );
+  const makefile = readFileSync(join(rootDir, 'Makefile'), 'utf8');
+  assert(
+    makefile.includes('test:nodejs-in-tab-contract'),
+    'Makefile test-integration must invoke the unified contract (test:nodejs-in-tab-contract)',
+  );
+});
+
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
 process.exit(failed > 0 ? 1 : 0);

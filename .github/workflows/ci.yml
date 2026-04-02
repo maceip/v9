@@ -60,6 +60,16 @@ jobs:
           make configure
           make build
 
+      - name: Upload Wasm build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgejs-wasm-${{ github.sha }}
+          path: |
+            dist/edgejs.wasm
+            dist/edgejs.js
+            build/edge
+
       - name: Integration tests
         run: |
           source "$EMSDK/emsdk_env.sh"

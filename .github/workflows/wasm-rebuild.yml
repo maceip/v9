@@ -1,0 +1,40 @@
+# Standalone Wasm runtime rebuild + artifacts (no npm test tier).
+# Use from Actions → "Wasm runtime rebuild" → Run workflow when you only need binaries.
+name: Wasm runtime rebuild
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wasm:
+    name: Emscripten build + artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+
+      - name: Fetch, configure, build
+        run: |
+          set -euxo pipefail
+          source "$EMSDK/emsdk_env.sh"
+          emcc --version | head -1
+          make fetch
+          make configure
+          make build
+          test -f dist/edgejs.wasm
+          test -f dist/edgejs.js
+          test -f build/edge
+
+      - name: Upload Wasm build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgejs-wasm-${{ github.sha }}
+          path: |
+            dist/edgejs.wasm
+            dist/edgejs.js
+            build/edge

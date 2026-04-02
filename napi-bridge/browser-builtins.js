@@ -1212,6 +1212,7 @@ import inspectorModule from './inspector.js';
 import nodePtyShim from './node-pty-shim.js';
 import diagnosticsChannelModule from './diagnostics-channel.js';
 import undiciStub from './undici-stub.js';
+import nodeTestMinimal from './node-test-minimal.js';
 
 export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
   // Build fs module with promises sub-object for node:fs/promises
@@ -1260,6 +1261,7 @@ export function registerBrowserBuiltins(edgeInstance, overrides = {}) {
     'inspector': inspectorModule,
     'inspector/promises': inspectorModule,
     'diagnostics_channel': diagnosticsChannelModule,
+    'test': nodeTestMinimal,
 
     'stream/promises': { pipeline: (...args) => Promise.resolve(), finished: (...args) => Promise.resolve() },
     'path/win32': { ...pathBridge, default: pathBridge },

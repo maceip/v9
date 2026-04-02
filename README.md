@@ -8,12 +8,14 @@ Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-i
 
 ```bash
 npm install
-# Build EdgeJS wasm/js (toolchain-dependent):
-# npm run build   # or make / build-emscripten per Makefile
+# Build EdgeJS wasm/js (Emscripten 3.1.64 + make) — see docs/BUILD_TOOLCHAIN.md
+# npm run build
 
 # Dev server (static + optional API proxy):
 node scripts/dev-server.mjs
 ```
+
+**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). GitHub Actions: **“Wasm runtime rebuild”** for artifacts only.
 
 Open the URL printed by the dev server (default terminal UI):
 
@@ -35,7 +37,7 @@ npm run test:nodejs-in-tab-contract
 
 | Artifact | How produced | Role |
 |----------|------------|------|
-| `edgejs.wasm`, `edgejs.js` | `npm run build` / `make` | Wasm runtime loaded by the bridge |
+| `edgejs.wasm`, `edgejs.js`, `build/edge` | `npm run build` (wraps `make fetch configure build`) | Wasm runtime + loader stub; details in `docs/BUILD_TOOLCHAIN.md` |
 | `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS (`esbuild`) |
 | `in-tab-api-contract.js` | `npm run build:in-tab-api-contract` (**Bun**) | Contract suite as ESM bundle (optional) |
 | `app-bundle.js` | Your esbuild/webpack step | Example default for `?bundle=` |

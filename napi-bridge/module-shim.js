@@ -73,9 +73,11 @@ export function createRequire(filename) {
   }
 
   localRequire.resolve = (id) => {
-    // Strip node: prefix
     const name = id.startsWith('node:') ? id.slice(5) : id;
     if (_registeredModules.includes(name)) return name;
+    if (_memfsRequire && typeof _memfsRequire.resolve === 'function') {
+      return _memfsRequire.resolve(id, dir);
+    }
     return id;
   };
 

@@ -3350,7 +3350,207 @@ export async function initEdgeJS(options = {}) {
 
   // Use canonical path resolution from memfs
   const { normalizePath: _normPath, resolvePath: _resolvePath } = await import('./memfs.js');
+  const {
+    parsePackageSpecifier,
+    resolvePackageExportsMappingFromPkg,
+  } = await import('./package-resolve.js');
 
+  function _packageJsonTypeModuleForPath(absFile) {
+    let dir = absFile.includes('/') ? absFile.substring(0, absFile.lastIndexOf('/')) || '/' : '/';
+    const seen = new Set();
+    while (!seen.has(dir)) {
+      seen.add(dir);
+      try {
+        const pj = _normPath(dir === '/' ? '/package.json' : `${dir}/package.json`);
+        const raw = _sharedBridgeFs.readFileSync(pj, 'utf8');
+        return JSON.parse(raw).type === 'module';
+      } catch {
+        /* missing or invalid */
+      }
+      if (dir === '/' || dir === '') return false;
+      const slash = dir.lastIndexOf('/');
+      dir = slash <= 0 ? '/' : dir.substring(0, slash);
+    }
+    return false;
+  }
+
+  function _needsEsmTranspile(scriptPath, source) {
+    const lower = scriptPath.toLowerCase();
+    if (lower.endsWith('.mjs') || lower.endsWith('.mts')) return true;
+    if (lower.endsWith('.cjs')) return false;
+    if (lower.endsWith('.js') && _packageJsonTypeModuleForPath(scriptPath)) return true;
+    const s = source.trimStart();
+    if (/^import\s+[\s*{]/.test(s) || /^export\s+/.test(s)) return true;
+    return false;
+  }
+
+  function _memfsFileUrl(absPath) {
+    const p = absPath.startsWith('/') ? absPath : `/${absPath}`;
+    return `file://${p}`;
+  }
+
+  function _cjsExportsToImportNamespace(exp) {
+    if (exp == null || typeof exp !== 'object') return { default: exp };
+    if (exp.__esModule) return exp;
+    return { ...exp, default: exp.default !== undefined ? exp.default : exp };
+  }
+
+  const _esmImportDirStack = [];
+  const _dynamicImportPromises = new Map();
+  const _dynamicImportLoading = new Set();
+  let _pendingImportsForRun = null;
+
+  async function _memfsDynamicImport(specifier) {
+    const traceWork = (async () => {
+      if (typeof specifier !== 'string') {
+        throw new TypeError('dynamic import specifier must be a string');
+      }
+      const baseDir = _esmImportDirStack.length
+        ? _esmImportDirStack[_esmImportDirStack.length - 1]
+        : _sharedProcessBridge.cwd();
+
+      const resolved = _resolveModule(specifier, baseDir);
+      if (!resolved) {
+        const err = new Error(`Cannot find module '${specifier}'`);
+        err.code = 'ERR_MODULE_NOT_FOUND';
+        throw err;
+      }
+      if (resolved.type === 'builtin') {
+        return _cjsExportsToImportNamespace(resolved.exports);
+      }
+
+      const abs = resolved.path;
+      if (_dynamicImportPromises.has(abs)) {
+        return await _dynamicImportPromises.get(abs);
+      }
+      if (abs.endsWith('.node')) {
+        const e = new Error(`Cannot load native module '${abs}': native addons (.node) are not supported in-tab`);
+        e.code = 'ERR_DLOPEN_FAILED';
+        throw e;
+      }
+
+      const promise = (async () => {
+        if (abs.endsWith('.json')) {
+          return { default: JSON.parse(_sharedBridgeFs.readFileSync(abs, 'utf8')) };
+        }
+        if (_dynamicImportLoading.has(abs)) {
+          const err = new Error(`Unsupported circular dynamic import while loading '${abs}'`);
+          err.code = 'ERR_UNSUPPORTED_NODE_MODULES_TYPE';
+          throw err;
+        }
+        _dynamicImportLoading.add(abs);
+        const zDir = abs.includes('/') ? abs.substring(0, abs.lastIndexOf('/')) || '/' : '/';
+        _esmImportDirStack.push(zDir);
+        try {
+          let zSrc = _sharedBridgeFs.readFileSync(abs, 'utf8');
+          if (zSrc.startsWith('#!')) zSrc = zSrc.substring(zSrc.indexOf('\n') + 1);
+
+          if (_needsEsmTranspile(abs, zSrc)) {
+            const esbuild = await import('esbuild');
+            zSrc = esbuild.transformSync(zSrc, {
+              loader: 'js',
+              format: 'cjs',
+              platform: 'neutral',
+              target: 'es2022',
+              define: { 'import.meta.url': JSON.stringify(_memfsFileUrl(abs)) },
+            }).code;
+            zSrc = zSrc.replace(/\bimport\s*\(/g, 'globalThis.__memfsDynamicImport(');
+          } else if (/\bimport\s*\(/.test(zSrc)) {
+            zSrc = zSrc.replace(/\bimport\s*\(/g, 'globalThis.__memfsDynamicImport(');
+          }
+
+          const moduleObj = { exports: {} };
+          const zfn = new Function(
+            'require', 'module', 'exports', '__filename', '__dirname',
+            zSrc,
+          );
+          zfn(
+            (dep) => _memfsRequire(dep, zDir),
+            moduleObj,
+            moduleObj.exports,
+            abs,
+            zDir,
+          );
+          return _cjsExportsToImportNamespace(moduleObj.exports);
+        } finally {
+          _esmImportDirStack.pop();
+          _dynamicImportLoading.delete(abs);
+        }
+      })();
+
+      _dynamicImportPromises.set(abs, promise);
+      try {
+        return await promise;
+      } catch (e) {
+        _dynamicImportPromises.delete(abs);
+        throw e;
+      }
+    })();
+
+    if (_pendingImportsForRun) _pendingImportsForRun.add(traceWork);
+    try {
+      return await traceWork;
+    } finally {
+      if (_pendingImportsForRun) _pendingImportsForRun.delete(traceWork);
+    }
+  }
+
+  function _resolveNodeModuleBare(name, fromDir) {
+    const parsed = parsePackageSpecifier(name);
+    if (!parsed) return null;
+    const { packageName, subpath } = parsed;
+    const conditions = ['node', 'require', 'default'];
+
+    let dir = fromDir;
+    while (dir.length > 0) {
+      const candidate = _normPath(`${dir}/node_modules/${packageName}`);
+
+      let pkg = null;
+      try {
+        const pkgSrc = _sharedBridgeFs.readFileSync(`${candidate}/package.json`, 'utf8');
+        pkg = JSON.parse(pkgSrc);
+      } catch { /* no package.json */ }
+
+      if (pkg?.exports != null) {
+        const rel = resolvePackageExportsMappingFromPkg(pkg, subpath, conditions);
+        if (rel) {
+          const full = _normPath(`${candidate}/${String(rel).replace(/^\.\//, '')}`);
+          const r = _tryResolveFile(full);
+          if (r) return r;
+        }
+        if (subpath !== '.') {
+          const idx = dir.lastIndexOf('/');
+          if (idx <= 0) break;
+          dir = dir.substring(0, idx);
+          continue;
+        }
+      }
+
+      if (subpath === '.') {
+        if (pkg) {
+          if (!pkg.exports) {
+            const main = pkg.module || pkg.main || 'index.js';
+            const mr = _tryResolveFile(_normPath(`${candidate}/${String(main).replace(/^\.\//, '')}`));
+            if (mr) return mr;
+          }
+          const direct = _tryResolveFile(candidate);
+          if (direct) return direct;
+        } else {
+          const direct = _tryResolveFile(candidate);
+          if (direct) return direct;
+        }
+      } else if (!pkg?.exports) {
+        const legacyRel = subpath.replace(/^\.\//, '');
+        const r = _tryResolveFile(_normPath(`${candidate}/${legacyRel}`));
+        if (r) return r;
+      }
+
+      const idx = dir.lastIndexOf('/');
+      if (idx <= 0) break;
+      dir = dir.substring(0, idx);
+    }
+    return null;
+  }
 
   function _resolveModule(name, fromDir) {
     const builtin = _builtinOverrides.get(name);
@@ -3371,24 +3571,7 @@ export async function initEdgeJS(options = {}) {
       const base = name.startsWith('/') ? name : fromDir + '/' + name;
       return _tryResolveFile(_normPath(base));
     }
-    // node_modules lookup — walk up from fromDir
-    let dir = fromDir;
-    while (dir.length > 0) {
-      const candidate = _normPath(dir + '/node_modules/' + name);
-      const r = _tryResolveFile(candidate);
-      if (r) return r;
-      try {
-        const pkgSrc = _sharedBridgeFs.readFileSync(candidate + '/package.json', 'utf8');
-        const pkg = JSON.parse(pkgSrc);
-        const main = pkg.main || pkg.module || 'index.js';
-        const mr = _tryResolveFile(_normPath(candidate + '/' + main));
-        if (mr) return mr;
-      } catch { /* no package.json */ }
-      const idx = dir.lastIndexOf('/');
-      if (idx <= 0) break;
-      dir = dir.substring(0, idx);
-    }
-    return null;
+    return _resolveNodeModuleBare(name, fromDir);
   }
 
   function _tryResolveFile(absPath) {
@@ -3423,6 +3606,13 @@ export async function initEdgeJS(options = {}) {
     if (resolved.type === 'builtin') return resolved.exports;
 
     const filePath = resolved.path;
+    if (filePath.endsWith('.node')) {
+      const e = new Error(
+        `Cannot load native module '${filePath}': native addons (.node) are not supported in-tab`,
+      );
+      e.code = 'ERR_DLOPEN_FAILED';
+      throw e;
+    }
     if (_moduleCache.has(filePath)) return _moduleCache.get(filePath).exports;
 
     const source = _sharedBridgeFs.readFileSync(filePath, 'utf8');
@@ -3470,8 +3660,8 @@ export async function initEdgeJS(options = {}) {
   // M9: require.main and require.cache for compatibility
   _memfsRequire.main = null;
   _memfsRequire.cache = _moduleCache;
-  _memfsRequire.resolve = (name) => {
-    const r = _resolveModule(name, _sharedProcessBridge.cwd());
+  _memfsRequire.resolve = (name, fromDir = _sharedProcessBridge.cwd()) => {
+    const r = _resolveModule(name, fromDir);
     if (!r || r.type === 'builtin') return name;
     return r.path;
   };
@@ -3510,6 +3700,39 @@ export async function initEdgeJS(options = {}) {
 
       async runFileAsync(path) {
         return this.runFile(path);
+      },
+
+      async runNodeEntry(opts = {}) {
+        const entry = opts.entry;
+        if (entry == null || entry === '') {
+          throw new Error('runNodeEntry: options.entry is required');
+        }
+        const cwd = opts.cwd ?? '/workspace';
+        try {
+          _sharedBridgeFs.mkdirSync(cwd, { recursive: true });
+        } catch {
+          /* exists */
+        }
+        _sharedProcessBridge.chdir(cwd);
+        const argv0 = opts.argv0 ?? 'node';
+        const rest = Array.isArray(opts.argv) ? opts.argv.map(String) : [];
+        _sharedProcessBridge.argv = [argv0, String(entry), ...rest];
+        if (opts.env && typeof opts.env === 'object') {
+          for (const [k, v] of Object.entries(opts.env)) {
+            _sharedProcessBridge.env[k] = v;
+          }
+        }
+        try {
+          _memfsRequire(String(entry), _sharedProcessBridge.cwd());
+          return { status: 0, stdout: [], stderr: [] };
+        } catch (err) {
+          try {
+            _sharedProcessBridge.stderr.write(`${err.stack || err.message}\n`);
+          } catch {
+            /* ignore */
+          }
+          return { status: 1, stdout: [], stderr: [err.stack || err.message] };
+        }
       },
 
       execute(scriptPath, opts = {}) {
@@ -3840,6 +4063,16 @@ export async function initEdgeJS(options = {}) {
       source = source.substring(source.indexOf('\n') + 1);
     }
 
+    if (_needsEsmTranspile(scriptPath, source)) {
+      return {
+        status: 1,
+        stdout: [],
+        stderr: [
+          `ESM syntax in ${scriptPath} requires async execution (runFileAsync / executeCliAsync / runNodeEntry).`,
+        ],
+      };
+    }
+
     // Build a Node-like execution context
     const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
     const moduleObj = { exports: {}, id: scriptPath, filename: scriptPath, loaded: false };
@@ -3881,8 +4114,27 @@ export async function initEdgeJS(options = {}) {
         },
       },
       {
-        argv: ['edge', scriptPath],
-        env: { HOME: '/home/user', PATH: '/usr/bin:/bin', NODE_ENV: 'production', ...options.env },
+        argv: Array.isArray(_sharedProcessBridge.argv) && _sharedProcessBridge.argv.length
+          ? [..._sharedProcessBridge.argv]
+          : ['node', scriptPath],
+        env: (() => {
+          const base = {
+            HOME: '/home/user',
+            PATH: '/usr/bin:/bin',
+            NODE_ENV: 'production',
+          };
+          const be = _sharedProcessBridge.env;
+          if (be && typeof be === 'object') {
+            for (const k of Object.keys(be)) {
+              try {
+                base[k] = be[k];
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+          return { ...base, ...(options.env || {}) };
+        })(),
         cwd: () => _sharedMemfs.cwd?.() || '/',
         exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
         stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
@@ -3943,7 +4195,33 @@ export async function initEdgeJS(options = {}) {
       source = source.substring(source.indexOf('\n') + 1);
     }
 
+    const importMetaUrl = _memfsFileUrl(scriptPath);
+    if (_needsEsmTranspile(scriptPath, source)) {
+      try {
+        const esbuild = await import('esbuild');
+        source = esbuild.transformSync(source, {
+          loader: 'js',
+          format: 'cjs',
+          platform: 'neutral',
+          target: 'es2022',
+          define: { 'import.meta.url': JSON.stringify(importMetaUrl) },
+        }).code;
+        source = source.replace(/\bimport\s*\(/g, 'globalThis.__memfsDynamicImport(');
+      } catch (err) {
+        return {
+          status: 1,
+          stdout: [],
+          stderr: [`ESM transpile failed for ${scriptPath}: ${err.message}`],
+        };
+      }
+    } else if (/\bimport\s*\(/.test(source)) {
+      source = source.replace(/\bimport\s*\(/g, 'globalThis.__memfsDynamicImport(');
+    }
+
     const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
+    _esmImportDirStack.length = 0;
+    _esmImportDirStack.push(dirname);
+    _pendingImportsForRun = new Set();
     const moduleObj = { exports: {}, id: scriptPath, filename: scriptPath, loaded: false };
 
     const contextKeys = ['require', 'module', 'exports', '__filename', '__dirname', 'console', 'process', 'Buffer', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'queueMicrotask', 'globalThis'];
@@ -3983,8 +4261,27 @@ export async function initEdgeJS(options = {}) {
         },
       },
       {
-        argv: ['edge', scriptPath],
-        env: { HOME: '/home/user', PATH: '/usr/bin:/bin', NODE_ENV: 'production', ...options.env },
+        argv: Array.isArray(_sharedProcessBridge.argv) && _sharedProcessBridge.argv.length
+          ? [..._sharedProcessBridge.argv]
+          : ['node', scriptPath],
+        env: (() => {
+          const base = {
+            HOME: '/home/user',
+            PATH: '/usr/bin:/bin',
+            NODE_ENV: 'production',
+          };
+          const be = _sharedProcessBridge.env;
+          if (be && typeof be === 'object') {
+            for (const k of Object.keys(be)) {
+              try {
+                base[k] = be[k];
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+          return { ...base, ...(options.env || {}) };
+        })(),
         cwd: () => _sharedMemfs.cwd?.() || '/',
         exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
         stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
@@ -4007,11 +4304,17 @@ export async function initEdgeJS(options = {}) {
       globalThis,
     ];
 
+    const prevDi = globalThis.__memfsDynamicImport;
+    globalThis.__memfsDynamicImport = _memfsDynamicImport;
     try {
       const fn = new Function(...contextKeys, source);
       const ret = fn(...contextVals);
       if (ret != null && typeof ret.then === 'function') {
         await ret;
+      }
+      for (;;) {
+        if (!_pendingImportsForRun || _pendingImportsForRun.size === 0) break;
+        await Promise.all([..._pendingImportsForRun]);
       }
       return { status: 0, stdout: stdoutLines, stderr: stderrLines };
     } catch (err) {
@@ -4021,6 +4324,10 @@ export async function initEdgeJS(options = {}) {
       stderrLines.push(err.stack || err.message);
       if (options.onStderr) options.onStderr(err.stack || err.message);
       return { status: 1, stdout: stdoutLines, stderr: stderrLines };
+    } finally {
+      _pendingImportsForRun = null;
+      if (prevDi === undefined) delete globalThis.__memfsDynamicImport;
+      else globalThis.__memfsDynamicImport = prevDi;
     }
   }
 
@@ -4061,6 +4368,29 @@ export async function initEdgeJS(options = {}) {
     }
 
     return { status: 1, stdout: [], stderr: ['No script specified'] };
+  }
+
+  async function runNodeEntry(opts = {}) {
+    const entry = opts.entry;
+    if (entry == null || entry === '') {
+      throw new Error('runNodeEntry: options.entry is required');
+    }
+    const cwd = opts.cwd ?? '/workspace';
+    try {
+      _sharedBridgeFs.mkdirSync(cwd, { recursive: true });
+    } catch {
+      /* exists */
+    }
+    _sharedProcessBridge.chdir(cwd);
+    const argv0 = opts.argv0 ?? 'node';
+    const rest = Array.isArray(opts.argv) ? opts.argv.map(String) : [];
+    _sharedProcessBridge.argv = [argv0, String(entry), ...rest];
+    if (opts.env && typeof opts.env === 'object') {
+      for (const [k, v] of Object.entries(opts.env)) {
+        _sharedProcessBridge.env[k] = v;
+      }
+    }
+    return executeCliAsync([String(entry)]);
   }
 
   function executeCli(args) {
@@ -4438,6 +4768,13 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
       const execution = await executeCliAsync([target]);
       return execution.status;
     },
+
+    /**
+     * Configure cwd/argv/env then run MEMFS entry like `node path/to/file.js [args]`.
+     * Uses the async JS bridge when Wasm main is unavailable.
+     * @returns {Promise<{status: number, stdout: string[], stderr: string[]}>}
+     */
+    runNodeEntry,
 
     /**
      * Execute a script with full control over injection and capture.

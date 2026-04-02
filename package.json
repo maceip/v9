@@ -8,6 +8,7 @@
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",
+    "./napi-bridge/run-in-tab": "./napi-bridge/run-in-tab.mjs",
     "./dist/edgejs.js": "./dist/edgejs.js"
   },
   "scripts": {
@@ -45,7 +46,16 @@
     "build:claude-contract:wasm": "npm run build:in-tab-api-contract:wasm",
     "test:claude-contract:wasm": "node tests/test-node-in-tab-contract.mjs",
     "test:memfs-node-modules": "node tests/test-memfs-node-modules-seed.mjs",
-    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
+    "test:memfs-exports": "node tests/test-package-exports-resolve.mjs",
+    "test:memfs-esm-entry": "node tests/test-memfs-esm-entry.mjs",
+    "test:native-addon-reject": "node tests/test-native-addon-reject.mjs",
+    "test:run-node-entry": "node tests/test-run-node-entry-argv.mjs",
+    "test:memfs-reference-app": "node tests/test-memfs-reference-app.mjs",
+    "test:node-test-runner": "node tests/test-node-test-runner.mjs",
+    "test:memfs-import-meta-dynamic": "node tests/test-memfs-import-meta-and-dynamic.mjs",
+    "test:memfs-node-test": "node tests/test-memfs-node-test-in-tab.mjs",
+    "test:bundle-app-graph": "node tests/test-bundle-app-graph.mjs",
+    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
     "build": "bash build-emscripten.sh",
     "build:debug": "bash build-emscripten.sh --debug",
     "lint": "make lint",
