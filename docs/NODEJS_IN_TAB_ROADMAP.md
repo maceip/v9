@@ -56,9 +56,9 @@ Most blockers for **existing** Node repos are:
 
 ---
 
-## Next ten developmental targets (sequenced for existing-app progress)
+## Completed baseline milestones (all verified in-repo)
 
-Ordered so each step builds toward “run a real `package.json` repo” without pretending parity where it does not exist.
+Ordered so each step built toward “run a real `package.json` repo” without pretending parity where it does not exist. All ten are **done** — referenced files and npm scripts confirmed present.
 
 1. **`node_modules` on MEMFS** — Prove a real tree (copy or unpack) and correct path access from the runtime. **Done (baseline):** `tests/helpers/seed-memfs-from-host.mjs` materializes host paths into `runtime.fs`; `npm run test:memfs-node-modules` checks a real `node_modules/fflate` tree byte-for-byte in MEMFS.
 2. **Minimal resolver** — `main` + simple `exports` object forms; expand to patterns and `imports` later. **Done (baseline):** `napi-bridge/package-resolve.js` + `_resolveNodeModuleBare` in `napi-bridge/index.js`; nested `node`/`require`/`import` targets (common npm shapes); `npm run test:memfs-exports`.
@@ -73,45 +73,29 @@ Ordered so each step builds toward “run a real `package.json` repo” without 
 
 ---
 
-## High impact, relatively low effort
+## Next ten developmental targets (building on the foundation)
 
-Work that sharpens **product truth** and **maintainability** on top of the baseline milestones above (resolver, MEMFS, unified gate). Not a second “ten done” list — these are **directional** until each is implemented and marked complete in-repo.
+Synthesized from prior “high impact / low effort” and “strategic” lists after merge cleanup. Ordered so each step builds on the foundation above. These are **directional** until each is implemented and marked complete in-repo.
 
 1. **One “Node surface” spec, two adapters** — Treat `napi-bridge` + the conformance suite as **the** contract; keep **browser** and **Wasm** as two adapters that must satisfy the **same** tests. The unified gate (`npm run test:nodejs-in-tab-contract`) already enforces alignment; the next step is making the **enumerated behaviors** (streams, HTTP, `child_process`, `worker_threads`, etc.) the **explicit product spec** and naming everything else around that.
 
-2. **Mechanical de‑Claude‑ing (no behavior change)** — Introduce **parallel neutral names**: `nodejs-in-tab-contract` artifacts, `NODEJS_IN_TAB_*` env vars, `dist/*` filenames where legacy ones remain, with **thin re-exports** or npm scripts so nothing breaks. Goal: lower cognitive load for contributors and users and match **general-purpose runtime** positioning.
+2. **Neutral runtime branding (mechanical de‑Claude‑ing)** — Introduce **parallel neutral names**: `nodejs-in-tab-contract` artifacts, `NODEJS_IN_TAB_*` env vars, `dist/*` filenames where legacy ones remain, with **thin re-exports** or npm scripts so nothing breaks. No behavior change — just lower cognitive load for contributors and users to match **general-purpose runtime** positioning. Keep deprecated aliases until a deliberate removal.
 
-3. **Import map generation (or one shared source)** — Today `web/index.html` and `web/nodejs-in-tab-contract.html` must stay in sync **by hand**. **Generate** the import map from a single JSON or JS module consumed by the dev server, contract HTML, and docs snippets, plus a CI guard so maps cannot drift silently.
+3. **Import map generation (one shared source)** — Today `web/index.html` and `web/nodejs-in-tab-contract.html` must stay in sync **by hand**. **Generate** the import map from a single JSON or JS module consumed by the dev server, contract HTML, and docs snippets, plus a CI **”maps must match”** guard so maps cannot drift silently.
 
-4. **Compatibility matrix as the homepage** — Maintain **one** table: built-in → **full / partial / stub / N/A / Wasm-only**, with links to tests (or an explicit **SKIP** with reason). Cheap to maintain if every row maps to a conformance case in `tests/conformance/`.
+4. **Authoritative compatibility matrix** — Maintain **one** table: built-in → **full / partial / stub / N/A / Wasm-only**, with links to tests (or an explicit **SKIP** with reason). Cheap to maintain if every row maps to a conformance case in `tests/conformance/`. This becomes the project's **homepage-level** artifact.
 
-5. **App bootstrap path** — Document and stabilize **one** supported way to run a third-party app: **entry file + MEMFS seed + env + optional pre-bundle**. A small **`runInTab({ root, entry, argv })`** (or equivalent) that hides EdgeJS/Wasm behind init/teardown is mostly glue and docs, but it clarifies adoption.
+5. **`runInTab` / host SDK (app bootstrap path)** — Document and stabilize **one** supported way to run a third-party app: **entry file + MEMFS seed + env + optional pre-bundle**. One documented API — `runInTab({ root, entry, argv })` or equivalent — covering init, FS layout, `argv`, `env`, stdio hooks, and teardown (building on `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`). Hides EdgeJS/Wasm behind init/teardown; clarifies adoption for embedders.
 
----
+6. **npm / app story** — Either a documented **bundle-first** path or MEMFS `node_modules` + **minimal resolver** (`package.json` `main` / `exports` only to start), aligned with the escape hatches above. Goal: a third-party app with dependencies can be loaded and run without manual intervention.
 
-## Ten strategic developmental targets (ordered to build on the foundation)
+7. **HTTP client/server parity** — Expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, etc.).
 
-Ordered **after** the baseline milestones in this document. These extend **branding**, **docs/spec surface**, **network & streams depth**, **debuggability**, and **security** — not the original “fflate / resolver / `node:test` stub” track.
+8. **Streams & backpressure** — Real apps often fail on subtle stream edge cases; invest where the suite still **skips** or **stubs**.
 
-1. **Neutral runtime branding** — names, env vars, default HTML and test entrypoints; keep deprecated aliases until a deliberate removal.
+9. **Child process & shell model** — Clear contract: what is **emulated**, what is **host-backed**, what is **unsupported** (complements `docs/PROCESS_LIFECYCLE.md` gaps).
 
-2. **Authoritative compatibility matrix** — tied to conformance cases (and explicit gaps).
-
-3. **Single generated import map** — consumed by `web/index.html`, contract HTML, and a **“maps must match”** CI check.
-
-4. **`runInTab` / host SDK** — one documented API: init, FS layout, `argv`, `env`, teardown (building on `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`).
-
-5. **npm / app story** — either a documented **bundle-first** path or MEMFS `node_modules` + **minimal resolver** (`package.json` `main` / `exports` only to start), aligned with the escape hatches above.
-
-6. **HTTP client/server parity** — expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, etc.).
-
-7. **Streams & backpressure** — real apps often fail on subtle stream edge cases; invest where the suite still **skips** or **stubs**.
-
-8. **Child process & shell model** — clear contract: what is **emulated**, what is **host-backed**, what is **unsupported** (complements `docs/PROCESS_LIFECYCLE.md` gaps).
-
-9. **Debuggability** — source maps, structured errors, optional logging bridge to the parent page; realistic inspect/trace for the Wasm path.
-
-10. **Security & capability model** — what arbitrary code may do in-tab; document for anyone **embedding** the runtime.
+10. **Debuggability & security** — Source maps, structured errors, optional logging bridge to the parent page; realistic inspect/trace for the Wasm path. Document the **capability model**: what arbitrary code may do in-tab, for anyone **embedding** the runtime.
 
 ### North star
 
