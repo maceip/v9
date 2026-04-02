@@ -22,11 +22,11 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters — slow, smooth, cinematic ease with minimal overshoot
-    // Low stiffness = slow pull, high damping = heavy/smooth feel
-    this.stiffness = 0.018;
-    this.damping = 0.88;
-    this.threshold = 0.0005;
+    // Spring parameters — snappy, organic with smooth deceleration
+    // Higher stiffness = faster pull, lower damping = more organic settle
+    this.stiffness = 0.055;
+    this.damping = 0.80;
+    this.threshold = 0.001;
 
     // State — read idle params from responsive breakpoints
     this._shrink = 0; // additional scale reduction after dismissals
@@ -40,6 +40,7 @@ export class ZoomController {
     this._running = false;
     this._raf = null;
     this._done = true;
+    this._direction = null; // 'in' or 'out'
 
     this._apply();
   }
@@ -54,6 +55,7 @@ export class ZoomController {
     this.target.scale = 1.0;
     this.target.y = 0;
     this._done = false;
+    this._direction = 'in';
     this._startLoop();
   }
 
@@ -64,7 +66,15 @@ export class ZoomController {
     this.idleY = idle.y + this._shrink * 10;
     this.target.scale = this.idleScale;
     this.target.y = this.idleY;
+    // Ensure current state is valid (swipe dismiss may have cleared element transform)
+    if (this.current.scale < this.idleScale) {
+      this.current.scale = 1.0;
+      this.current.y = 0;
+    }
+    this.velocity.scale = 0;
+    this.velocity.y = 0;
     this._done = false;
+    this._direction = 'out';
     this._startLoop();
   }
 
@@ -74,7 +84,7 @@ export class ZoomController {
   }
 
   _startLoop() {
-    if (this._running) return;
+    if (this._running) return; // already animating — target change is enough
     this._running = true;
     this._loop();
   }
@@ -97,7 +107,7 @@ export class ZoomController {
     const dY = Math.abs(this.target.y - this.current.y);
     const vMag = Math.abs(this.velocity.scale) + Math.abs(this.velocity.y);
 
-    this.onProgress(this.progress);
+    this.onProgress(this.progress, this._direction);
 
     if (dScale < this.threshold && dY < this.threshold && vMag < this.threshold) {
       this.current.scale = this.target.scale;
@@ -107,7 +117,7 @@ export class ZoomController {
       this._raf = null;
       if (!this._done) {
         this._done = true;
-        this.onComplete();
+        this.onComplete(this._direction);
       }
     }
 
