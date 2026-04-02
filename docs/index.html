@@ -411,21 +411,23 @@
       z-index: 3;
     }
 
-    /* Glass canvas (tumble shader + liquid glass) */
+    /* Glass canvas (tumble shader + liquid glass) — above overlay when idle */
     #glass-canvas {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
+      z-index: 6;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
     }
+    /* When zoomed in, hide glass canvas entirely so iframe gets pointer events */
+    #terminal-wrap.zoomed #glass-canvas { opacity: 0; }
 
-    /* Terminal overlay (xterm or boot text) — bg starts visible, no flash */
+    /* Terminal overlay — dark bg behind terminal text, always visible */
     #terminal-overlay {
       position: absolute; inset: 0;
       z-index: 4;
-      opacity: 0;
-      transition: opacity 0.15s ease;
       background: rgba(10,10,15,0.97);
     }
-    #terminal-overlay.visible { opacity: 1; }
 
     /* Boot text */
     #boot-text {

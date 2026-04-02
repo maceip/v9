@@ -1,12 +1,14 @@
 /**
  * v9 — Main application controller.
  *
- * State machine: IDLE → ZOOMING → BOOTING → RUNNING
+ * State machine: IDLE → ZOOMING → RUNNING
  *
- * - IDLE: Page loaded, terminal in distance, foggy, tumble shader behind glass
+ * - IDLE: Terminal at small scale, glass animation on top, CLI booting behind it
  * - ZOOMING: Smooth damped-spring zoom animation
- * - BOOTING: "booting v9..." typewriter, status lines
- * - RUNNING: Real CLI loaded in iframe
+ * - RUNNING: Full-screen terminal with CLI visible
+ *
+ * CLI loads immediately on page load — click just zooms in to reveal it.
+ * Minimize zooms out with CLI still visible (text scales with frame).
  */
 
 import { NavFluid } from './fluid.js';
@@ -20,9 +22,7 @@ import { initThemeSwitcher } from './theme.js';
 // ── State ──
 let state = 'IDLE';
 let progressLoaded = 0;
-const progressTotal = 4; // Loading stages before boot (boot adds final step)
-let cliUrlPromise = null; // Pre-resolved CLI URL
-let cliReady = false; // True when iframe has loaded
+const progressTotal = 5;
 
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
@@ -70,7 +70,6 @@ try {
   fluid = new NavFluid(navFluidCanvas);
   setProgress(2);
 } catch (e) {
-  // WebGL not available — silently degrade
   setProgress(2);
 }
 
@@ -110,10 +109,11 @@ new ResizeObserver(resizeGlass).observe(termScreen);
 const zoom = new ZoomController(termWrap, {
   onComplete: (direction) => {
     if (direction === 'in' && state === 'ZOOMING') {
-      state = 'BOOTING';
-      startBoot();
+      state = 'RUNNING';
+      // Stop glass rendering to save GPU — overlay covers it
+      if (glass) { glass.fog = 0; glass.glassBlur = 0; glass.stop(); }
     } else if (direction === 'out') {
-      // Animation settled — apply idle CSS class for static state
+      state = 'IDLE';
       termWrap.classList.add('idle');
     }
   },
@@ -126,8 +126,8 @@ const zoom = new ZoomController(termWrap, {
         glass.fog = 0.12 * (1.0 - p);
         glass.glassBlur = 0.4 * (1.0 - p * 0.9);
       }
-      // Fade out overlay as we zoom out
-      termOverlay.style.opacity = String(Math.max(0, p * 1.5 - 0.5));
+      // Fade overlay back in as we zoom out (glass covers terminal)
+      termOverlay.style.opacity = String(Math.max(0, 1.0 - p));
       return;
     }
     // Zoom in: fade fog, brighten spotlight — keep glass visible longer
@@ -139,17 +139,40 @@ const zoom = new ZoomController(termWrap, {
       glass.fog = 0.12 * (1.0 - Math.min(1, glassFade));
       glass.glassBlur = 0.4 * (1.0 - Math.min(1, glassFade));
     }
-    // Crossfade terminal overlay — start late (80%) for longer glass visibility
+    // Crossfade: fade OUT the glass overlay to reveal terminal beneath
     if (p > 0.8) {
       const fade = (p - 0.8) / 0.2;
-      termOverlay.style.opacity = String(fade);
+      termOverlay.style.opacity = String(1.0 - fade);
     }
   }
 });
 
-// ── Icons ── (step 4 = 100% in idle)
+// ── Icons ── (step 4)
 initIcons();
 setProgress(4);
+
+// ── Boot CLI immediately on page load ──
+// The terminal starts loading behind the glass animation.
+// User sees the glass; CLI boots in the background.
+(async function preloadCLI() {
+  const webUrl = await resolveWebURL();
+  if (webUrl) {
+    cliFrame.src = webUrl;
+    // Show iframe inside overlay (glass covers it at idle scale)
+    cliFrame.addEventListener('load', () => {
+      cliFrame.classList.add('visible');
+      bootText.style.display = 'none';
+      setProgress(5);
+    }, { once: true });
+  } else {
+    setProgress(5);
+    // Will show runtime unavailable when user zooms in
+  }
+})();
+
+// Make overlay visible from the start (dark bg for terminal readability)
+termOverlay.classList.add('visible');
+termOverlay.style.opacity = '1';
 
 // ── Click/tap to activate terminal ──
 termWrap.addEventListener('click', handleActivate, true);
@@ -162,58 +185,8 @@ function handleActivate(e) {
   state = 'ZOOMING';
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
-
-  // Start loading CLI immediately — don't wait for animation to finish
-  cliReady = false;
-  cliUrlPromise = resolveWebURL();
-  cliUrlPromise.then(url => {
-    if (url && (state === 'ZOOMING' || state === 'BOOTING' || state === 'RUNNING')) {
-      cliFrame.src = url;
-    }
-  });
-
   zoom.zoomIn();
 }
-
-// ── Boot: zoom complete → show CLI ──
-async function startBoot() {
-  // Overlay already faded in during zoom; lock it visible
-  termOverlay.classList.add('visible');
-  termOverlay.style.opacity = '';
-
-  // Stop glass rendering now that overlay is fully opaque
-  if (glass) {
-    glass.fog = 0;
-    glass.glassBlur = 0;
-    glass.stop();
-  }
-
-  setProgress(5);
-
-  // CLI was pre-loaded during zoom — wait for it if still pending
-  const webUrl = await cliUrlPromise;
-  if (webUrl) {
-    // iframe src was already set; wait for load then reveal
-    if (cliFrame.src) {
-      await new Promise(resolve => {
-        // Try to check if already loaded (may throw cross-origin)
-        try {
-          if (cliFrame.contentDocument && cliFrame.contentDocument.readyState === 'complete') {
-            return resolve();
-          }
-        } catch { /* cross-origin — fall through to load event */ }
-        cliFrame.addEventListener('load', resolve, { once: true });
-      });
-    }
-    state = 'RUNNING';
-    cliReady = true;
-    cliFrame.classList.add('visible');
-    bootText.style.display = 'none';
-  } else {
-    showRuntimeUnavailable();
-  }
-}
-
 
 function siteRootPrefix() {
   let p = new URL(window.location.href).pathname;
@@ -235,8 +208,6 @@ function anthropicProxyForCLIiframe() {
 }
 
 async function resolveWebURL() {
-  // docs/web/index.html is produced by scripts/prepare-github-pages.mjs (CI).
-  // GitHub Pages project sites live under /<repo>/ — pass absolute-style bundle path.
   const root = siteRootPrefix();
   const bundlePath = `${root.replace(/\/$/, '')}/dist/claude-code-cli.js`;
   const base = `${window.location.origin}${root}`;
@@ -298,7 +269,6 @@ function showRuntimeUnavailable() {
 // ── Mouse/touch warp for glass shader ──
 function updateGlassMouse(clientX, clientY) {
   if (!glass) return;
-  // Map to glass canvas coords (relative to terminal screen)
   const rect = termScreen.getBoundingClientRect();
   glass.mouse.x = (clientX - rect.left) / rect.width;
   glass.mouse.y = 1.0 - (clientY - rect.top) / rect.height;
@@ -308,55 +278,40 @@ document.addEventListener('touchmove', (e) => {
   if (e.touches[0]) updateGlassMouse(e.touches[0].clientX, e.touches[0].clientY);
 }, { passive: true });
 
-// ── Reset to idle state ──
+// ── Minimize to idle (keeps CLI alive — text scales with frame) ──
 let dismissCount = 0;
 
 function resetToIdle() {
-  state = 'IDLE';
-  dismissCount++;
-  cliFrame.classList.remove('visible');
-  cliFrame.src = '';
-  termOverlay.classList.remove('visible');
-  termOverlay.style.opacity = '0';
-  bootText.style.display = '';
-  bootText.innerHTML = '';
+  // Don't kill the iframe — CLI stays alive, text will scale with frame
   termWrap.classList.remove('zoomed');
-  // Don't add .idle yet or clear transform — let zoom controller
-  // animate from current position, then CSS idle takes over when settled
 
-  // Restart glass immediately so it's visible during zoom-out
+  // Restart glass so it covers the shrinking terminal
   if (glass) { glass.fog = 0.12; glass.glassBlur = 0.4; glass.start(); }
 
-  // Each dismiss makes idle terminal slightly smaller (stacks)
+  dismissCount++;
   const shrink = Math.min(dismissCount * 0.04, 0.15);
   zoom.setShrink(shrink);
   zoom.zoomOut();
 
   fog.style.opacity = '1';
   spotlight.style.opacity = '0.6';
-  setProgress(0);
-  progressBar.style.opacity = '1';
 }
 
 // ── Predictive back: Android Quickstep swipe-to-dismiss ──
-// Uses real underdamped spring physics from Android's SpringForce.java
-// Velocity-tracked fling detection (not distance-based)
 const dismissedTray = document.getElementById('dismissed-tray');
 
 const swipeDismiss = new SwipeDismiss(termWrap, {
-  canSwipe: () => state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE',
+  canSwipe: () => state === 'RUNNING' || state === 'UNAVAILABLE',
   onDismiss: () => {
     addDismissedTile();
     resetToIdle();
   },
-  onSnapBack: () => {
-    // Terminal stays in current state — no action needed
-  },
+  onSnapBack: () => {},
 });
 
 // ── Keyboard shortcut: Escape triggers smooth zoom-out to idle ──
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE')) {
+  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'UNAVAILABLE')) {
     addDismissedTile();
     resetToIdle();
   }
@@ -370,7 +325,6 @@ function addDismissedTile() {
   tile.textContent = `v9`;
   tile.title = `Session ${dismissedCount}`;
   tile.addEventListener('click', () => {
-    // Restore: remove tile and activate terminal
     tile.remove();
     if (state === 'IDLE') {
       handleActivate(new Event('click'));
@@ -378,7 +332,6 @@ function addDismissedTile() {
   });
   dismissedTray.appendChild(tile);
 
-  // Animate in
   tile.style.transform = 'translateY(60px) scale(0.5)';
   tile.style.opacity = '0';
   requestAnimationFrame(() => {
@@ -400,4 +353,4 @@ const hud = new TacticalHUD();
 initThemeSwitcher();
 
 // ── Done — page is interactive ──
-console.log('[v9] Page ready. Press D to open dial panel.');
+console.log('[v9] Page ready.');
