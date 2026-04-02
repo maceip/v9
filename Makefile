@@ -65,6 +65,7 @@ fetch:
 configure: $(BUILD_DIR)/CMakeCache.txt
 
 $(BUILD_DIR)/CMakeCache.txt: emscripten-toolchain.cmake
+	@$(MAKE) fetch
 	@echo ">>> Ensuring EdgeJS source is clean and patched..."
 	@cd "$(EDGEJS_SRC)" && git checkout -- . && git clean -fd
 	@cd "$(EDGEJS_SRC)" && git apply "$(ROOT_DIR)/patches/edgejs-emscripten.patch" || (echo ">>> ERROR: patches/edgejs-emscripten.patch did not apply. Try: git -C edgejs-src fetch origin && git -C edgejs-src checkout origin/main && git -C edgejs-src config core.autocrlf false" && exit 1)
