@@ -58,7 +58,7 @@ fetch:
 	@echo ">>> EdgeJS source ready."
 
 # ---- Configure ----
-configure: $(BUILD_DIR)/CMakeCache.txt
+configure: fetch $(BUILD_DIR)/CMakeCache.txt
 
 $(BUILD_DIR)/CMakeCache.txt: emscripten-toolchain.cmake
 	@echo ">>> Ensuring EdgeJS source is clean and patched..."

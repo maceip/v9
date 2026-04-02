@@ -1,9 +1,16 @@
-# Deploy static landing + full browser runtime (web + napi-bridge + wasm + Claude bundle) to GitHub Pages.
+# Deploy docs/ to GitHub Pages.
+#
+# The landing page (glass terminal, zoom animation) lives in docs/ and is
+# committed directly.  Runtime artifacts (wasm, CLI bundle, web/, napi-bridge/)
+# are built separately — their absence is handled gracefully ("RUNTIME UNAVAILABLE").
+#
+# A full build (Emscripten + Claude bundle) is attempted but non-blocking:
+# the landing page deploys regardless of whether the runtime builds succeed.
 name: Deploy GitHub Pages
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, master, dev]
   workflow_dispatch:
 
 permissions:
@@ -33,26 +40,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Optional runtime build (non-blocking) ──
       - name: Install Claude Code CLI (bundle input only)
         run: npm install @anthropic-ai/claude-code@2 --no-save
+        continue-on-error: true
 
       - name: Bundle Claude Code for browser
         run: node scripts/bundle-claude-for-pages.mjs
+        continue-on-error: true
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.64
+        continue-on-error: true
 
       - name: Build EdgeJS (wasm + JS loader)
         run: |
           source "$EMSDK/emsdk_env.sh"
+          make fetch
           make configure
           make build
+        continue-on-error: true
 
       - name: Assemble docs/ (current web + napi-bridge + dist)
         run: node scripts/prepare-github-pages.mjs
+        continue-on-error: true
 
+      # ── Deploy (always runs — docs/ has the landing page regardless) ──
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
