@@ -4,6 +4,7 @@
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startInTabFetchProxy } from './in-tab-fetch-proxy.mjs';
 import { startStaticServer } from './static-server.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,14 @@ export async function runBrowserHostContractPhase(opts = {}) {
     headers: coopCoep,
   });
 
+  let fetchProxy;
+  try {
+    fetchProxy = await startInTabFetchProxy({ port: 0 });
+  } catch (e) {
+    await server.close();
+    throw e;
+  }
+
   let browser;
   let checksPassed = 0;
   let checksFailed = 0;
@@ -66,7 +75,9 @@ export async function runBrowserHostContractPhase(opts = {}) {
       consoleErrors.push(err?.message || String(err));
     });
 
-    await page.goto(`${server.baseUrl}/${htmlPath}`, { waitUntil: 'domcontentloaded' });
+    const contractUrl = new URL(`${server.baseUrl}/${htmlPath}`);
+    contractUrl.searchParams.set('fetchProxy', fetchProxy.proxyUrl);
+    await page.goto(contractUrl.href, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => globalThis.__HARNESS_BROWSER_RESULT__ != null);
 
     const result = await page.evaluate(() => globalThis.__HARNESS_BROWSER_RESULT__);
@@ -98,6 +109,7 @@ export async function runBrowserHostContractPhase(opts = {}) {
     notes.push(e?.message || String(e));
   } finally {
     if (browser) await browser.close();
+    await fetchProxy.close();
     await server.close();
   }
 

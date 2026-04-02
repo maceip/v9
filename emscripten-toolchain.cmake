@@ -81,6 +81,9 @@ set(EMSCRIPTEN_LINK_FLAGS
     "-sFORCE_FILESYSTEM=1"
     "-sALLOW_UNIMPLEMENTED_SYSCALLS=1"
     "${UNDEFINED_SYMBOLS_FLAG}"
+    # Work around LLD wasm crashes on very large links (ImportSection::addImport SIGSEGV)
+    # without GC — see llvm/llvm-project#53987 and similar import-table bugs.
+    "-Wl,--gc-sections"
     "--js-library=${CMAKE_CURRENT_LIST_DIR}/wasi-shims/napi-emscripten-library.js"
     "-Wl,--wrap=sysconf"
     "-Wl,--wrap=mmap"

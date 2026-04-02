@@ -12,6 +12,7 @@
 
 import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable } from './streams.js';
+import { browserHttpFetch } from './transport-policy.mjs';
 
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
@@ -67,9 +68,13 @@ function _canStreamUpload() {
 // When running in Node.js with a proxy, use native http/https + CONNECT tunnel.
 
 const _isNode = typeof globalThis.process?.versions?.node === 'string';
+/** Polyfills set process.versions.node in-tab; use DOM presence for real browser fetch path. */
+const _hasBrowsingContext = typeof globalThis.document !== 'undefined';
 
 async function _proxyFetch(url, opts) {
-  if (!_isNode) return fetch(url, opts);
+  // Tab / browser: transport policy (native fetch TLS, optional NODEJS_IN_TAB_FETCH_PROXY).
+  // See transport-policy.mjs — not the Node CONNECT path below.
+  if (_hasBrowsingContext) return browserHttpFetch(url, opts);
 
   const proxyUrl = globalThis.process?.env?.https_proxy
     || globalThis.process?.env?.HTTPS_PROXY
@@ -328,23 +333,53 @@ class IncomingMessage extends Readable {
 // server.on('request'), listen(port[, host], cb), address(), res.writeHead/end.
 
 class ServerIncomingMessage extends Readable {
-  constructor({ method = 'GET', url = '/', host = 'localhost' } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {string} [opts.method]
+   * @param {string} [opts.url]
+   * @param {string} [opts.host] — fallback Host if not in headers
+   * @param {Record<string, string|string[]>|null} [opts.headers] — merged into .headers (lowercased keys)
+   * @param {Uint8Array|null} [opts.body] — optional request body (buffered)
+   */
+  constructor({ method = 'GET', url = '/', host = 'localhost', headers: inboundHeaders = null, body: bodyU8 = null } = {}) {
     super({ read() {} });
     this.httpVersion = '1.1';
     this.httpVersionMajor = 1;
     this.httpVersionMinor = 1;
     this.method = method;
     this.url = url;
-    const hostStr = String(host);
     this.headers = Object.create(null);
-    this.headers.host = hostStr;
-    this.rawHeaders = ['host', hostStr];
+    this.rawHeaders = [];
     this.trailers = {};
     const sock = { remoteAddress: '127.0.0.1', remotePort: 1, writable: false, readable: false };
     this.socket = sock;
     this.connection = sock;
-    this.complete = true;
-    this.push(null);
+
+    const applyHeader = (name, value) => {
+      if (value == null) return;
+      const v = Array.isArray(value) ? value.join(', ') : String(value);
+      this.rawHeaders.push(name, v);
+      this.headers[String(name).toLowerCase()] = v;
+    };
+
+    if (inboundHeaders && typeof inboundHeaders === 'object') {
+      for (const [k, v] of Object.entries(inboundHeaders)) {
+        applyHeader(k, v);
+      }
+    }
+    if (!this.headers.host) {
+      applyHeader('host', String(host));
+    }
+
+    if (bodyU8 && bodyU8.byteLength) {
+      this.complete = false;
+      this.push(bodyU8);
+      this.push(null);
+      this.complete = true;
+    } else {
+      this.complete = true;
+      this.push(null);
+    }
   }
 }
 
@@ -358,6 +393,8 @@ class OutgoingMessage extends Writable {
     this.statusMessage = '';
     this.finished = false;
     this._headersSent = false;
+    /** @type {Uint8Array[]} — buffered entity body for ServerResponse */
+    this._bodyChunks = [];
 
     Object.defineProperty(this, 'headersSent', {
       configurable: true,
@@ -433,9 +470,17 @@ class OutgoingMessage extends Writable {
     }
   }
 
-  _write(chunk, _encoding, callback) {
+  _write(chunk, encoding, callback) {
     if (!this._headersSent) {
       this.writeHead(this.statusCode, this.statusMessage || undefined);
+    }
+    if (chunk != null && chunk !== '') {
+      if (typeof chunk === 'string') {
+        chunk = _encoder.encode(chunk);
+      } else if (!(chunk instanceof Uint8Array)) {
+        chunk = new Uint8Array(chunk);
+      }
+      this._bodyChunks.push(chunk);
     }
     callback();
   }
@@ -834,6 +879,48 @@ function getBrowserLocalServerRegistry() {
   return globalThis.__browserRuntimeLocalHttpServers;
 }
 
+function _inTabHttpRelayEnabled() {
+  const v = globalThis.process?.env?.NODEJS_IN_TAB_HTTP_RELAY;
+  if (v == null || v === '') return false;
+  const s = String(v).toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
+}
+
+function _inTabPublicHttpBase() {
+  const env = globalThis.process?.env || {};
+  if (env.NODEJS_IN_TAB_HTTP_PUBLIC_BASE) {
+    return String(env.NODEJS_IN_TAB_HTTP_PUBLIC_BASE).replace(/\/$/, '');
+  }
+  if (typeof globalThis.location?.origin === 'string') {
+    return globalThis.location.origin;
+  }
+  return 'http://localhost:8080';
+}
+
+function _inTabRelayWebSocketUrl(session, port) {
+  const env = globalThis.process?.env || {};
+  if (env.NODEJS_IN_TAB_HTTP_RELAY_WS) {
+    const u = new URL(String(env.NODEJS_IN_TAB_HTTP_RELAY_WS));
+    u.searchParams.set('session', session);
+    u.searchParams.set('port', String(port));
+    return u.toString();
+  }
+  const loc = globalThis.location;
+  if (!loc?.host) return null;
+  const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProto}//${loc.host}/__in-tab-http-ws?session=${encodeURIComponent(session)}&port=${encodeURIComponent(String(port))}`;
+}
+
+function _u8ToBase64(u8) {
+  if (!u8.byteLength) return '';
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < u8.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 class FakeServer extends EventEmitter {
   constructor(requestHandler) {
     super();
@@ -841,6 +928,12 @@ class FakeServer extends EventEmitter {
     this._port = 0;
     this._listening = false;
     this._hostname = 'localhost';
+    /** @type {string|null} — set when NODEJS_IN_TAB_HTTP_RELAY is enabled */
+    this.publicUrl = null;
+    /** @type {string|null} */
+    this.relaySession = null;
+    /** @type {WebSocket|null} */
+    this._relayWs = null;
   }
 
   listen(port, host, callback, backlog) {
@@ -876,11 +969,137 @@ class FakeServer extends EventEmitter {
     const registry = getBrowserLocalServerRegistry();
     registry[this._port] = this;
 
+    this._maybeStartHttpRelay();
+
     queueMicrotask(() => {
       this.emit('listening');
+      if (this.publicUrl) {
+        this.emit('relay-ready', {
+          publicUrl: this.publicUrl,
+          session: this.relaySession,
+          port: this._port,
+        });
+      }
       if (typeof callback === 'function') callback();
     });
     return this;
+  }
+
+  _maybeStartHttpRelay() {
+    this.publicUrl = null;
+    this.relaySession = null;
+    if (this._relayWs) {
+      try { this._relayWs.close(); } catch { /* ignore */ }
+      this._relayWs = null;
+    }
+    if (!(_inTabHttpRelayEnabled() && _hasBrowsingContext)) {
+      return;
+    }
+    let session = globalThis.process?.env?.NODEJS_IN_TAB_HTTP_RELAY_SESSION;
+    if (!session || !String(session).trim()) {
+      session = globalThis.crypto?.randomUUID?.() || `s${Date.now().toString(36)}`;
+    }
+    this.relaySession = String(session);
+    const base = _inTabPublicHttpBase();
+    this.publicUrl = `${base}/__in-tab-http/${encodeURIComponent(this.relaySession)}/${this._.port}/`;
+
+    const wsUrl = _inTabRelayWebSocketUrl(this.relaySession, this._port);
+    if (!wsUrl) {
+      return;
+    }
+    const NativeWS = globalThis.__browserRuntimeNativeWebSocket || globalThis.WebSocket;
+    if (typeof NativeWS !== 'function') {
+      return;
+    }
+
+    try {
+      const ws = new NativeWS(wsUrl);
+      this._relayWs = ws;
+      ws.onmessage = (ev) => {
+        let msg;
+        try {
+          const text = typeof ev.data === 'string' ? ev.data : _decoder.decode(ev.data);
+          msg = JSON.parse(text);
+        } catch {
+          return;
+        }
+        if (msg.type !== 'request' || !msg.id) return;
+        queueMicrotask(() => {
+          this._handleRelayHttpRequest(msg).catch((err) => {
+            this._sendRelayHttpResponse(msg.id, { ok: false, error: String(err?.message || err) });
+          });
+        });
+      };
+      ws.onclose = () => {
+        if (this._relayWs === ws) this._relayWs = null;
+      };
+    } catch {
+      this._relayWs = null;
+    }
+  }
+
+  _sendRelayHttpResponse(id, fields) {
+    const socket = this._relayWs;
+    if (!socket || socket.readyState !== 1) return;
+    try {
+      socket.send(JSON.stringify({ v: 1, type: 'response', id, ...fields }));
+    } catch { /* ignore */ }
+  }
+
+  async _handleRelayHttpRequest(msg) {
+    const headers = msg.headers && typeof msg.headers === 'object' ? msg.headers : {};
+    const host = headers.host || `${this._hostname}:${this._port}`;
+    let bodyU8 = null;
+    if (msg.body64 && typeof msg.body64 === 'string') {
+      try {
+        const bin = atob(msg.body64);
+        bodyU8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bodyU8[i] = bin.charCodeAt(i);
+      } catch {
+        bodyU8 = null;
+      }
+    }
+    const req = new ServerIncomingMessage({
+      method: msg.method || 'GET',
+      url: msg.url || '/',
+      host,
+      headers,
+      body: bodyU8 && bodyU8.byteLength ? bodyU8 : null,
+    });
+    const res = new ServerResponse();
+    const done = new Promise((resolve) => {
+      res.once('finish', resolve);
+    });
+    try {
+      if (this._handler) {
+        this._handler(req, res);
+      }
+      this.emit('request', req, res);
+    } catch (err) {
+      this._sendRelayHttpResponse(msg.id, { ok: false, error: String(err?.message || err) });
+      return;
+    }
+    await done;
+    const chunks = res._bodyChunks || [];
+    let bodyOut = new Uint8Array(0);
+    if (chunks.length === 1) bodyOut = chunks[0];
+    else if (chunks.length > 1) {
+      const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+      bodyOut = new Uint8Array(total);
+      let o = 0;
+      for (const c of chunks) {
+        bodyOut.set(c, o);
+        o += c.byteLength;
+      }
+    }
+    const outHeaders = { ...res.getHeaders() };
+    this._sendRelayHttpResponse(msg.id, {
+      ok: true,
+      statusCode: res.statusCode,
+      statusMessage: res.statusMessage,
+      headers: outHeaders,
+      body64: bodyOut.byteLength ? _u8ToBase64(bodyOut) : undefined,
+    });
   }
 
   address() {

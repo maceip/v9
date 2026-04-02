@@ -1,13 +1,18 @@
 /**
- * In-tab Node API contract — every case performs real work (bytes on disk,
- * bytes on the wire, subprocess I/O, async continuation, worker messages,
- * compression roundtrip, stream plumbing, etc.).
+ * Node API contract — same behavioral cases across hosts:
+ *
+ * - **Chromium parent** — `document` exists (Playwright loads contract HTML). `CONFORMANCE_TARGET=bridge`.
+ * - **Node parent** — `node` (or Wasm VM) with `CONFORMANCE_TARGET=bridge` or `node`.
+ *
+ * Pairs: where behavior differs (real OS child vs MEMFS shim, real `net.listen` vs stubs),
+ * we run **both** a node-native case and a bridge/Chromium-appropriate case so neither
+ * gate is an accidental subset.
  *
  * Run via:       node tests/conformance/test-in-tab-api-contract.mjs (runner)
  * Run (bundle): node dist/in-tab-api-contract.js  (after bun scripts/build-in-tab-api-contract.mjs)
- * Run (dual gate): npm run test:nodejs-in-tab-contract → browser host + Wasm MEMFS (one command)
+ * Run (dual gate): npm run test:nodejs-in-tab-contract → Chromium host + Wasm (Node parent) + bridge
  *
- * CONFORMANCE_TARGET=bridge|node   NODEJS_CONTRACT_OFFLINE=1 skips outbound HTTPS (reported as SKIP)
+ * Browser host sets NODEJS_IN_TAB_FETCH_PROXY via ?fetchProxy= — see contract-phase-browser.mjs.
  */
 
 import { createHarness, HarnessSkip } from './_harness.mjs';
@@ -25,10 +30,10 @@ import { dirname } from 'node:path';
 
 export async function runInTabApiContract() {
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const offline = process.env.NODEJS_CONTRACT_OFFLINE === '1'
-  || process.env.CLAUDE_CONTRACT_OFFLINE === '1';
 
 const mode = getConformanceTargetMode();
+/** True when the JS realm is a Chromium renderer (Playwright contract page). */
+const chromiumParent = typeof globalThis.document !== 'undefined';
 const { test, testAsync, assert, assertEq, assertDeepEq, assertThrows, finish } =
   createHarness('In-tab API contract (behavioral)');
 
@@ -230,7 +235,6 @@ test('fs.copyFileSync COPYFILE_EXCL', () => {
 // ─── http / https — real client + (Node) real local server ────────────
 
 await testAsync('https.get live TLS fetch (httpbin GET + parse JSON body)', async () => {
-  if (offline) throw new HarnessSkip('CONTRACT_OFFLINE=1');
   const body = await new Promise((resolve, reject) => {
     const req = https.get('https://httpbin.org/get?contract=1', (res) => {
       assertEq(res.statusCode, 200);
@@ -253,7 +257,6 @@ await testAsync('https.get live TLS fetch (httpbin GET + parse JSON body)', asyn
 });
 
 await testAsync('https.request live POST JSON (httpbin POST)', async () => {
-  if (offline) throw new HarnessSkip('CONTRACT_OFFLINE=1');
   const payload = JSON.stringify({ inTabContract: true, t: Date.now() });
   const body = await new Promise((resolve, reject) => {
     const req = https.request(
@@ -278,6 +281,25 @@ await testAsync('https.request live POST JSON (httpbin POST)', async () => {
   });
   const parsed = JSON.parse(body);
   assertDeepEq(parsed.json?.inTabContract, true);
+});
+
+await testAsync('fetch proxy: upstream failure surfaces as error (bridge + in-tab proxy)', async () => {
+  if (mode !== 'bridge') throw new HarnessSkip('bridge-only');
+  const { getHttpTransportMode, browserHttpFetch } = await import('../../napi-bridge/transport-policy.mjs');
+  if (getHttpTransportMode() !== 'fetch-proxy') {
+    throw new HarnessSkip('fetch-proxy only (browser contract passes ?fetchProxy=)');
+  }
+  let thrown = false;
+  try {
+    await browserHttpFetch('https://invalid.invalid/contract-net-fail', {
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(25_000)
+        : undefined,
+    });
+  } catch {
+    thrown = true;
+  }
+  assert(thrown, 'browserHttpFetch should throw when relay reports upstream failure');
 });
 
 if (mode === 'node') await testAsync('http loopback: POST body echoed as JSON (real TCP server)', async () => {
@@ -537,6 +559,9 @@ if (mode === 'node') {
     assertDeepEq(wt.getEnvironmentData('in-tab-api-contract'), { k: 1 });
     const ch = new wt.MessageChannel();
     assert(ch.port1 && ch.port2, 'MessageChannel ports');
+    // Node's native MessagePorts hold libuv handles; leaving them open can assert on Windows during exit.
+    ch.port1.close();
+    ch.port2.close();
   });
 }
 
@@ -598,6 +623,44 @@ await testAsync('performance.now() increases after delay', async () => {
   const t0 = performance.now();
   await new Promise((r) => setTimeout(r, 10));
   assert(performance.now() > t0, 'monotonic-ish clock');
+});
+
+test('net.BlockList + SocketAddress + autoSelectFamily (import-time / policy surface)', () => {
+  const bl = new net.BlockList();
+  assert(bl.check('192.0.2.1') === false, 'empty blocklist');
+
+  bl.addAddress('198.51.100.2');
+  assert(bl.check('198.51.100.2') === true, 'blocked v4 addr');
+  assert(bl.check('198.51.100.3') === false, 'not blocked');
+
+  bl.addRange('203.0.113.10', '203.0.113.20');
+  assert(bl.check('203.0.113.15') === true, 'in range');
+  assert(bl.check('203.0.113.21') === false, 'past range');
+
+  bl.addSubnet('192.168.0.0', 24);
+  assert(bl.check('192.168.0.1') === true, 'in subnet');
+  assert(bl.check('192.168.1.1') === false, 'outside subnet');
+
+  bl.addSubnet('2001:db8::', 32, 'ipv6');
+  assert(bl.check('2001:db8::1', 'ipv6') === true, 'in ipv6 subnet');
+  assert(bl.check('2001:db9::1', 'ipv6') === false, 'outside ipv6 subnet');
+  assert(bl.check('::1', 'ipv6') === false, 'localhost not in ipv6 subnet');
+  bl.addAddress('::1', 'ipv6');
+  assert(bl.check('::1', 'ipv6') === true, 'ipv6 exact via canonical');
+
+  const prev = net.getDefaultAutoSelectFamily();
+  net.setDefaultAutoSelectFamily(false);
+  assertEq(net.getDefaultAutoSelectFamily(), false, 'toggle auto family');
+  net.setDefaultAutoSelectFamily(prev);
+  const t0 = net.getDefaultAutoSelectFamilyAttemptTimeout();
+  net.setDefaultAutoSelectFamilyAttemptTimeout(400);
+  assertEq(net.getDefaultAutoSelectFamilyAttemptTimeout(), 400, 'family timeout');
+  net.setDefaultAutoSelectFamilyAttemptTimeout(t0);
+
+  const sa = new net.SocketAddress({ address: '127.0.0.1', port: 9 });
+  assertEq(sa.address, '127.0.0.1', 'SocketAddress host');
+  assertEq(sa.port, 9, 'SocketAddress port');
+  assert(net.Stream === net.Socket, 'Stream alias');
 });
 
 test('net TCP listen unavailable in bridge (documented)', () => {

@@ -1,0 +1,23 @@
+# Engineer laptops: reproducible Wasm build environment (bind-mount the repo).
+#
+#   docker compose -f docker/compose.yaml build
+#   docker compose -f docker/compose.yaml run --rm v9-build
+#
+# Custom command:
+#   docker compose -f docker/compose.yaml run --rm v9-build bash -lc 'make clean && make configure && make build'
+#
+# Pre-seeded artifacts from S3 (see scripts/fetch-wasm-assets.mjs): copy into dist/ + build/
+# before running tests without a full compile.
+
+services:
+  v9-build:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: v9-wasm-toolchain:latest
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    environment:
+      # Browser phase tests inside this image need Chromium (optional layer); host-based tests use host Chrome.
+      - CHROME_BIN=${CHROME_BIN:-}

@@ -1,16 +1,9 @@
-# Deploy docs/ to GitHub Pages.
-#
-# The landing page (glass terminal, zoom animation) lives in docs/ and is
-# committed directly.  Runtime artifacts (wasm, CLI bundle, web/, napi-bridge/)
-# are built separately — their absence is handled gracefully ("RUNTIME UNAVAILABLE").
-#
-# A full build (Emscripten + Claude bundle) is attempted but non-blocking:
-# the landing page deploys regardless of whether the runtime builds succeed.
+# Deploy static landing + full browser runtime (web + napi-bridge + wasm + Claude bundle) to GitHub Pages.
 name: Deploy GitHub Pages
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
@@ -40,20 +33,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ── Optional runtime build (non-blocking) ──
-      - name: Install Claude Code CLI (bundle input only)
-        run: npm install @anthropic-ai/claude-code@2 --no-save
-        continue-on-error: true
-
-      - name: Bundle Claude Code for browser
-        run: node scripts/bundle-claude-for-pages.mjs
-        continue-on-error: true
-
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.64
-        continue-on-error: true
 
       - name: Build EdgeJS (wasm + JS loader)
         run: |
@@ -61,13 +44,32 @@ jobs:
           make fetch
           make configure
           make build
-        continue-on-error: true
 
-      - name: Assemble docs/ (current web + napi-bridge + dist)
+      # wasm + loader into docs/dist/, rewrite import maps in every web/*.html, .nojekyll
+      - name: Assemble docs/ (web + napi-bridge + edgejs)
         run: node scripts/prepare-github-pages.mjs
-        continue-on-error: true
 
-      # ── Deploy (always runs — docs/ has the landing page regardless) ──
+      # After prepare: CLI bundle lands next to edgejs.* (devDependency from npm ci)
+      - name: Bundle Claude Code for browser (Pages + import map externals)
+        run: node scripts/bundle-claude-for-pages.mjs
+
+      - name: Verify Pages artifact (runtime + landing payload)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/.nojekyll
+          test -f docs/index.html
+          test -f docs/js/v9-app.js
+          test -f docs/web/index.html
+          test -f docs/web/node-polyfills.js
+          test -f docs/web/oauth-bridge.html
+          test -f docs/napi-bridge/http-exports.js
+          test -f docs/dist/edgejs.js
+          test -f docs/dist/edgejs.wasm
+          test -f docs/dist/claude-code-cli.js
+          grep -qF '__V9_ANTHROPIC_FETCH_PROXY__' docs/web/node-polyfills.js
+          grep -qF 'anthropicProxyForCLIiframe' docs/js/v9-app.js
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

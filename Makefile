@@ -9,7 +9,7 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test test-integration test-nightly clean distclean size help
+.PHONY: all setup fetch configure build test test-integration test-soak-quick test-nightly lint size clean distclean help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -41,6 +41,7 @@ endif
 # ---- Build Config ----
 BUILD_TYPE ?= Release
 EDGE_REPO  := https://github.com/wasmerio/edgejs.git
+# Optional: after `make fetch`, pin with: cd edgejs-src && git checkout <sha>
 
 # ---- Outputs ----
 WASM_OUT := $(OUTPUT_DIR)/edgejs.wasm
@@ -55,15 +56,19 @@ all: fetch configure build test
 # ---- Fetch Sources ----
 fetch:
 	@if [ ! -d "$(EDGEJS_SRC)" ]; then git clone --depth 1 $(EDGE_REPO) "$(EDGEJS_SRC)"; fi
+	@cd "$(EDGEJS_SRC)" && git config submodule.napi.url https://github.com/wasmerio/napi.git
+	@cd "$(EDGEJS_SRC)" && git config submodule.wasmer-examples.url https://github.com/wasmerio/examples.git
+	@cd "$(EDGEJS_SRC)" && git submodule update --init --recursive napi
 	@echo ">>> EdgeJS source ready."
 
 # ---- Configure ----
 configure: fetch $(BUILD_DIR)/CMakeCache.txt
 
 $(BUILD_DIR)/CMakeCache.txt: emscripten-toolchain.cmake
+	@$(MAKE) fetch
 	@echo ">>> Ensuring EdgeJS source is clean and patched..."
 	@cd "$(EDGEJS_SRC)" && git checkout -- . && git clean -fd
-	@cd "$(EDGEJS_SRC)" && git apply "$(ROOT_DIR)/patches/edgejs-emscripten.patch" || echo "Warning: Patch failed to apply, check line endings"
+	@cd "$(EDGEJS_SRC)" && git apply "$(ROOT_DIR)/patches/edgejs-emscripten.patch" || (echo ">>> ERROR: patches/edgejs-emscripten.patch did not apply. Try: git -C edgejs-src fetch origin && git -C edgejs-src checkout origin/main && git -C edgejs-src config core.autocrlf false" && exit 1)
 	@echo ">>> Configuring EdgeJS for Emscripten (Forcing Internal OpenSSL)..."
 	@mkdir -p "$(BUILD_DIR)"
 	EMSDK="$(EMSDK_DIR)" "$(EMCMAKE)" cmake \
@@ -84,9 +89,16 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Building EdgeJS..."
 	@mkdir -p "$(OUTPUT_DIR)"
 	cmake --build "$(BUILD_DIR)" -j $(JOBS)
-	@cp -f "$(BUILD_DIR)/edge.js" "$(JS_OUT)" 2>/dev/null || echo "Warning: edge.js not found"
-	@cp -f "$(BUILD_DIR)/edge.wasm" "$(WASM_OUT)" 2>/dev/null || echo "Warning: edge.wasm not found"
-	@printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst filename = path.join(__dirname, 'edge.js');\nconst source = fs.readFileSync(filename, 'utf8');\nconst wrapped = new Function('exports', 'require', 'module', '__filename', '__dirname', `${source}\\n;return module.exports || globalThis.EdgeJSModule || global.EdgeJSModule;`);\nmodule.exports = wrapped(module.exports, require, module, filename, __dirname);\n" > "$(BUILD_DIR)/edge"
+	@# Emscripten -o edge often emits the JS loader as build/edge (no suffix); normalize to edge.js.
+	@if [ ! -f "$(BUILD_DIR)/edge.js" ] && [ -f "$(BUILD_DIR)/edge" ]; then \
+	  _s=$$(wc -c < "$(BUILD_DIR)/edge" | tr -d ' \r'); \
+	  if [ "$$_s" -gt 5000 ]; then \
+	    mv -f "$(BUILD_DIR)/edge" "$(BUILD_DIR)/edge.js"; \
+	  fi; \
+	fi
+	@cp -f "$(BUILD_DIR)/edge.js" "$(JS_OUT)" 2>/dev/null || { echo ">>> ERROR: missing $(BUILD_DIR)/edge.js after build"; exit 1; }
+	@cp -f "$(BUILD_DIR)/edge.wasm" "$(WASM_OUT)" 2>/dev/null || { echo ">>> ERROR: missing $(BUILD_DIR)/edge.wasm"; exit 1; }
+	@node "$(ROOT_DIR)/scripts/write-build-edge-shim.mjs" "$(BUILD_DIR)"
 	@echo ">>> Build complete"
 
 # ---- Release Gate ----
@@ -94,15 +106,24 @@ release-gate:
 	@echo ">>> Running phase close release gate..."
 	cd "$(ROOT_DIR)" && node scripts/release-gate.mjs
 
+lint:
+	cd "$(ROOT_DIR)" && node scripts/lint-repo.mjs
+
+size:
+	cd "$(ROOT_DIR)" && node scripts/artifact-sizes.mjs
+
 # ---- Test Tiers ----
 test:
 	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs
 
 test-integration:
-	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs
+	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs
 
 test-nightly:
 	cd "$(ROOT_DIR)" && EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly
+
+test-soak-quick:
+	cd "$(ROOT_DIR)" && npm run test:soak:quick
 
 # ---- Clean ----
 clean:
@@ -110,3 +131,8 @@ clean:
 
 distclean: clean
 	@rm -rf "$(EDGEJS_SRC)"
+
+help:
+	@echo 'Wasm runtime:  make fetch && source "$$EMSDK/emsdk_env.sh" && make configure && make build'
+	@echo "Docs: docs/BUILD_TOOLCHAIN.md (CI, Linux/EC2, Windows, artifacts)."
+	@echo "Targets: fetch configure build clean distclean lint size test test-integration test-soak-quick test-nightly"

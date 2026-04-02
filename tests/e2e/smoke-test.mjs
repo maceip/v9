@@ -21,6 +21,7 @@
  */
 
 import { createServer } from 'node:http';
+import { execSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,10 +93,25 @@ async function runTests() {
   const browserPath = process.env.PLAYWRIGHT_BROWSER_PATH ||
     process.env.CHROME_PATH ||
     (() => {
+      if (process.platform === 'win32') {
+        try {
+          const out = execSync(
+            'where chrome 2>nul || where msedge 2>nul || where chromium 2>nul',
+            { encoding: 'utf8', shell: true },
+          );
+          const line = out.split(/\r?\n/).find((s) => s.trim().endsWith('.exe'));
+          return line ? line.trim() : null;
+        } catch {
+          return null;
+        }
+      }
       try {
-        const { execSync } = await import('node:child_process');
-        return execSync('which chromium-browser || which chromium || which google-chrome', { encoding: 'utf8' }).trim();
-      } catch { return null; }
+        return execSync('which chromium-browser || which chromium || which google-chrome', {
+          encoding: 'utf8',
+        }).trim();
+      } catch {
+        return null;
+      }
     })();
 
   let { server, port, url: baseUrl } = await startServer();
@@ -126,6 +142,11 @@ async function runTests() {
   const context = await browser.newContext();
   const page = await context.newPage();
 
+  const http404Urls = [];
+  page.on('response', (res) => {
+    if (res.status() === 404) http404Urls.push(res.url());
+  });
+
   // Collect console messages for debugging
   const consoleLogs = [];
   const consoleErrors = [];
@@ -152,7 +173,8 @@ async function runTests() {
     console.log('\n=== E2E Smoke Test ===\n');
 
     // ── Test 1: Page loads without errors ──
-    const response = await page.goto(`${baseUrl}/web/index.html`, { timeout: TIMEOUT });
+    // Defer bundle load: default UI points at /dist/app-bundle.js but e2e does not build it.
+    const response = await page.goto(`${baseUrl}/web/index.html?autorun=0`, { timeout: TIMEOUT });
     assert(response.status() === 200, 'Page loads with HTTP 200');
 
     // Wait for terminal to initialize
@@ -232,6 +254,9 @@ async function runTests() {
     if (criticalErrors.length > 0) {
       for (const err of criticalErrors.slice(0, 5)) {
         console.log(`    error: ${err.slice(0, 120)}`);
+      }
+      if (http404Urls.length > 0) {
+        console.log('    HTTP 404:', [...new Set(http404Urls)].join(', '));
       }
     }
 

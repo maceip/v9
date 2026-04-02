@@ -501,15 +501,35 @@
   }
 
   // ─── CORS Proxy Intercept ─────────────────────────────────────────
-  // Intercept fetch to api.anthropic.com and route through CORS proxy.
-  // The proxy URL is set via ?proxy=<url> query param or auto-detected.
+  // Intercept fetch to api.anthropic.com / platform.claude.com and route through
+  // a same-origin or first-party CORS proxy (e.g. web/cors-proxy-worker.js).
+  //
+  // Resolution order: ?proxy= → __V9_ANTHROPIC_FETCH_PROXY__ or
+  // __V9_PAGES_ANTHROPIC_PROXY__ → on loopback hosts only, http://localhost:8081.
+  // On github.io and other non-loopback hosts, no default — omit ?proxy= to use
+  // direct fetch (will fail CORS until a proxy URL is configured).
 
   const _origFetch = globalThis.fetch;
   const _proxyUrl = (() => {
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
-      return params.get('proxy') || 'http://localhost:8081';
-    } catch { return 'http://localhost:8081'; }
+      const q = params.get('proxy');
+      if (q) return q;
+    } catch { /* ignore */ }
+    for (const key of ['__V9_ANTHROPIC_FETCH_PROXY__', '__V9_PAGES_ANTHROPIC_PROXY__']) {
+      const v = globalThis[key];
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    try {
+      const host = globalThis.location?.hostname || '';
+      const loopback =
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '[::1]' ||
+        host === '::1';
+      if (loopback) return 'http://localhost:8081';
+    } catch { /* ignore */ }
+    return '';
   })();
 
   if (_proxyUrl) {
@@ -635,7 +655,8 @@
   function buildOAuthBridgeUrl(localRedirectUrl) {
     try {
       const local = new URL(localRedirectUrl);
-      const bridge = new URL('/web/oauth-bridge.html', globalThis.location?.origin || 'http://localhost:8080');
+      const baseHref = globalThis.location?.href || 'http://localhost:8080/web/index.html';
+      const bridge = new URL('oauth-bridge.html', new URL('./', baseHref));
       bridge.searchParams.set('edge_callback_origin', globalThis.location?.origin || bridge.origin);
       bridge.searchParams.set('edge_callback_port', local.port || '80');
       bridge.searchParams.set('edge_callback_path', local.pathname || '/');

@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 /**
- * Produce docs/dist/claude-code-cli.js for GitHub Pages (ESM).
- * Bare Node builtins (e.g. "fs") and node: prefixed imports stay external → import map.
+ * GitHub Pages / demo deploy: pre-bundle the vendor CLI into one ESM file.
  *
- * Requires: npm install @anthropic-ai/claude-code (CI: --no-save).
+ * Why this exists:
+ * - The in-tab runtime has no full npm graph in MEMFS; the **reference-app** path is to
+ *   **esbuild** the CLI entry once, mark Node built-ins as **external**, and satisfy them via
+ *   the same **import map** as `web/index.html` (`napi-bridge/*` shims).
+ * - **Local dev** usually runs the same artifact: `dist/claude-code-cli.js` next to `edgejs.*`
+ *   (see README “Claude Code CLI in the tab”).
+ * - **General apps** use the same idea with their own `--entry` / `bundle=` URL; this script is
+ *   only the maintained recipe for the Anthropic CLI used on the public Pages demo.
+ *
+ * Run **after** `scripts/prepare-github-pages.mjs` in CI so `docs/dist/` already contains
+ * `edgejs.{js,wasm}` and the CLI file lands alongside them.
+ *
+ * Requires: `@anthropic-ai/claude-code` installed (`npm ci` picks devDependencies).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -13,17 +24,20 @@ import * as esbuild from 'esbuild';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const outDir = join(repoRoot, 'docs', 'dist');
-const outfile = join(outDir, 'claude-code-cli.js');
+const outDirDocs = join(repoRoot, 'docs', 'dist');
+const outDirDist = join(repoRoot, 'dist');
+const outfileDocs = join(outDirDocs, 'claude-code-cli.js');
+const outfileDist = join(outDirDist, 'claude-code-cli.js');
 const require = createRequire(import.meta.url);
 
-mkdirSync(outDir, { recursive: true });
+mkdirSync(outDirDocs, { recursive: true });
+mkdirSync(outDirDist, { recursive: true });
 
 let entry;
 try {
   entry = require.resolve('@anthropic-ai/claude-code/cli.js');
 } catch {
-  console.error('Missing package: npm install @anthropic-ai/claude-code');
+  console.error('Missing package: add @anthropic-ai/claude-code to devDependencies and run npm ci');
   process.exit(1);
 }
 
@@ -80,7 +94,7 @@ await esbuild.build({
   format: 'esm',
   mainFields: ['module', 'main'],
   conditions: ['import', 'browser', 'default'],
-  outfile,
+  outfile: outfileDocs,
   logLevel: 'warning',
   banner: {
     js: '/* Claude Code — browser bundle for GitHub Pages */\n',
@@ -113,10 +127,12 @@ await esbuild.build({
   ],
 });
 
-let text = readFileSync(outfile, 'utf8');
+let text = readFileSync(outfileDocs, 'utf8');
 if (text.startsWith('#!')) {
   text = text.replace(/^#![^\n]*/, '');
-  writeFileSync(outfile, text, 'utf8');
+  writeFileSync(outfileDocs, text, 'utf8');
 }
+writeFileSync(outfileDist, text, 'utf8');
 
-console.log(`Bundled Claude Code CLI → ${outfile}`);
+console.log(`Bundled Claude Code CLI → ${outfileDocs}`);
+console.log(`Also copied for local dev → ${outfileDist}`);

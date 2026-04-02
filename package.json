@@ -8,6 +8,7 @@
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",
+    "./napi-bridge/run-in-tab": "./napi-bridge/run-in-tab.mjs",
     "./dist/edgejs.js": "./dist/edgejs.js"
   },
   "scripts": {
@@ -21,6 +22,7 @@
     "test:e2e": "node tests/e2e/smoke-test.mjs",
     "test:e2e:headed": "node tests/e2e/smoke-test.mjs --headed",
     "test:guardrails": "node tests/test-guardrails.mjs",
+    "test:transport-policy": "node tests/test-transport-policy.mjs",
     "test:runtime-stability": "node tests/test-runtime-stability.mjs",
     "test:soak": "node tests/test-soak.mjs",
     "test:soak:quick": "node tests/test-soak.mjs --profile quick",
@@ -29,7 +31,6 @@
     "test:quick": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs",
     "test:in-tab-api-contract": "node tests/conformance/test-in-tab-api-contract.mjs",
     "test:in-tab-api-contract:bridge": "node scripts/run-with-env.mjs CONFORMANCE_TARGET=bridge tests/conformance/test-in-tab-api-contract.mjs",
-    "test:in-tab-api-contract:bridge:offline": "node scripts/run-with-env.mjs CONFORMANCE_TARGET=bridge NODEJS_CONTRACT_OFFLINE=1 tests/conformance/test-in-tab-api-contract.mjs",
     "test:in-tab-api-contract:node": "node scripts/run-with-env.mjs CONFORMANCE_TARGET=node tests/conformance/test-in-tab-api-contract.mjs",
     "build:in-tab-api-contract": "bun scripts/build-in-tab-api-contract.mjs",
     "test:in-tab-api-contract:bundle": "node dist/in-tab-api-contract.js",
@@ -37,20 +38,31 @@
     "test:nodejs-in-tab-contract": "node tests/test-node-in-tab-contract.mjs",
     "test:claude-contract": "npm run test:in-tab-api-contract",
     "test:claude-contract:bridge": "npm run test:in-tab-api-contract:bridge",
-    "test:claude-contract:bridge:offline": "npm run test:in-tab-api-contract:bridge:offline",
     "test:claude-contract:node": "npm run test:in-tab-api-contract:node",
     "build:claude-contract": "npm run build:in-tab-api-contract",
     "test:claude-contract:bundle": "npm run test:in-tab-api-contract:bundle",
     "test:claude-contract:browser": "node tests/test-node-in-tab-contract.mjs",
     "build:claude-contract:wasm": "npm run build:in-tab-api-contract:wasm",
     "test:claude-contract:wasm": "node tests/test-node-in-tab-contract.mjs",
-    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
+    "test:memfs-node-modules": "node tests/test-memfs-node-modules-seed.mjs",
+    "test:memfs-exports": "node tests/test-package-exports-resolve.mjs",
+    "test:memfs-esm-entry": "node tests/test-memfs-esm-entry.mjs",
+    "test:native-addon-reject": "node tests/test-native-addon-reject.mjs",
+    "test:run-node-entry": "node tests/test-run-node-entry-argv.mjs",
+    "test:memfs-reference-app": "node tests/test-memfs-reference-app.mjs",
+    "test:node-test-runner": "node tests/test-node-test-runner.mjs",
+    "test:memfs-import-meta-dynamic": "node tests/test-memfs-import-meta-and-dynamic.mjs",
+    "test:memfs-node-test": "node tests/test-memfs-node-test-in-tab.mjs",
+    "test:bundle-app-graph": "node tests/test-bundle-app-graph.mjs",
+    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
     "build": "bash build-emscripten.sh",
     "build:debug": "bash build-emscripten.sh --debug",
-    "lint": "make lint",
-    "size": "make size",
+    "lint": "node scripts/lint-repo.mjs",
+    "size": "node scripts/artifact-sizes.mjs",
     "clean": "make clean",
-    "pages:prepare": "node scripts/prepare-github-pages.mjs"
+    "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
+    "pages:prepare": "node scripts/prepare-github-pages.mjs",
+    "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"
   },
   "keywords": [
     "wasm",
@@ -64,8 +76,10 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.90",
     "@anthropic-ai/sdk": "^0.80.0",
     "playwright-core": "^1.58.2",
+    "ws": "^8.20.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0",
     "xterm-addon-web-links": "^0.9.0"

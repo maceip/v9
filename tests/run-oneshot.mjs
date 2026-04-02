@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { EventEmitter } from '../napi-bridge/eventemitter.js';
+import { stripLeadingHashbang } from './helpers/strip-leading-hashbang.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -82,7 +83,8 @@ const { initEdgeJS } = await import('../napi-bridge/index.js');
 // Solution: read the file, evaluate it, and extract the global.
 let moduleFactory;
 try {
-  const edgeSource = readFileSync(modulePath, 'utf8');
+  let edgeSource = readFileSync(modulePath, 'utf8');
+  edgeSource = stripLeadingHashbang(edgeSource);
   // Evaluate in a context where require() is available (Emscripten uses it)
   const { createRequire } = await import('node:module');
   const require = createRequire(modulePath);
