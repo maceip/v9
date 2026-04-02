@@ -15,6 +15,7 @@ import { ZoomController } from './zoom.js';
 import { initIcons } from './icons.js';
 import { SwipeDismiss, swipeParams } from './swipe.js';
 import { Dial } from './dial.js';
+import { TacticalHUD } from './hud.js';
 
 // ── State ──
 let state = 'IDLE';
@@ -422,6 +423,9 @@ dial.add('Swipe', 'minScale',      swipeParams.minWindowScale, 0.6, 0.95, v => s
 dial.add('Swipe', 'flingSpeed',    swipeParams.flingThreshold, 200, 1000, v => swipeParams.flingThreshold = v, 10);
 dial.add('Swipe', 'dismissDur',    swipeParams.dismissDuration, 150, 600, v => swipeParams.dismissDuration = v, 10);
 dial.add('Swipe', 'minDrag',       swipeParams.minDragDistance, 2, 20,    v => swipeParams.minDragDistance = v, 1);
+
+// ── Tactical HUD — editor hotkey detection ──
+const hud = new TacticalHUD();
 
 // ── Done — page is interactive ──
 console.log('[v9] Page ready. Press D to open dial panel.');

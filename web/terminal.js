@@ -332,6 +332,7 @@ async function boot() {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 14,
+    fontWeight: 'bold',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
       background: '#1a1b26',
@@ -467,6 +468,30 @@ async function boot() {
 
   globalThis.__edgeTerm = term;
   globalThis.__edgeRuntime = runtime;
+
+  // ── HUD message handlers (npm inject / file drop from parent) ──
+  window.addEventListener('message', async (e) => {
+    if (!e.data || typeof e.data.type !== 'string') return;
+    if (e.data.type === 'v9:inject-npm') {
+      const pkg = e.data.package;
+      term.writeln(`\r\n\x1b[32m[hud]\x1b[0m npm install ${pkg}`);
+      if (runtime && typeof runtime.pushStdin === 'function') {
+        runtime.pushStdin(`npm install ${pkg}\n`);
+      }
+    }
+    if (e.data.type === 'v9:inject-file') {
+      const { name, content } = e.data;
+      term.writeln(`\r\n\x1b[32m[hud]\x1b[0m injecting file: ${name} (${content.length} bytes)`);
+      if (runtime && typeof runtime.writeFile === 'function') {
+        try {
+          runtime.writeFile(`/home/user/${name}`, content);
+          term.writeln(`\x1b[32m[hud]\x1b[0m wrote /home/user/${name}`);
+        } catch (err) {
+          term.writeln(`\x1b[31m[hud]\x1b[0m write failed: ${err.message || err}`);
+        }
+      }
+    }
+  });
 }
 
 function _safe(str) {
