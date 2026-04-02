@@ -16,6 +16,7 @@ import { initIcons } from './icons.js';
 import { SwipeDismiss, swipeParams } from './swipe.js';
 import { Dial } from './dial.js';
 import { TacticalHUD } from './hud.js';
+import { initThemeSwitcher } from './theme.js';
 
 // ── State ──
 let state = 'IDLE';
@@ -426,6 +427,9 @@ dial.add('Swipe', 'minDrag',       swipeParams.minDragDistance, 2, 20,    v => s
 
 // ── Tactical HUD — editor hotkey detection ──
 const hud = new TacticalHUD();
+
+// ── Theme crayon switcher ──
+initThemeSwitcher();
 
 // ── Done — page is interactive ──
 console.log('[v9] Page ready. Press D to open dial panel.');

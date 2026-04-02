@@ -51,6 +51,7 @@
       --text-secondary: rgba(232,228,222,0.4);
       --overlay-bg: rgba(10,10,15,0.97);
       --icon-tint: 0;
+      --crayon: #ffffff;
       color-scheme: dark;
     }
 
@@ -73,6 +74,7 @@
       --text-secondary: rgba(214,226,238,0.4);
       --overlay-bg: rgba(27,45,64,0.97);
       --icon-tint: 0;
+      --crayon: #6fb8e3;
       color-scheme: dark;
     }
 
@@ -95,7 +97,100 @@
       --text-secondary: rgba(10,10,15,0.35);
       --overlay-bg: rgba(232,228,222,0.97);
       --icon-tint: 1;
+      --crayon: #00034a;
       color-scheme: light;
+    }
+
+    /* ── Theme: Solarized Light ── */
+    [data-theme="solarized-light"] {
+      --bg: #fdf6e3;
+      --fg: #657b83;
+      --nav-bg: #eee8d5;
+      --nav-border: #d3cbb7;
+      --nav-highlight: rgba(255,255,255,0.4);
+      --frame-bg: #eee8d5;
+      --frame-border: #93a1a1;
+      --frame-joint: rgba(0,0,0,0.1);
+      --frame-highlight: rgba(255,255,255,0.5);
+      --glass-tint: rgba(147,161,161,0.08);
+      --accent: #268bd2;
+      --accent-dim: rgba(38,139,210,0.12);
+      --spot-color: rgba(253,246,227,0.08);
+      --fog-color: rgba(253,246,227,0.85);
+      --text-secondary: rgba(101,123,131,0.4);
+      --overlay-bg: rgba(238,232,213,0.97);
+      --icon-tint: 1;
+      --crayon: #268bd2;
+      color-scheme: light;
+    }
+
+    /* ── Theme: Solarized Dark ── */
+    [data-theme="solarized-dark"] {
+      --bg: #002b36;
+      --fg: #839496;
+      --nav-bg: #073642;
+      --nav-border: #586e75;
+      --nav-highlight: rgba(147,161,161,0.04);
+      --frame-bg: #073642;
+      --frame-border: #586e75;
+      --frame-joint: rgba(147,161,161,0.1);
+      --frame-highlight: rgba(147,161,161,0.03);
+      --glass-tint: rgba(88,110,117,0.08);
+      --accent: #b58900;
+      --accent-dim: rgba(181,137,0,0.15);
+      --spot-color: rgba(7,54,66,0.08);
+      --fog-color: rgba(0,43,54,0.85);
+      --text-secondary: rgba(131,148,150,0.4);
+      --overlay-bg: rgba(7,54,66,0.97);
+      --icon-tint: 0;
+      --crayon: #b58900;
+      color-scheme: dark;
+    }
+
+    /* ── Theme: Catppuccin Mocha ── */
+    [data-theme="catppuccin"] {
+      --bg: #1e1e2e;
+      --fg: #cdd6f4;
+      --nav-bg: #181825;
+      --nav-border: #313244;
+      --nav-highlight: rgba(205,214,244,0.03);
+      --frame-bg: #181825;
+      --frame-border: #585b70;
+      --frame-joint: rgba(88,91,112,0.15);
+      --frame-highlight: rgba(205,214,244,0.02);
+      --glass-tint: rgba(137,180,250,0.05);
+      --accent: #cba6f7;
+      --accent-dim: rgba(203,166,247,0.15);
+      --spot-color: rgba(137,180,250,0.04);
+      --fog-color: rgba(30,30,46,0.85);
+      --text-secondary: rgba(205,214,244,0.35);
+      --overlay-bg: rgba(24,24,37,0.97);
+      --icon-tint: 0;
+      --crayon: #cba6f7;
+      color-scheme: dark;
+    }
+
+    /* ── Theme: Tokyo Night ── */
+    [data-theme="tokyo-night"] {
+      --bg: #1a1b26;
+      --fg: #a9b1d6;
+      --nav-bg: #16161e;
+      --nav-border: #292e42;
+      --nav-highlight: rgba(169,177,214,0.03);
+      --frame-bg: #16161e;
+      --frame-border: #3b4261;
+      --frame-joint: rgba(59,66,97,0.2);
+      --frame-highlight: rgba(169,177,214,0.02);
+      --glass-tint: rgba(122,162,247,0.05);
+      --accent: #7aa2f7;
+      --accent-dim: rgba(122,162,247,0.15);
+      --spot-color: rgba(122,162,247,0.04);
+      --fog-color: rgba(26,27,38,0.85);
+      --text-secondary: rgba(169,177,214,0.35);
+      --overlay-bg: rgba(22,22,30,0.97);
+      --icon-tint: 0;
+      --crayon: #7aa2f7;
+      color-scheme: dark;
     }
 
     html, body {
@@ -367,6 +462,28 @@
     :root.light .frame-icon { opacity: 0.35; }
     .frame-icon.tl { top: 8px; left: 8px; }
     .frame-icon.tr { top: 8px; right: 8px; }
+
+    /* ── Theme crayon — tiny crayon breaking bottom-left frame border ── */
+    #theme-crayon {
+      position: absolute;
+      bottom: -3px; left: 14px;
+      width: 10px; height: 28px;
+      z-index: 10;
+      cursor: pointer;
+      filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    #theme-crayon:hover {
+      transform: translateY(-2px) scale(1.15);
+    }
+    #theme-crayon:active {
+      transform: translateY(1px) scale(0.95);
+    }
+    /* Crayon SVG parts colored by --crayon var */
+    .crayon-body { fill: var(--crayon, #fff); }
+    .crayon-tip { fill: var(--crayon, #fff); opacity: 0.85; }
+    .crayon-band { fill: rgba(0,0,0,0.2); }
+    .crayon-stripe { fill: rgba(0,0,0,0.12); }
     .frame-icon.bl { bottom: 8px; left: 8px; }
     .frame-icon.br { bottom: 8px; right: 8px; }
 
@@ -668,6 +785,22 @@
         <img class="frame-icon tr" src="icons/Shield.svg" alt="" loading="lazy">
         <img class="frame-icon bl" src="icons/Zap.svg" alt="" loading="lazy">
         <img class="frame-icon br" src="icons/Terminal.svg" alt="" loading="lazy">
+
+        <!-- Theme crayon — breaks bottom-left border, click to cycle themes -->
+        <svg id="theme-crayon" viewBox="0 0 10 28" xmlns="http://www.w3.org/2000/svg" aria-label="Change theme">
+          <!-- tip -->
+          <polygon class="crayon-tip" points="2,28 5,24 8,28"/>
+          <!-- body -->
+          <rect class="crayon-body" x="1.5" y="2" width="7" height="22" rx="1.5"/>
+          <!-- bands -->
+          <rect class="crayon-band" x="1.5" y="7" width="7" height="1.5" rx="0.3"/>
+          <rect class="crayon-band" x="1.5" y="10" width="7" height="1.5" rx="0.3"/>
+          <!-- wavy stripe -->
+          <path class="crayon-stripe" d="M2 15 Q3.5 13.5 5 15 Q6.5 16.5 8 15" stroke-width="0.8" stroke="rgba(0,0,0,0.15)" fill="none"/>
+          <path class="crayon-stripe" d="M2 17.5 Q3.5 16 5 17.5 Q6.5 19 8 17.5" stroke-width="0.8" stroke="rgba(0,0,0,0.15)" fill="none"/>
+          <!-- top cap -->
+          <rect class="crayon-body" x="1.5" y="0" width="7" height="4" rx="2"/>
+        </svg>
 
         <!-- Glass screen -->
         <div id="terminal-screen">
