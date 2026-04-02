@@ -683,11 +683,8 @@
   <!-- Dismissed window tray -->
   <div id="dismissed-tray"></div>
 
-  <!-- Optional Anthropic CORS proxy for the CLI iframe (?proxy= is forwarded from here). -->
-  <script>
-    // Deploy web/cors-proxy-worker.js (see docs/TRANSPORT.md), allow your Pages origin in ALLOWED_ORIGINS, then set e.g.:
-    // window.__V9_ANTHROPIC_FETCH_PROXY__ = 'https://edgejs-cors-proxy.your-account.workers.dev';
-  </script>
+  <!-- Default GitHub Pages demo proxy (web/pages-proxy-default.js); override with ?proxy= or __V9_ANTHROPIC_FETCH_PROXY__. -->
+  <script src="web/pages-proxy-default.js"></script>
 
   <!-- ── Scripts (deferred, non-blocking) ── -->
   <script type="module" src="js/v9-app.js"></script>

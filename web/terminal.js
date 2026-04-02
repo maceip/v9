@@ -67,30 +67,6 @@ function baseEnv(apiKey) {
   };
 }
 
-function writeBanner(term, { bundleUrl, autorun }) {
-  term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
-  term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mNode.js in the browser\x1b[0m          \x1b[1;34m│\x1b[0m');
-  term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
-  term.writeln('');
-  term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
-  // No API-key banner: Claude Code uses subscription / OAuth; optional sessionStorage remains for dev.
-  const host = globalThis.location?.hostname || '';
-  const isLocalDev = host === 'localhost' || host === '127.0.0.1';
-  if (isLocalDev) {
-    term.writeln(
-      `\x1b[32m✓ Anthropic API (browser fetch → dev CORS proxy on :8081): ${DEFAULT_ANTHROPIC_BASE_URL}\x1b[0m`,
-    );
-  }
-  term.writeln(`\x1b[32m✓ Workspace root: ${DEFAULT_WORKSPACE}\x1b[0m`);
-  if (bundleUrl) {
-    const mode = autorun ? 'autorun enabled' : 'deferred start';
-    term.writeln(`\x1b[32m✓ App bundle: ${bundleUrl} (${mode})\x1b[0m`);
-  } else {
-    term.writeln('\x1b[90mNo app bundle. Example: ?bundle=/dist/app-bundle.js\x1b[0m');
-  }
-  
-}
-
 function ensureDirectory(runtime, path) {
   try {
     runtime.fs.mkdirSync(path, { recursive: true });
@@ -216,10 +192,6 @@ function createCliController({ term, runtime, processBridge, config }) {
     if (clearTerminal) {
       term.reset();
     }
-    writeBanner(term, { bundleUrl, autorun: false });
-    term.writeln('');
-    term.writeln(`\x1b[32m✓ Launching bundled app (run ${runCounter})\x1b[0m`);
-    term.writeln('');
 
     ensureDirectory(runtime, DEFAULT_HOME);
     ensureDirectory(runtime, `${DEFAULT_HOME}/.node-in-tab`);
@@ -316,13 +288,15 @@ function createCliController({ term, runtime, processBridge, config }) {
   };
 }
 
-async function registerOptionalVendorSdk(runtime, term) {
+/** Optional pre-bundled @anthropic-ai/sdk (scripts/bundle-sdk.sh). Silent if missing — vendor resolves via import map. */
+async function registerOptionalVendorSdk(runtime) {
   try {
     const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
     runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
     runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
   } catch {
-    term.writeln('\x1b[33m[sdk] Optional @anthropic-ai/sdk override not present (dist/anthropic-sdk-bundle.js)\x1b[0m');
+    // Expected in normal builds; uncomment for debugging:
+    // console.debug('[sdk] No dist/anthropic-sdk-bundle.js — using default SDK resolution');
   }
 }
 
@@ -419,7 +393,7 @@ async function boot() {
     }
     syncProcessTerminalSize(processBridge, term.cols, term.rows);
 
-    await registerOptionalVendorSdk(runtime, term);
+    await registerOptionalVendorSdk(runtime);
 
     const controller = createCliController({ term, runtime, processBridge, config });
     globalThis.__edgeCli = controller;
@@ -429,15 +403,6 @@ async function boot() {
 
     if (config.appBundle && config.autorun) {
       await controller.start();
-    } else {
-      writeBanner(term, {
-        bundleUrl: config.appBundle,
-        autorun: config.autorun,
-      });
-      if (config.appBundle) {
-        term.writeln('');
-        term.writeln('\x1b[90mDeferred start. Call __edgeCli.start() to run the bundle.\x1b[0m');
-      }
     }
   } catch (err) {
     term.writeln(`\x1b[33m[edgejs] Runtime not available: ${_safe(err.message)}\x1b[0m`);
