@@ -60,7 +60,7 @@ Most blockers for **existing** Node repos are:
 
 Ordered so each step builds toward “run a real `package.json` repo” without pretending parity where it does not exist.
 
-1. **`node_modules` on MEMFS** — Prove a real tree (copy or unpack) and correct path access from the runtime.
+1. **`node_modules` on MEMFS** — Prove a real tree (copy or unpack) and correct path access from the runtime. **Done (baseline):** `tests/helpers/seed-memfs-from-host.mjs` materializes host paths into `runtime.fs`; `npm run test:memfs-node-modules` checks a real `node_modules/fflate` tree byte-for-byte in MEMFS.
 2. **Minimal resolver** — `main` + simple `exports` object forms; expand to patterns and `imports` later.
 3. **CJS loader** — `require`, cache, `__dirname` / `__filename`, JSON requires as needed by the reference app.
 4. **ESM loader + CJS interop** — Dynamic `import()`, `import.meta.url`, extension rules aligned with on-disk layout.
