@@ -2,6 +2,7 @@
 /**
  * Write build/edge — tiny CommonJS shim that loads build/edge.js (Emscripten MODULARIZE output).
  * Must be authored in JS: a Makefile printf cannot safely embed template literals/backticks.
+ * Strips a leading #! line: V8 rejects hashbang inside new Function() bodies (see tests/helpers/strip-leading-hashbang.mjs).
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'path';
