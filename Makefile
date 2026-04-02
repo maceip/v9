@@ -1,5 +1,8 @@
 # v9 — EdgeJS Browser Runtime Build
 # Works in Git Bash / MSYS2 on Windows and native Linux/macOS
+#
+# From-scratch:  make setup && source ~/emsdk/emsdk_env.sh && make all
+# If wasm-ld crashes (SIGSEGV / LLD 19 bug): EMSDK_VERSION=tot make setup-emsdk
 
 # ---- Shell Detection ----
 # Always use bash — Git Bash on Windows, /bin/bash elsewhere.

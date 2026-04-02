@@ -115,6 +115,18 @@ EdgeJS C++ (upstream)  ──→  patches/edgejs-emscripten.patch
     web/index.html  +  import maps  +  xterm.js terminal
 ```
 
+## Troubleshooting
+
+**`wasm-ld` SIGSEGV during link step** — Known LLD 19 bug (`lld::wasm::ImportSection::addImport`). Affects emsdk 3.1.64 on some hosts. Fix:
+
+```bash
+EMSDK_VERSION=tot make setup-emsdk    # installs latest emsdk with fixed LLD
+source ~/emsdk/emsdk_env.sh
+make clean && make configure && make build
+```
+
+CI pins 3.1.64; use `tot` locally if your machine hits this. See `docs/BUILD_TOOLCHAIN.md` for more troubleshooting.
+
 ## Next steps
 
 - **Run integration tests**: see [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) for Chromium setup, `CHROME_BIN`, Docker, and CI parity
