@@ -33,6 +33,11 @@ Thumbs.db
 # Ephemeral / agent scratch
 .tmp/
 
+# GitHub Pages generated runtime (see scripts/prepare-github-pages.mjs)
+docs/web/
+docs/napi-bridge/
+docs/dist/
+
 # Local secrets and one-off debug artifacts
 .github/.env
 run_stage1.mjs

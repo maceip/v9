@@ -1,0 +1,50 @@
+#!/usr/bin/env node
+/**
+ * Assemble `docs/` for GitHub Pages: copy current `web/` + `napi-bridge/`, rewrite
+ * absolute /napi-bridge/ import maps to ../napi-bridge/, sync Wasm js from dist/.
+ *
+ * Run after `make build` (or equivalent) so dist/edgejs.{js,wasm} exist.
+ *
+ * Usage: node scripts/prepare-github-pages.mjs
+ */
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const docs = join(root, 'docs');
+const docsWeb = join(docs, 'web');
+const docsBridge = join(docs, 'napi-bridge');
+const docsDist = join(docs, 'dist');
+const srcWeb = join(root, 'web');
+const srcBridge = join(root, 'napi-bridge');
+const srcDist = join(root, 'dist');
+
+function rmDir(p) {
+  try {
+    rmSync(p, { recursive: true, force: true });
+  } catch { /* ignore */ }
+}
+
+rmDir(docsWeb);
+rmDir(docsBridge);
+mkdirSync(docsDist, { recursive: true });
+
+cpSync(srcWeb, docsWeb, { recursive: true });
+cpSync(srcBridge, docsBridge, { recursive: true });
+
+const idx = join(docsWeb, 'index.html');
+let html = readFileSync(idx, 'utf8');
+html = html.replaceAll('"/napi-bridge/', '"../napi-bridge/');
+writeFileSync(idx, html, 'utf8');
+
+for (const f of ['edgejs.js', 'edgejs.wasm']) {
+  const from = join(srcDist, f);
+  const to = join(docsDist, f);
+  if (existsSync(from)) copyFileSync(from, to);
+}
+
+const docsTest = join(docs, 'test');
+rmDir(docsTest);
+
+console.log('GitHub Pages payload prepared under docs/{web,napi-bridge,dist} (generated; see .gitignore)');

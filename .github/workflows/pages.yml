@@ -1,0 +1,63 @@
+# Deploy static landing + full browser runtime (web + napi-bridge + wasm + Claude bundle) to GitHub Pages.
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Claude Code CLI (bundle input only)
+        run: npm install @anthropic-ai/claude-code@2 --no-save
+
+      - name: Bundle Claude Code for browser
+        run: node scripts/bundle-claude-for-pages.mjs
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+
+      - name: Build EdgeJS (wasm + JS loader)
+        run: |
+          source "$EMSDK/emsdk_env.sh"
+          make configure
+          make build
+
+      - name: Assemble docs/ (current web + napi-bridge + dist)
+        run: node scripts/prepare-github-pages.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

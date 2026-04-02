@@ -59,6 +59,20 @@ Legacy names `test:claude-contract:*` still point at the same commands during mi
 - `docs/NODEJS_IN_TAB_ROADMAP.md` — architecture + next milestones  
 - `.planning/` — minimal release-gate metadata (large historical phase trees removed)
 
+## GitHub Pages (landing + Claude in iframe)
+
+The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) on **`main`** / **`dev`**:
+
+1. Installs **`@anthropic-ai/claude-code`** and runs **`scripts/bundle-claude-for-pages.mjs`** → `docs/dist/claude-code-cli.js`.
+2. Builds **`dist/edgejs.{js,wasm}`** with Emscripten (`make build`).
+3. Runs **`scripts/prepare-github-pages.mjs`** — copies current **`web/`** and **`napi-bridge/`** into **`docs/`**, rewrites `/napi-bridge/` import maps to **`../napi-bridge/`** for project-page URLs, and copies wasm into **`docs/dist/`**.
+
+The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<repo>/dist/claude-code-cli.js&autorun=1`** so the same runtime as localhost loads **Claude Code** in the iframe.
+
+Generated paths **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`** are gitignored; do not commit them. To test assembly locally after a full wasm build:
+
+`node scripts/bundle-claude-for-pages.mjs && node scripts/prepare-github-pages.mjs`
+
 ## License / private
 
 `private: true` in `package.json` — adjust for your distribution model.
