@@ -3204,6 +3204,7 @@ class NapiBridge {
  * @param {string} options.wasmUrl - URL to edgejs.wasm
  * @param {object} options.env - Environment variables
  * @param {object} options.fs - Virtual filesystem initial contents
+ * @param {boolean} [options.preferJsScriptBridge] - Skip wasm invokeMain for runFile/eval; use MEMFS JS executor only (tests / constrained hosts)
  * @returns {Promise<object>} EdgeJS runtime instance
  */
 export async function initEdgeJS(options = {}) {
@@ -3268,7 +3269,7 @@ export async function initEdgeJS(options = {}) {
   // ── Shared imports (used by both bridge-only and Wasm paths) ───────
   const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
   const { createFilesystem } = await import('./memfs.js');
-  const { createFsModule } = await import('./fs.js');
+  const { createFsModule, setActiveFsModule } = await import('./fs.js');
   const { setMemfs: _setShellMemfs } = await import('./shell-commands.js');
   const { setForkRequire: _setForkRequire } = await import('./child-process.js');
 
@@ -3285,6 +3286,7 @@ export async function initEdgeJS(options = {}) {
     _sharedMemfs,
     () => _sharedProcessBridge.cwd(),
   );
+  setActiveFsModule(_sharedBridgeFs);
 
   // Wire onStdout / onStderr callbacks into processBridge.
   // Optimization: reuse a single TextDecoder and batch writes per microtask
@@ -3504,6 +3506,10 @@ export async function initEdgeJS(options = {}) {
           try { _sharedProcessBridge.stderr.write(`Error: ${err.message}\n`); } catch {}
           return 1;
         }
+      },
+
+      async runFileAsync(path) {
+        return this.runFile(path);
       },
 
       execute(scriptPath, opts = {}) {
@@ -3815,7 +3821,7 @@ export async function initEdgeJS(options = {}) {
   // When the C++ runtime's EdgeRunScriptFileWithLoop aborts due to
   // stubbed libuv, we fall back to evaluating scripts directly in the
   // browser's V8 engine using the bridge's own module system.
-  let _useJsBridge = false;
+  let _useJsBridge = Boolean(options.preferJsScriptBridge);
 
   function executeViaBridge(scriptPath) {
     const stdoutLines = [];
@@ -3901,7 +3907,16 @@ export async function initEdgeJS(options = {}) {
 
     try {
       const fn = new Function(...contextKeys, source);
-      fn(...contextVals);
+      const ret = fn(...contextVals);
+      if (ret != null && typeof ret.then === 'function') {
+        stderrLines.push(
+          'Script returned a Promise; use runtime.runFileAsync() so async work completes.',
+        );
+        if (options.onStderr) {
+          options.onStderr(stderrLines[stderrLines.length - 1]);
+        }
+        return { status: 1, stdout: stdoutLines, stderr: stderrLines };
+      }
       return { status: 0, stdout: stdoutLines, stderr: stderrLines };
     } catch (err) {
       if (err.exitCode !== undefined) {
@@ -3911,6 +3926,141 @@ export async function initEdgeJS(options = {}) {
       if (options.onStderr) options.onStderr(err.stack || err.message);
       return { status: 1, stdout: stdoutLines, stderr: stderrLines };
     }
+  }
+
+  async function executeViaBridgeAsync(scriptPath) {
+    const stdoutLines = [];
+    const stderrLines = [];
+
+    let source;
+    try {
+      source = _sharedBridgeFs.readFileSync(scriptPath, 'utf8');
+    } catch (err) {
+      return { status: 1, stdout: [], stderr: [`Cannot read ${scriptPath}: ${err.message}`] };
+    }
+
+    if (source.startsWith('#!')) {
+      source = source.substring(source.indexOf('\n') + 1);
+    }
+
+    const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
+    const moduleObj = { exports: {}, id: scriptPath, filename: scriptPath, loaded: false };
+
+    const contextKeys = ['require', 'module', 'exports', '__filename', '__dirname', 'console', 'process', 'Buffer', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'queueMicrotask', 'globalThis'];
+    const contextVals = [
+      _memfsRequire,
+      moduleObj,
+      moduleObj.exports,
+      scriptPath,
+      dirname,
+      {
+        log: (...args) => {
+          const line = args.map(String).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+        error: (...args) => {
+          const line = args.map(String).join(' ');
+          stderrLines.push(line);
+          if (options.onStderr) options.onStderr(line);
+        },
+        warn: (...args) => {
+          const line = args.map(String).join(' ');
+          stderrLines.push(line);
+          if (options.onStderr) options.onStderr(line);
+        },
+        info: (...args) => {
+          const line = args.map(String).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+        debug: () => {},
+        trace: () => {},
+        dir: (...args) => {
+          const line = args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+          stdoutLines.push(line);
+          if (options.onStdout) options.onStdout(line);
+        },
+      },
+      {
+        argv: ['edge', scriptPath],
+        env: { HOME: '/home/user', PATH: '/usr/bin:/bin', NODE_ENV: 'production', ...options.env },
+        cwd: () => _sharedMemfs.cwd?.() || '/',
+        exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
+        stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
+        stderr: { write: (data) => { const s = String(data); stderrLines.push(s); if (options.onStderr) options.onStderr(s); } },
+        platform: 'linux',
+        arch: 'wasm32',
+        version: 'v22.0.0',
+        versions: { node: 'v22.0.0', v8: '12.0.0' },
+        hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
+        nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
+        on: () => ({ on: () => ({}) }),
+        removeListener: () => {},
+      },
+      globalThis.Buffer || { from: (x) => new Uint8Array(typeof x === 'string' ? new TextEncoder().encode(x) : x) },
+      globalThis.setTimeout,
+      globalThis.setInterval,
+      globalThis.clearTimeout,
+      globalThis.clearInterval,
+      globalThis.queueMicrotask,
+      globalThis,
+    ];
+
+    try {
+      const fn = new Function(...contextKeys, source);
+      const ret = fn(...contextVals);
+      if (ret != null && typeof ret.then === 'function') {
+        await ret;
+      }
+      return { status: 0, stdout: stdoutLines, stderr: stderrLines };
+    } catch (err) {
+      if (err.exitCode !== undefined) {
+        return { status: err.exitCode, stdout: stdoutLines, stderr: stderrLines };
+      }
+      stderrLines.push(err.stack || err.message);
+      if (options.onStderr) options.onStderr(err.stack || err.message);
+      return { status: 1, stdout: stdoutLines, stderr: stderrLines };
+    }
+  }
+
+  async function executeCliAsync(args) {
+    const stdoutStart = stdoutBuffer.length;
+    const stderrStart = stderrBuffer.length;
+
+    if (!_useJsBridge) {
+      try {
+        const status = invokeMain(args);
+        const stdout = stdoutBuffer.slice(stdoutStart);
+        const stderr = stdoutBuffer.slice(stderrStart);
+        if (status === 1 && stderr.some((s) => s.includes('Failed to initialize') || s.includes('Aborted'))) {
+          _useJsBridge = true;
+        } else {
+          return { status, stdout, stderr };
+        }
+      } catch (err) {
+        if (err.message?.includes('unreachable') || err.message?.includes('Aborted')) {
+          _useJsBridge = true;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (args[0] === '-p' && args.length >= 2) {
+      const code = args.slice(1).join(' ');
+      const tempPath = '/.edge/_eval_' + Date.now() + '.js';
+      try { _sharedBridgeFs.mkdirSync('/.edge', { recursive: true }); } catch {}
+      _sharedBridgeFs.writeFileSync(tempPath, `console.log(eval(${JSON.stringify(code)}))`);
+      const result = await executeViaBridgeAsync(tempPath);
+      try { _sharedBridgeFs.unlinkSync(tempPath); } catch {}
+      return result;
+    }
+    if (args.length >= 1) {
+      return await executeViaBridgeAsync(args[0]);
+    }
+
+    return { status: 1, stdout: [], stderr: ['No script specified'] };
   }
 
   function executeCli(args) {
@@ -4277,6 +4427,15 @@ globalThis.__edge_execution_results[__edge_exec_id] = {
     runFile(path) {
       const target = String(path);
       const execution = executeCli([target]);
+      return execution.status;
+    },
+
+    /**
+     * Like runFile, but waits for a Promise returned by the script (top-level async / IIFE).
+     */
+    async runFileAsync(path) {
+      const target = String(path);
+      const execution = await executeCliAsync([target]);
       return execution.status;
     },
 

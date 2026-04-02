@@ -2,22 +2,47 @@
 
 import { spawn } from 'node:child_process';
 
-const [, , envArg, scriptPath, ...scriptArgs] = process.argv;
+const raw = process.argv.slice(2);
 
-if (!envArg || !scriptPath || !envArg.includes('=')) {
-  console.error('Usage: node scripts/run-with-env.mjs KEY=VALUE path/to/script.mjs [args...]');
+function usage() {
+  console.error(
+    'Usage: node scripts/run-with-env.mjs KEY=VALUE [KEY2=VALUE2 ...] path/to/script.mjs [args...]',
+  );
+}
+
+if (raw.length < 2) {
+  usage();
   process.exit(1);
 }
 
-const splitIndex = envArg.indexOf('=');
-const key = envArg.slice(0, splitIndex);
-const value = envArg.slice(splitIndex + 1);
+const extraEnv = {};
+let i = 0;
+for (; i < raw.length; i++) {
+  const a = raw[i];
+  const eq = a.indexOf('=');
+  if (eq > 0 && eq < a.length) {
+    const key = a.slice(0, eq);
+    if (key && !key.startsWith('-')) {
+      extraEnv[key] = a.slice(eq + 1);
+      continue;
+    }
+  }
+  break;
+}
+
+const scriptPath = raw[i];
+const scriptArgs = raw.slice(i + 1);
+
+if (!scriptPath || Object.keys(extraEnv).length === 0) {
+  usage();
+  process.exit(1);
+}
 
 const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
   stdio: 'inherit',
   env: {
     ...process.env,
-    [key]: value,
+    ...extraEnv,
   },
 });
 

@@ -15,10 +15,89 @@
 (function() {
   'use strict';
 
+  const FORBIDDEN_BROWSER_HEADERS = new Set([
+    'accept-charset',
+    'accept-encoding',
+    'access-control-request-headers',
+    'access-control-request-method',
+    'connection',
+    'content-length',
+    'cookie',
+    'cookie2',
+    'date',
+    'dnt',
+    'expect',
+    'host',
+    'keep-alive',
+    'origin',
+    'permissions-policy',
+    'proxy-authorization',
+    'referer',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+    'user-agent',
+    'via',
+  ]);
+
+  function isForbiddenBrowserHeader(name) {
+    const lower = String(name || '').toLowerCase();
+    return FORBIDDEN_BROWSER_HEADERS.has(lower) || lower.startsWith('sec-') || lower.startsWith('proxy-');
+  }
+
+  function filterBrowserRequestHeaders(headersLike) {
+    const out = {};
+    if (!headersLike) return out;
+    const entries = typeof headersLike.entries === 'function'
+      ? Array.from(headersLike.entries())
+      : Object.entries(headersLike);
+    for (const [key, value] of entries) {
+      if (isForbiddenBrowserHeader(key)) continue;
+      out[key] = value;
+    }
+    return out;
+  }
+
+  function encodeProxyHeaders(headersLike) {
+    try {
+      const json = JSON.stringify(filterBrowserRequestHeaders(headersLike));
+      return btoa(unescape(encodeURIComponent(json)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+    } catch {
+      return '';
+    }
+  }
+
   // ─── global ─────────────────────────────────────────────────────
   // Node.js uses `global` as the global object; browsers use `globalThis`.
   if (typeof globalThis.global === 'undefined') {
     globalThis.global = globalThis;
+  }
+
+  // ─── claude-js / Bun macro globals (match src/entrypoints/cli.tsx) ─
+  // ESM chunks may evaluate before the CLI entry's inline polyfills run.
+  if (typeof globalThis.MACRO === 'undefined') {
+    globalThis.MACRO = {
+      VERSION: '0.0.0-browser',
+      BUILD_TIME: new Date().toISOString(),
+      FEEDBACK_CHANNEL: '',
+      ISSUES_EXPLAINER: '',
+      NATIVE_PACKAGE_URL: '',
+      PACKAGE_URL: '',
+      VERSION_CHANGELOG: '',
+    };
+  }
+  if (typeof globalThis.BUILD_TARGET === 'undefined') {
+    globalThis.BUILD_TARGET = 'browser';
+  }
+  if (typeof globalThis.BUILD_ENV === 'undefined') {
+    globalThis.BUILD_ENV = 'production';
+  }
+  if (typeof globalThis.INTERFACE_TYPE === 'undefined') {
+    globalThis.INTERFACE_TYPE = 'browser';
   }
 
   // ─── Error logging for debugging ───────────────────────────────
@@ -49,7 +128,16 @@
   if (typeof globalThis.require === 'undefined') {
     globalThis.require = function(name) {
       if (name === 'node:worker_threads' || name === 'worker_threads') {
-        return { isMainThread: true, workerData: null, Worker: class {} };
+        return {
+          isMainThread: true,
+          workerData: null,
+          threadId: 0,
+          parentPort: null,
+          Worker: globalThis.Worker || class {},
+          MessageChannel: globalThis.MessageChannel || class {},
+          MessagePort: globalThis.MessagePort || class {},
+          BroadcastChannel: globalThis.BroadcastChannel || class {},
+        };
       }
       if (name === 'node:fs' || name === 'fs') {
         return {
@@ -429,6 +517,7 @@
   if (_proxyUrl) {
     globalThis.fetch = function patchedFetch(input, init) {
       let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
+      const sanitizedInit = init ? { ...init, headers: filterBrowserRequestHeaders(init.headers || {}) } : init;
 
       // Route Anthropic API calls through CORS proxy
       if (url.includes('api.anthropic.com') || url.includes('platform.claude.com')) {
@@ -441,15 +530,32 @@
         url = target.toString();
 
         // Tell the proxy which host to forward to
-        const proxyInit = { ...init, headers: { ...(init?.headers || {}), 'X-Proxy-Host': origHost } };
+        const proxyInit = {
+          ...sanitizedInit,
+          headers: { ...filterBrowserRequestHeaders(init?.headers || {}), 'X-Proxy-Host': origHost },
+        };
 
         if (typeof input === 'string') {
           return _origFetch.call(globalThis, url, proxyInit);
         }
-        return _origFetch.call(globalThis, new Request(url, { ...input, headers: { ...Object.fromEntries(input.headers?.entries?.() || []), 'X-Proxy-Host': origHost } }), init);
+        return _origFetch.call(
+          globalThis,
+          new Request(url, { ...input, headers: { ...filterBrowserRequestHeaders(input.headers), 'X-Proxy-Host': origHost } }),
+          sanitizedInit
+        );
       }
 
-      return _origFetch.call(globalThis, input, init);
+      if (typeof input === 'string') {
+        return _origFetch.call(globalThis, input, sanitizedInit);
+      }
+      if (input instanceof Request) {
+        return _origFetch.call(
+          globalThis,
+          new Request(input, { headers: filterBrowserRequestHeaders(input.headers) }),
+          sanitizedInit
+        );
+      }
+      return _origFetch.call(globalThis, input, sanitizedInit);
     };
     // Preserve fetch properties
     Object.setPrototypeOf(globalThis.fetch, _origFetch);
@@ -466,6 +572,135 @@
         url = target.toString();
       }
       return _origXHROpen.call(this, method, url, ...rest);
+    };
+    const _origXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+      if (isForbiddenBrowserHeader(name)) {
+        return;
+      }
+      return _origXHRSetRequestHeader.call(this, name, value);
+    };
+
+    if (!globalThis.__browserRuntimeNativeWebSocket) {
+      globalThis.__browserRuntimeNativeWebSocket = globalThis.WebSocket;
+    }
+
+    const NativeWebSocket = globalThis.__browserRuntimeNativeWebSocket;
+    globalThis.WebSocket = class BrowserRuntimeWebSocket extends NativeWebSocket {
+      constructor(url, protocolsOrOptions) {
+        const rawUrl = typeof url === 'string' ? url : String(url);
+        const hasProxyTarget = /^wss?:\/\//i.test(rawUrl);
+        const isObjectOptions =
+          protocolsOrOptions &&
+          typeof protocolsOrOptions === 'object' &&
+          !Array.isArray(protocolsOrOptions);
+
+        if (!hasProxyTarget || !isObjectOptions) {
+          super(url, protocolsOrOptions);
+          return;
+        }
+
+        const options = protocolsOrOptions || {};
+        const proxy = new URL(_proxyUrl);
+        proxy.protocol = proxy.protocol === 'https:' ? 'wss:' : 'ws:';
+        proxy.pathname = '/__ws';
+        proxy.searchParams.set('url', rawUrl);
+
+        const encodedHeaders = encodeProxyHeaders(options.headers);
+        if (encodedHeaders) {
+          proxy.searchParams.set('headers', encodedHeaders);
+        }
+
+        const protocols = Array.isArray(options.protocols)
+          ? options.protocols
+          : (typeof options.protocol === 'string' ? [options.protocol] : []);
+        for (const protocol of protocols) {
+          proxy.searchParams.append('protocol', protocol);
+        }
+
+        super(proxy.toString(), protocols);
+      }
+    };
+  }
+
+  // ─── External URL open + localhost callback capture ──────────────
+  // Generic browser-runtime support for Node apps that launch an
+  // external browser and expect a localhost redirect back.
+
+  function getBrowserLocalServerRegistry() {
+    if (!globalThis.__browserRuntimeLocalHttpServers) {
+      globalThis.__browserRuntimeLocalHttpServers = {};
+    }
+    return globalThis.__browserRuntimeLocalHttpServers;
+  }
+
+  function buildOAuthBridgeUrl(localRedirectUrl) {
+    try {
+      const local = new URL(localRedirectUrl);
+      const bridge = new URL('/web/oauth-bridge.html', globalThis.location?.origin || 'http://localhost:8080');
+      bridge.searchParams.set('edge_callback_origin', globalThis.location?.origin || bridge.origin);
+      bridge.searchParams.set('edge_callback_port', local.port || '80');
+      bridge.searchParams.set('edge_callback_path', local.pathname || '/');
+      if (local.search) bridge.searchParams.set('edge_callback_search', local.search.slice(1));
+      return bridge.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function maybeRewriteOAuthUrl(url) {
+    try {
+      const parsed = new URL(url);
+      const redirectUri = parsed.searchParams.get('redirect_uri');
+      if (!redirectUri) return url;
+      const local = new URL(redirectUri);
+      const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
+      if (!isLoopback) return url;
+      const port = local.port || '80';
+      if (!getBrowserLocalServerRegistry()[port]) return url;
+      const bridgeUrl = buildOAuthBridgeUrl(local.toString());
+      if (!bridgeUrl) return url;
+      parsed.searchParams.set('redirect_uri', bridgeUrl);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
+    globalThis.addEventListener('message', (event) => {
+      if (event.origin !== globalThis.location?.origin) return;
+      const data = event.data;
+      if (!data || data.type !== 'edge-oauth-callback') return;
+      const port = String(data.port || '');
+      if (!port) return;
+      const registry = getBrowserLocalServerRegistry();
+      const server = registry[port];
+      if (!server) return;
+      const target = new URL(`http://localhost:${port}${data.path || '/callback'}`);
+      if (data.search) target.search = data.search.startsWith('?') ? data.search : `?${data.search}`;
+      try { event.source?.close?.(); } catch {}
+      server._handleRedirect?.(target.toString());
+    });
+    globalThis.__browserRuntimeOAuthBridgeInstalled = true;
+  }
+
+  if (typeof globalThis.__browserRuntimeOpenExternalUrl !== 'function') {
+    globalThis.__browserRuntimeOpenExternalUrl = function openExternalUrl(url, options = {}) {
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        return Promise.resolve({ opened: false, reason: 'invalid-url' });
+      }
+      const rewrittenUrl = maybeRewriteOAuthUrl(url);
+      const popup = globalThis.open?.(
+        rewrittenUrl,
+        options.target || '_blank',
+        options.features || 'width=600,height=700,popup=yes'
+      );
+      if (!popup) {
+        return Promise.resolve({ opened: false, reason: 'popup-blocked' });
+      }
+
+      return Promise.resolve({ opened: true });
     };
   }
 

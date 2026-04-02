@@ -1,10 +1,26 @@
 import { inspect, isDeepStrictEqual } from 'node:util';
 
+/** Throw from inside testAsync() to skip (no network, wrong platform, etc.). */
+export class HarnessSkip extends Error {
+  constructor(reason) {
+    super(reason || '');
+    this.name = 'HarnessSkip';
+  }
+}
+
 export function createHarness(title) {
   console.log(`=== ${title} ===\n`);
 
   let passed = 0;
   let failed = 0;
+  let skipped = 0;
+
+  /** Log a skipped test (e.g. offline / wrong host); does not count as pass or fail. */
+  function skip(name, reason) {
+    const tail = reason ? ` — ${reason}` : '';
+    console.log(`  SKIP: ${name}${tail}`);
+    skipped++;
+  }
 
   function test(name, fn) {
     try {
@@ -23,6 +39,12 @@ export function createHarness(title) {
       console.log(`  PASS: ${name}`);
       passed++;
     } catch (error) {
+      if (error instanceof HarnessSkip) {
+        const tail = error.message ? ` — ${error.message}` : '';
+        console.log(`  SKIP: ${name}${tail}`);
+        skipped++;
+        return;
+      }
       console.log(`  FAIL: ${name} — ${error.message}`);
       failed++;
     }
@@ -69,13 +91,19 @@ export function createHarness(title) {
   }
 
   function finish() {
-    console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
+    const skipPart = skipped ? `, ${skipped} skipped` : '';
+    console.log(`\n=== Results: ${passed} passed${skipPart}, ${failed} failed ===`);
+    if (globalThis.__HARNESS_BROWSER_FINISH__) {
+      globalThis.__HARNESS_BROWSER_RESULT__ = { passed, skipped, failed, ok: failed === 0 };
+      return;
+    }
     process.exit(failed > 0 ? 1 : 0);
   }
 
   return {
     test,
     testAsync,
+    skip,
     assert,
     assertEq,
     assertDeepEq,

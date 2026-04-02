@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OAuth Bridge</title>
+</head>
+<body>
+  <p>Completing sign-in…</p>
+  <script>
+    (function () {
+      const current = new URL(window.location.href);
+      const callbackOrigin = current.searchParams.get('edge_callback_origin') || window.location.origin;
+      const port = current.searchParams.get('edge_callback_port') || '';
+      const path = current.searchParams.get('edge_callback_path') || '/callback';
+      const preserved = current.searchParams.get('edge_callback_search');
+      const params = new URLSearchParams(current.search);
+      params.delete('edge_callback_origin');
+      params.delete('edge_callback_port');
+      params.delete('edge_callback_path');
+      params.delete('edge_callback_search');
+      if (preserved) {
+        const extra = new URLSearchParams(preserved);
+        for (const [key, value] of extra.entries()) {
+          if (!params.has(key)) params.set(key, value);
+        }
+      }
+      if (window.opener) {
+        window.opener.postMessage({
+          type: 'edge-oauth-callback',
+          port,
+          path,
+          search: params.toString(),
+        }, callbackOrigin);
+      }
+      window.close();
+    })();
+  </script>
+</body>
+</html>

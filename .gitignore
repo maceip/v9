@@ -7,6 +7,9 @@ edgejs-src/
 # Dependencies
 node_modules/
 
+# Vendored claude-js source (zip extract / local mirror)
+claude-code-main/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -26,6 +29,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Ephemeral / agent scratch
+.tmp/
 
 # Local secrets and one-off debug artifacts
 .github/.env

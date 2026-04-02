@@ -344,7 +344,20 @@ async function boot() {
     fitAddon.fit();
   }
 
-  globalThis._xtermWrite = (data) => term.write(data);
+  let pendingTerminalWrite = '';
+  let terminalWriteScheduled = false;
+  globalThis._xtermWrite = (data) => {
+    pendingTerminalWrite += String(data);
+    if (terminalWriteScheduled) return;
+    terminalWriteScheduled = true;
+    queueMicrotask(() => {
+      terminalWriteScheduled = false;
+      if (!pendingTerminalWrite) return;
+      const chunk = pendingTerminalWrite;
+      pendingTerminalWrite = '';
+      term.write(chunk);
+    });
+  };
 
   const config = getConfig();
   let runtime = null;
@@ -354,7 +367,7 @@ async function boot() {
     const ts = Date.now();
     const [{ initEdgeJS }, bridgeModule] = await Promise.all([
       import(`../napi-bridge/index.js?t=${ts}`),
-      import(`../napi-bridge/browser-builtins.js?t=${ts}`),
+      import('../napi-bridge/browser-builtins.js'),
     ]);
 
     processBridge = bridgeModule.processBridge;
@@ -365,8 +378,8 @@ async function boot() {
       : {};
 
     runtime = await initEdgeJS({
-      onStdout: (text) => term.write(text),
-      onStderr: (text) => term.write(text),
+      onStdout: (text) => globalThis._xtermWrite?.(text),
+      onStderr: (text) => globalThis._xtermWrite?.(text),
       env: baseEnv(getAnthropicKey()),
       files: initialFiles,
     });
@@ -412,11 +425,12 @@ async function boot() {
   }
 
   term.onData((data) => {
-    if (typeof globalThis._stdinPush === 'function') {
-      globalThis._stdinPush(data);
-    }
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
+      return;
+    }
+    if (typeof globalThis._stdinPush === 'function') {
+      globalThis._stdinPush(data);
     }
   });
 

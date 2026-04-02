@@ -30,47 +30,11 @@ export class AwsV4Signer { constructor() {} sign() { return Promise.resolve({});
 // open — open URLs/files in a popup; intercept OAuth localhost redirects
 export default function open(url) {
   if (typeof url !== 'string') return Promise.resolve();
-
-  // Check if this URL has a redirect_uri pointing to a localhost fake server
-  const fakeServers = globalThis.__fakeServers || {};
-  const ports = Object.keys(fakeServers);
-
-  // Open in a popup
+  if (typeof globalThis.__browserRuntimeOpenExternalUrl === 'function') {
+    return globalThis.__browserRuntimeOpenExternalUrl(url);
+  }
   const popup = window.open(url, '_blank', 'width=600,height=700,popup=yes');
-  if (!popup) {
-    console.warn('[open] Popup blocked — user may need to allow popups');
-    return Promise.resolve();
-  }
-
-  // If we have fake servers, poll the popup URL for a localhost redirect
-  if (ports.length > 0) {
-    const pollInterval = setInterval(() => {
-      try {
-        if (popup.closed) { clearInterval(pollInterval); return; }
-        // Try reading the popup location — works when it redirects to localhost
-        // (which fails to load, but the URL is readable in some contexts)
-        const loc = popup.location.href;
-        if (!loc) return;
-
-        // Check if it redirected to one of our fake server ports
-        for (const port of ports) {
-          if (loc.includes(`localhost:${port}`) || loc.includes(`127.0.0.1:${port}`)) {
-            clearInterval(pollInterval);
-            popup.close();
-            fakeServers[port]._handleRedirect(loc);
-            return;
-          }
-        }
-      } catch {
-        // Cross-origin — popup is on a different domain (expected during auth).
-        // We'll keep polling until it redirects to localhost.
-      }
-    }, 500);
-
-    // Give up after 5 minutes
-    setTimeout(() => clearInterval(pollInterval), 300000);
-  }
-
+  if (!popup) console.warn('[open] Popup blocked — user may need to allow popups');
   return Promise.resolve();
 }
 

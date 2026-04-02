@@ -302,7 +302,7 @@ export const cryptoBridge = {
   randomBytes(size) {
     const buf = new Uint8Array(size);
     crypto.getRandomValues(buf);
-    return buf;
+    return bufferBridge.from(buf.buffer, buf.byteOffset, buf.byteLength);
   },
 
   randomUUID() {
@@ -376,7 +376,8 @@ export const cryptoBridge = {
         const hash = _hashBytes(algo, combined);
         if (encoding === 'hex') return _bytesToHex(hash);
         if (encoding === 'base64') return _bytesToBase64(hash);
-        return hash;
+        if (encoding === 'base64url') return bufferBridge.from(hash.buffer, hash.byteOffset, hash.byteLength).toString('base64url');
+        return bufferBridge.from(hash.buffer, hash.byteOffset, hash.byteLength);
       },
     };
   },
@@ -405,7 +406,8 @@ export const cryptoBridge = {
         const mac = _hmac(algo, keyBytes, combined);
         if (encoding === 'hex') return _bytesToHex(mac);
         if (encoding === 'base64') return _bytesToBase64(mac);
-        return mac;
+        if (encoding === 'base64url') return bufferBridge.from(mac.buffer, mac.byteOffset, mac.byteLength).toString('base64url');
+        return bufferBridge.from(mac.buffer, mac.byteOffset, mac.byteLength);
       },
     };
   },

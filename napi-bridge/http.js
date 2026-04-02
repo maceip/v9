@@ -16,6 +16,37 @@ import { Readable, Writable } from './streams.js';
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
 
+const _FORBIDDEN_BROWSER_HEADERS = new Set([
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
+  'connection',
+  'content-length',
+  'cookie',
+  'cookie2',
+  'date',
+  'dnt',
+  'expect',
+  'host',
+  'keep-alive',
+  'origin',
+  'permissions-policy',
+  'proxy-authorization',
+  'referer',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'user-agent',
+  'via',
+]);
+
+function _isForbiddenBrowserHeader(name) {
+  const lower = String(name || '').toLowerCase();
+  return _FORBIDDEN_BROWSER_HEADERS.has(lower) || lower.startsWith('sec-') || lower.startsWith('proxy-');
+}
+
 // Detect streaming upload support (Chromium 105+: ReadableStream body + duplex: 'half')
 let _supportsStreamingUpload = null;
 function _canStreamUpload() {
@@ -292,6 +323,135 @@ class IncomingMessage extends Readable {
   }
 }
 
+// ─── Server-side request/response (localhost OAuth / MCP redirect capture) ─
+// Modeled after claude-js auth-code-listener.ts + oauthPort.ts: createServer(),
+// server.on('request'), listen(port[, host], cb), address(), res.writeHead/end.
+
+class ServerIncomingMessage extends Readable {
+  constructor({ method = 'GET', url = '/', host = 'localhost' } = {}) {
+    super({ read() {} });
+    this.httpVersion = '1.1';
+    this.httpVersionMajor = 1;
+    this.httpVersionMinor = 1;
+    this.method = method;
+    this.url = url;
+    const hostStr = String(host);
+    this.headers = Object.create(null);
+    this.headers.host = hostStr;
+    this.rawHeaders = ['host', hostStr];
+    this.trailers = {};
+    const sock = { remoteAddress: '127.0.0.1', remotePort: 1, writable: false, readable: false };
+    this.socket = sock;
+    this.connection = sock;
+    this.complete = true;
+    this.push(null);
+  }
+}
+
+class OutgoingMessage extends Writable {
+  constructor() {
+    super({ decodeStrings: false });
+    this._headers = Object.create(null);
+    this._headersLower = Object.create(null);
+    this._headersExplicit = false;
+    this.statusCode = 200;
+    this.statusMessage = '';
+    this.finished = false;
+    this._headersSent = false;
+
+    Object.defineProperty(this, 'headersSent', {
+      configurable: true,
+      enumerable: true,
+      get: () => this._headersSent,
+    });
+    Object.defineProperty(this, 'writableEnded', {
+      configurable: true,
+      enumerable: true,
+      get: () => this.finished,
+    });
+  }
+
+  setHeader(name, value) {
+    if (this._headersSent) {
+      throw new Error('Cannot set headers after they are sent to the client');
+    }
+    const key = String(name);
+    const lower = key.toLowerCase();
+    this._headersLower[lower] = key;
+    this._headers[key] = value;
+    return this;
+  }
+
+  getHeader(name) {
+    const orig = this._headersLower[String(name).toLowerCase()];
+    return orig !== undefined ? this._headers[orig] : undefined;
+  }
+
+  getHeaders() {
+    return { ...this._headers };
+  }
+
+  removeHeader(name) {
+    const lower = String(name).toLowerCase();
+    const orig = this._headersLower[lower];
+    if (orig !== undefined) {
+      delete this._headers[orig];
+      delete this._headersLower[lower];
+    }
+    return this;
+  }
+
+  hasHeader(name) {
+    return this._headersLower[String(name).toLowerCase()] !== undefined;
+  }
+
+  writeHead(statusCode, statusMessage, headers) {
+    if (this._headersSent) {
+      throw new Error('Cannot write headers after they are sent to the client');
+    }
+    if (typeof statusMessage === 'object' && statusMessage !== null && !Array.isArray(statusMessage)) {
+      headers = statusMessage;
+      statusMessage = undefined;
+    }
+    this.statusCode = statusCode;
+    if (typeof statusMessage === 'string') {
+      this.statusMessage = statusMessage;
+    }
+    if (headers && typeof headers === 'object') {
+      for (const [k, v] of Object.entries(headers)) {
+        this.setHeader(k, v);
+      }
+    }
+    this._headersSent = true;
+    this._headersExplicit = true;
+    return this;
+  }
+
+  flushHeaders() {
+    if (!this._headersSent) {
+      this.writeHead(this.statusCode, this.statusMessage || undefined);
+    }
+  }
+
+  _write(chunk, _encoding, callback) {
+    if (!this._headersSent) {
+      this.writeHead(this.statusCode, this.statusMessage || undefined);
+    }
+    callback();
+  }
+
+  end(...args) {
+    if (!this._headersSent) {
+      this.writeHead(this.statusCode, this.statusMessage || undefined);
+    }
+    const ret = super.end(...args);
+    this.finished = true;
+    return ret;
+  }
+}
+
+class ServerResponse extends OutgoingMessage {}
+
 // ─── ClientRequest ──────────────────────────────────────────────────
 // Extends Writable so ClientRequest supports pipe-into and emits 'finish'.
 // Backpressure is honored via Writable.write() + _write(); the custom
@@ -440,8 +600,7 @@ class ClientRequest extends Writable {
   _buildHeaders() {
     const headers = {};
     for (const [lk, val] of Object.entries(this._reqHeaders)) {
-      // Exclude content-length — fetch handles it
-      if (lk === 'content-length') continue;
+      if (_isForbiddenBrowserHeader(lk)) continue;
       headers[lk] = String(val);
     }
     return headers;
@@ -662,12 +821,18 @@ function _get(requestFn) {
   };
 }
 
-// ─── Fake HTTP server for OAuth callback capture ────────────────────
-// Instead of binding a real TCP socket, we intercept the OAuth redirect
-// by opening the auth URL in a popup and polling for the localhost redirect.
-// When the popup navigates to localhost:PORT/callback?code=XYZ, we read the
-// URL (which fails to load but the URL is captured), then fire the stored
-// request handler with synthetic req/res objects.
+// ─── Browser-local HTTP server registry ─────────────────────────────
+// In the browser runtime we cannot bind a real TCP listener, so createServer()
+// registers a localhost-shaped server object in a global registry. Generic
+// browser "open external URL" helpers can deliver localhost callback URLs back
+// into these registered servers.
+
+function getBrowserLocalServerRegistry() {
+  if (!globalThis.__browserRuntimeLocalHttpServers) {
+    globalThis.__browserRuntimeLocalHttpServers = {};
+  }
+  return globalThis.__browserRuntimeLocalHttpServers;
+}
 
 class FakeServer extends EventEmitter {
   constructor(requestHandler) {
@@ -675,19 +840,42 @@ class FakeServer extends EventEmitter {
     this._handler = requestHandler;
     this._port = 0;
     this._listening = false;
+    this._hostname = 'localhost';
   }
 
-  listen(port, host, callback) {
-    if (typeof host === 'function') { callback = host; host = undefined; }
-    if (typeof port === 'function') { callback = port; port = 0; }
-    this._port = port || 19836;
+  listen(port, host, callback, backlog) {
+    if (port && typeof port === 'object' && typeof port.port === 'number') {
+      const opts = port;
+      const cb = typeof host === 'function' ? host : callback;
+      return this.listen(opts.port, opts.host || opts.hostname, cb);
+    }
+    if (typeof host === 'function') {
+      callback = host;
+      host = undefined;
+    }
+    if (typeof port === 'function') {
+      callback = port;
+      port = 0;
+    }
+    if (typeof backlog === 'function' && callback === undefined) {
+      callback = backlog;
+    }
+    if (host) {
+      this._hostname = host;
+    }
+    if (port) {
+      this._port = port;
+    } else {
+      const registry = getBrowserLocalServerRegistry();
+      let candidate = 19836;
+      while (registry[candidate]) candidate += 1;
+      this._port = candidate;
+    }
     this._listening = true;
 
-    // Register this server globally so the open() intercept can find it
-    if (!globalThis.__fakeServers) globalThis.__fakeServers = {};
-    globalThis.__fakeServers[this._port] = this;
+    const registry = getBrowserLocalServerRegistry();
+    registry[this._port] = this;
 
-    // Emit 'listening' async (Node.js behavior)
     queueMicrotask(() => {
       this.emit('listening');
       if (typeof callback === 'function') callback();
@@ -696,12 +884,17 @@ class FakeServer extends EventEmitter {
   }
 
   address() {
-    return { address: '127.0.0.1', family: 'IPv4', port: this._port };
+    return {
+      address: '127.0.0.1',
+      family: 'IPv4',
+      port: this._port,
+    };
   }
 
   close(cb) {
     this._listening = false;
-    if (globalThis.__fakeServers) delete globalThis.__fakeServers[this._port];
+    const registry = getBrowserLocalServerRegistry();
+    delete registry[this._port];
     if (typeof cb === 'function') queueMicrotask(cb);
     queueMicrotask(() => this.emit('close'));
     return this;
@@ -710,38 +903,24 @@ class FakeServer extends EventEmitter {
   ref() { return this; }
   unref() { return this; }
 
-  // Called by the open() intercept when the OAuth redirect is captured
+  /**
+   * Invoked by browser integration when a redirect to this fake localhost
+   * port is received (OAuth code capture).
+   */
   _handleRedirect(url) {
-    if (!this._handler) return;
-
     const parsed = new URL(url);
-    // Build a synthetic IncomingMessage-like request
-    const req = new Readable({ read() {} });
-    req.method = 'GET';
-    req.url = parsed.pathname + parsed.search;
-    req.headers = { host: `localhost:${this._port}` };
-    req.httpVersion = '1.1';
-    req.connection = { remoteAddress: '127.0.0.1' };
-    req.push(null); // no body
+    const hostHeader = `${this._hostname}:${this._port}`;
+    const req = new ServerIncomingMessage({
+      method: 'GET',
+      url: parsed.pathname + parsed.search,
+      host: hostHeader,
+    });
+    const res = new ServerResponse();
 
-    // Build a synthetic ServerResponse-like response
-    const res = new Writable({ write(chunk, enc, cb) { cb(); } });
-    res.statusCode = 200;
-    res._headers = {};
-    res.setHeader = (k, v) => { res._headers[k.toLowerCase()] = v; };
-    res.getHeader = (k) => res._headers[k.toLowerCase()];
-    res.writeHead = (code, headers) => {
-      res.statusCode = code;
-      if (headers) Object.entries(headers).forEach(([k, v]) => res.setHeader(k, v));
-      return res;
-    };
-    res.end = (data) => {
-      if (data) res.write(data);
-      // Auto-close the popup after response is sent
-      queueMicrotask(() => res.emit('finish'));
-    };
-
-    this._handler(req, res);
+    if (this._handler) {
+      this._handler(req, res);
+    }
+    this.emit('request', req, res);
   }
 }
 
@@ -754,14 +933,31 @@ const httpGet = _get(httpRequest);
 export const http = {
   request: httpRequest,
   get: httpGet,
+  WebSocket: globalThis.WebSocket,
+  MessageEvent: globalThis.MessageEvent,
+  CloseEvent: globalThis.CloseEvent,
   createServer(handler) {
     return new FakeServer(handler);
   },
+  Server: FakeServer,
   Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
   globalAgent: new (class extends EventEmitter { constructor() { super(); this.options = { ca: [], keepAlive: false }; this.maxSockets = Infinity; this.maxFreeSockets = 256; this.maxTotalSockets = Infinity; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} })(),
   ClientRequest,
   IncomingMessage,
-  ServerResponse: class ServerResponse {},
+  OutgoingMessage,
+  ServerResponse,
+  maxHeaderSize: 16384,
+  validateHeaderName(name) {
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new TypeError('Header name must be a non-empty string');
+    }
+  },
+  validateHeaderValue(_name, value) {
+    if (value === undefined || value === null) {
+      throw new TypeError('Header value must be defined');
+    }
+  },
+  setMaxIdleHTTPParsers() {},
   METHODS: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS',
     'CONNECT', 'TRACE'],
   STATUS_CODES: {
@@ -798,14 +994,23 @@ const httpsGet = _get(httpsRequest);
 export const https = {
   request: httpsRequest,
   get: httpsGet,
+  WebSocket: globalThis.WebSocket,
+  MessageEvent: globalThis.MessageEvent,
+  CloseEvent: globalThis.CloseEvent,
   createServer(handler) {
     return new FakeServer(handler);
   },
+  Server: FakeServer,
   Agent: class Agent extends EventEmitter { constructor(opts) { super(); this.options = opts || {}; this.maxSockets = this.options.maxSockets || Infinity; this.maxFreeSockets = this.options.maxFreeSockets || 256; this.maxTotalSockets = this.options.maxTotalSockets || Infinity; this.keepAlive = this.options.keepAlive || false; this.maxCachedSessions = this.options.maxCachedSessions || 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} },
   globalAgent: new (class extends EventEmitter { constructor() { super(); this.options = { ca: [], keepAlive: false }; this.maxSockets = Infinity; this.maxFreeSockets = 256; this.maxTotalSockets = Infinity; this.keepAlive = false; this.maxCachedSessions = 100; this.requests = {}; this.sockets = {}; this.freeSockets = {}; this.totalSocketCount = 0; } destroy() {} getName() { return 'localhost'; } createConnection() {} addRequest() {} })(),
   ClientRequest,
   IncomingMessage,
-  ServerResponse: class ServerResponse {},
+  OutgoingMessage,
+  ServerResponse,
+  maxHeaderSize: 16384,
+  validateHeaderName: http.validateHeaderName,
+  validateHeaderValue: http.validateHeaderValue,
+  setMaxIdleHTTPParsers: http.setMaxIdleHTTPParsers,
 };
 
 export default { http, https };

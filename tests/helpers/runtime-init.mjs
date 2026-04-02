@@ -12,6 +12,8 @@ export async function initRuntimeForTests({
   strictUnknownImports = process.env.EDGEJS_STRICT_IMPORTS === '1',
   captureOutput = true,
   logNapiErrors = true,
+  env = {},
+  preferJsScriptBridge = false,
 } = {}) {
   if (!existsSync(wasmPath)) {
     throw new Error(`Missing wasm artifact at ${wasmPath}; run make build first`);
@@ -28,6 +30,8 @@ export async function initRuntimeForTests({
     wasmPath: '../dist/edgejs.wasm',
     strictUnknownImports,
     logNapiErrors,
+    env,
+    preferJsScriptBridge,
     onStdout: (...args) => {
       if (captureOutput) stdout.push(args.map((v) => String(v)).join(' '));
     },

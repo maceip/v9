@@ -85,6 +85,41 @@ function _buildShellCommand(command, args) {
   return command + ' ' + args.map(_shellEscape).join(' ');
 }
 
+function _stripOuterQuotes(value) {
+  if (typeof value !== 'string') return value;
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
+}
+
+function _tryOpenExternalUrl(command, args = []) {
+  const normalized = String(command || '').trim().toLowerCase();
+  const directOpeners = new Set(['open', 'xdg-open', 'explorer']);
+  const isWindowsUrlOpen = normalized === 'rundll32'
+    && String(args[0] || '').toLowerCase() === 'url,openurl';
+
+  if (!directOpeners.has(normalized) && !isWindowsUrlOpen) return null;
+
+  const rawTarget = isWindowsUrlOpen ? args[1] : args[0];
+  const target = _stripOuterQuotes(rawTarget);
+  if (typeof target !== 'string' || !/^https?:\/\//i.test(target)) {
+    return { stdout: '', stderr: `spawn ${command}: ENOENT\n`, exitCode: 127 };
+  }
+
+  const opener = globalThis.__browserRuntimeOpenExternalUrl;
+  if (typeof opener !== 'function') {
+    return { stdout: '', stderr: `spawn ${command}: ENOSYS\n`, exitCode: 127 };
+  }
+
+  Promise.resolve().then(() => opener(target)).catch(() => {});
+  return { stdout: '', stderr: '', exitCode: 0 };
+}
+
 // ─── Git command parsing ─────────────────────────────────────────────
 // M1: Parse git commands respecting quotes, not just split on whitespace.
 
@@ -280,6 +315,8 @@ class IPCChannel {
 
 function _dispatchDirect(command, args, options) {
   return withCwd(options.cwd, () => {
+    const externalOpen = _tryOpenExternalUrl(command, args);
+    if (externalOpen) return externalOpen;
     if (command === 'git') {
       return runGit(args);
     }
@@ -298,6 +335,14 @@ function _dispatchDirect(command, args, options) {
 // shell commands uses the child's cwd without mutating global state.
 function _dispatchShell(commandStr, options) {
   return withCwd(options.cwd, () => {
+    const openerMatch = String(commandStr || '').trim().match(/^(open|xdg-open|explorer)\s+(.+)$/i);
+    if (openerMatch) {
+      return _tryOpenExternalUrl(openerMatch[1], [_stripOuterQuotes(openerMatch[2].trim())]);
+    }
+    const rundllMatch = String(commandStr || '').trim().match(/^rundll32\s+url,OpenURL\s+(.+)$/i);
+    if (rundllMatch) {
+      return _tryOpenExternalUrl('rundll32', ['url,OpenURL', _stripOuterQuotes(rundllMatch[1].trim())]);
+    }
     const gitArgs = _parseGitArgs(commandStr);
     if (gitArgs) return runGit(gitArgs);
     return executeCommandString(commandStr, { cwd: options.cwd, env: options.env });

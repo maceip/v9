@@ -154,23 +154,100 @@ export function moveCursor(stream, dx, dy, callback) {
 export function emitKeypressEvents(stream, iface) {
   if (stream._keypressDecoder) return; // already wired
   stream._keypressDecoder = true;
+  stream._keypressBuffer = '';
   stream.on('data', (data) => {
     const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
-    for (const ch of str) {
-      const key = {
-        sequence: ch,
-        name: ch === '\r' ? 'return' : ch === '\n' ? 'return' : ch === '\t' ? 'tab' : ch === '\x7f' ? 'backspace' : ch === '\x1b' ? 'escape' : undefined,
-        ctrl: false,
-        meta: false,
-        shift: false,
-      };
-      if (ch.charCodeAt(0) < 32 && ch !== '\r' && ch !== '\n' && ch !== '\t' && ch !== '\x1b') {
-        key.ctrl = true;
-        key.name = String.fromCharCode(ch.charCodeAt(0) + 96);
-      }
-      stream.emit('keypress', ch, key);
+    stream._keypressBuffer += str;
+    while (stream._keypressBuffer.length > 0) {
+      const parsed = parseKeypress(stream._keypressBuffer);
+      if (!parsed) break;
+      stream._keypressBuffer = stream._keypressBuffer.slice(parsed.length);
+      stream.emit('keypress', parsed.sequence, parsed.key);
     }
   });
+}
+
+function parseKeypress(input) {
+  if (!input) return null;
+
+  const bracketedPasteStart = '\x1b[200~';
+  const bracketedPasteEnd = '\x1b[201~';
+  if (input.startsWith(bracketedPasteStart)) {
+    const end = input.indexOf(bracketedPasteEnd);
+    if (end === -1) return null;
+    const pasted = input.slice(bracketedPasteStart.length, end);
+    return {
+      length: end + bracketedPasteEnd.length,
+      sequence: pasted,
+      key: { sequence: pasted, name: 'paste', ctrl: false, meta: false, shift: false, pasted: true },
+    };
+  }
+
+  const csiMap = new Map([
+    ['\x1b[A', 'up'], ['\x1b[B', 'down'], ['\x1b[C', 'right'], ['\x1b[D', 'left'],
+    ['\x1b[H', 'home'], ['\x1b[F', 'end'], ['\x1b[Z', 'tab'],
+    ['\x1b[3~', 'delete'], ['\x1b[2~', 'insert'], ['\x1b[5~', 'pageup'], ['\x1b[6~', 'pagedown'],
+    ['\x1bOP', 'f1'], ['\x1bOQ', 'f2'], ['\x1bOR', 'f3'], ['\x1bOS', 'f4'],
+  ]);
+  for (const [sequence, name] of csiMap) {
+    if (input.startsWith(sequence)) {
+      return { length: sequence.length, sequence, key: { sequence, name, ctrl: false, meta: false, shift: sequence === '\x1b[Z' } };
+    }
+  }
+
+  const modifiedCsi = input.match(/^\x1b\[(\d+);(\d+)([A-Za-z~])/);
+  if (modifiedCsi) {
+    const sequence = modifiedCsi[0];
+    const modifier = Number(modifiedCsi[2]);
+    const suffix = modifiedCsi[3];
+    const nameMap = { A: 'up', B: 'down', C: 'right', D: 'left', H: 'home', F: 'end', '~': 'delete' };
+    return {
+      length: sequence.length,
+      sequence,
+      key: {
+        sequence,
+        name: nameMap[suffix] || suffix.toLowerCase(),
+        ctrl: modifier === 5 || modifier === 6 || modifier === 7 || modifier === 8,
+        meta: modifier === 3 || modifier === 4 || modifier === 7 || modifier === 8,
+        shift: modifier === 2 || modifier === 4 || modifier === 6 || modifier === 8,
+      },
+    };
+  }
+
+  const ch = input[0];
+  const key = {
+    sequence: ch,
+    name: ch === '\r' || ch === '\n' ? 'return'
+      : ch === '\t' ? 'tab'
+      : ch === '\x7f' ? 'backspace'
+      : ch === '\x1b' ? 'escape'
+      : undefined,
+    ctrl: false,
+    meta: false,
+    shift: false,
+  };
+
+  if (input.startsWith('\x1b') && input.length >= 2 && !input.startsWith('\x1b[') && !input.startsWith('\x1bO')) {
+    const next = input[1];
+    return {
+      length: 2,
+      sequence: input.slice(0, 2),
+      key: {
+        sequence: input.slice(0, 2),
+        name: next.toLowerCase(),
+        ctrl: false,
+        meta: true,
+        shift: next !== next.toLowerCase(),
+      },
+    };
+  }
+
+  if (ch.charCodeAt(0) < 32 && ch !== '\r' && ch !== '\n' && ch !== '\t' && ch !== '\x1b') {
+    key.ctrl = true;
+    key.name = String.fromCharCode(ch.charCodeAt(0) + 96);
+  }
+
+  return { length: 1, sequence: ch, key };
 }
 
 // readline/promises API

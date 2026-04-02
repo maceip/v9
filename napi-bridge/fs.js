@@ -12,6 +12,7 @@
  */
 
 import { defaultMemfs, createFsError, resolvePath } from './memfs.js';
+import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable } from './streams.js';
 
 const _encoder = new TextEncoder();
@@ -55,10 +56,129 @@ function parseOptions(options, defaults) {
 export function createFsModule(memfs, getCwd) {
   // getCwd returns the current working directory for relative path resolution
   const _cwd = getCwd || (() => '/');
+  const _watchers = new Map();
+  const _statWatchers = new Map();
 
   function _r(p) {
     // Canonical path resolution: relative paths resolved against cwd
     return resolvePath(String(p), _cwd());
+  }
+
+  function cloneStats(stat) {
+    return stat ? {
+      dev: stat.dev,
+      ino: stat.ino,
+      mode: stat.mode,
+      nlink: stat.nlink,
+      uid: stat.uid,
+      gid: stat.gid,
+      size: stat.size,
+      atime: new Date(stat.atime),
+      mtime: new Date(stat.mtime),
+      ctime: new Date(stat.ctime),
+      birthtime: new Date(stat.birthtime),
+      blksize: stat.blksize,
+      blocks: stat.blocks,
+      isFile: () => stat.isFile(),
+      isDirectory: () => stat.isDirectory(),
+      isSymbolicLink: () => stat.isSymbolicLink(),
+      isBlockDevice: () => stat.isBlockDevice(),
+      isCharacterDevice: () => stat.isCharacterDevice(),
+      isFIFO: () => stat.isFIFO(),
+      isSocket: () => stat.isSocket(),
+    } : undefined;
+  }
+
+  function tryStat(path) {
+    try {
+      return cloneStats(memfs.stat(path));
+    } catch {
+      return undefined;
+    }
+  }
+
+  function statsEqual(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.ino === b.ino
+      && a.size === b.size
+      && a.mtime.getTime() === b.mtime.getTime()
+      && a.ctime.getTime() === b.ctime.getTime()
+      && a.mode === b.mode;
+  }
+
+  function emitWatchEvent(path, eventType) {
+    const targets = [path];
+    if (path !== '/') {
+      const idx = path.lastIndexOf('/');
+      targets.push(idx <= 0 ? '/' : path.slice(0, idx));
+    }
+    for (const target of targets) {
+      const listeners = _watchers.get(target);
+      if (!listeners) continue;
+      for (const watcher of listeners) {
+        queueMicrotask(() => {
+          if (!watcher.closed) {
+            watcher.emit('change', eventType, path.split('/').pop() || path);
+          }
+        });
+      }
+    }
+  }
+
+  function notifyMutation(path, eventType = 'change') {
+    emitWatchEvent(path, eventType);
+  }
+
+  function startStatWatcher(resolved, options, listener) {
+    const interval = Math.max(1, Number(options?.interval) || 5007);
+    const entry = _statWatchers.get(resolved) || { listeners: new Set(), prev: tryStat(resolved), timer: null };
+    entry.listeners.add(listener);
+    if (!entry.timer) {
+      entry.timer = setInterval(() => {
+        const next = tryStat(resolved);
+        if (statsEqual(entry.prev, next)) {
+          return;
+        }
+        const prev = entry.prev;
+        entry.prev = next;
+        for (const cb of entry.listeners) {
+          queueMicrotask(() => cb(next || zeroStats(), prev || zeroStats()));
+        }
+      }, interval);
+      entry.timer.unref?.();
+    }
+    _statWatchers.set(resolved, entry);
+  }
+
+  function stopStatWatcher(resolved, listener) {
+    const entry = _statWatchers.get(resolved);
+    if (!entry) return;
+    if (listener) {
+      entry.listeners.delete(listener);
+    } else {
+      entry.listeners.clear();
+    }
+    if (entry.listeners.size === 0) {
+      clearInterval(entry.timer);
+      _statWatchers.delete(resolved);
+    }
+  }
+
+  function zeroStats() {
+    const now = new Date(0);
+    return {
+      dev: 0, ino: 0, mode: 0, nlink: 0, uid: 0, gid: 0, size: 0,
+      atime: now, mtime: now, ctime: now, birthtime: now,
+      blksize: 0, blocks: 0,
+      isFile: () => false,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+      isBlockDevice: () => false,
+      isCharacterDevice: () => false,
+      isFIFO: () => false,
+      isSocket: () => false,
+    };
   }
 
   // ─── Sync APIs ──────────────────────────────────────────────────────
@@ -70,12 +190,50 @@ export function createFsModule(memfs, getCwd) {
   }
 
   function writeFileSync(path, data, options) {
-    const opts = parseOptions(options, { encoding: 'utf8' });
-    if (typeof data === 'string') {
-      memfs.writeFile(_r(path), toBuffer(data, opts.encoding));
-    } else {
-      memfs.writeFile(_r(path), data);
+    const opts = parseOptions(options, { encoding: 'utf8', flag: 'w' });
+    const resolved = _r(path);
+    const flag = String(opts.flag || 'w');
+    const body = typeof data === 'string'
+      ? toBuffer(data, opts.encoding)
+      : (data instanceof Uint8Array ? new Uint8Array(data) : toBuffer(String(data), opts.encoding));
+    const present = existsSync(resolved);
+
+    // Flag shapes exercised by real Node apps (see claude-js teammateMailbox, toolResultStorage, etc.)
+    if (flag === 'wx' || flag === 'xw') {
+      if (present) throw createFsError('EEXIST', 'open', resolved);
+      memfs.writeFile(resolved, body);
+      notifyMutation(resolved, 'change');
+      return;
     }
+    if (flag === 'ax' || flag === 'xa') {
+      if (present) throw createFsError('EEXIST', 'open', resolved);
+      memfs.writeFile(resolved, body);
+      notifyMutation(resolved, 'change');
+      return;
+    }
+    if (flag === 'r+') {
+      if (!present) throw createFsError('ENOENT', 'open', resolved);
+      memfs.writeFile(resolved, body);
+      notifyMutation(resolved, 'change');
+      return;
+    }
+    if (flag === 'a' || flag === 'ax') {
+      if (flag === 'ax' && present) throw createFsError('EEXIST', 'open', resolved);
+      if (present) {
+        const existing = memfs.readFile(resolved);
+        const combined = new Uint8Array(existing.byteLength + body.byteLength);
+        combined.set(existing, 0);
+        combined.set(body, existing.byteLength);
+        memfs.writeFile(resolved, combined);
+      } else {
+        memfs.writeFile(resolved, body);
+      }
+      notifyMutation(resolved, 'change');
+      return;
+    }
+
+    memfs.writeFile(resolved, body);
+    notifyMutation(resolved, 'change');
   }
 
   function appendFileSync(path, data, options) {
@@ -91,6 +249,7 @@ export function createFsModule(memfs, getCwd) {
     combined.set(existing, 0);
     combined.set(nextChunk, existing.byteLength);
     memfs.writeFile(resolved, combined);
+    notifyMutation(resolved, 'change');
   }
 
   function readdirSync(path, options) {
@@ -104,15 +263,23 @@ export function createFsModule(memfs, getCwd) {
 
   function mkdirSync(path, options) {
     const opts = parseOptions(options, { recursive: false });
-    memfs.mkdir(_r(path), opts.recursive);
+    const resolved = _r(path);
+    memfs.mkdir(resolved, opts.recursive);
+    notifyMutation(resolved, 'rename');
   }
 
   function unlinkSync(path) {
-    memfs.unlink(_r(path));
+    const resolved = _r(path);
+    memfs.unlink(resolved);
+    notifyMutation(resolved, 'rename');
   }
 
   function renameSync(oldPath, newPath) {
-    memfs.rename(_r(oldPath), _r(newPath));
+    const oldResolved = _r(oldPath);
+    const newResolved = _r(newPath);
+    memfs.rename(oldResolved, newResolved);
+    notifyMutation(oldResolved, 'rename');
+    notifyMutation(newResolved, 'rename');
   }
 
   function existsSync(path) {
@@ -148,7 +315,9 @@ export function createFsModule(memfs, getCwd) {
   }
 
   function rmdirSync(path) {
-    memfs.rmdir(_r(path));
+    const resolved = _r(path);
+    memfs.rmdir(resolved);
+    notifyMutation(resolved, 'rename');
   }
 
   // lstat = stat (no symlinks in v1)
@@ -161,9 +330,15 @@ export function createFsModule(memfs, getCwd) {
     memfs.access(_r(path)); // throws ENOENT if missing
   }
 
-  function copyFileSync(src, dest) {
+  function copyFileSync(src, dest, flags) {
+    const resolved = _r(dest);
+    const excl = Number(flags || 0) & 1; // COPYFILE_EXCL
+    if (excl && existsSync(resolved)) {
+      throw createFsError('EEXIST', 'copyfile', resolved);
+    }
     const data = memfs.readFile(_r(src));
-    memfs.writeFile(_r(dest), new Uint8Array(data));
+    memfs.writeFile(resolved, new Uint8Array(data));
+    notifyMutation(resolved, 'change');
   }
 
   function rmSync(path, options) {
@@ -184,6 +359,7 @@ export function createFsModule(memfs, getCwd) {
       } else {
         memfs.unlink(resolved);
       }
+      notifyMutation(resolved, 'rename');
     } catch (err) {
       if (!opts.force || err.code !== 'ENOENT') throw err;
     }
@@ -321,6 +497,7 @@ export function createFsModule(memfs, getCwd) {
           }
           const buf = typeof chunk === 'string' ? toBuffer(chunk, encoding) : new Uint8Array(chunk);
           memfs.writeFd(fd, buf, 0, buf.byteLength, null);
+          notifyMutation(resolved, 'change');
           callback();
         } catch (err) {
           callback(err);
@@ -344,6 +521,50 @@ export function createFsModule(memfs, getCwd) {
     });
     stream.path = path;
     return stream;
+  }
+
+  function watch(path, options, listener) {
+    if (typeof options === 'function') {
+      listener = options;
+      options = {};
+    }
+    const resolved = _r(path);
+    const watcher = new EventEmitter();
+    watcher.closed = false;
+    watcher.close = () => {
+      if (watcher.closed) return;
+      watcher.closed = true;
+      const listeners = _watchers.get(resolved);
+      if (listeners) {
+        listeners.delete(watcher);
+        if (listeners.size === 0) {
+          _watchers.delete(resolved);
+        }
+      }
+      watcher.emit('close');
+    };
+    if (listener) {
+      watcher.on('change', listener);
+    }
+    const listeners = _watchers.get(resolved) || new Set();
+    listeners.add(watcher);
+    _watchers.set(resolved, listeners);
+    return watcher;
+  }
+
+  function watchFile(path, options, listener) {
+    if (typeof options === 'function') {
+      listener = options;
+      options = {};
+    }
+    if (typeof listener !== 'function') {
+      return;
+    }
+    startStatWatcher(_r(path), options, listener);
+  }
+
+  function unwatchFile(path, listener) {
+    stopStatWatcher(_r(path), listener);
   }
 
   // ─── fs object ─────────────────────────────────────────────────────
@@ -422,9 +643,9 @@ export function createFsModule(memfs, getCwd) {
     truncateSync: () => {},
     ftruncate: (fd, len, cb) => { if (typeof len === 'function') { cb = len; } if (typeof cb === 'function') cb(null); },
     ftruncateSync: () => {},
-    watch: () => ({ close() {}, on() { return this; }, once() { return this; }, off() { return this; } }),
-    watchFile: () => {},
-    unwatchFile: () => {},
+    watch,
+    watchFile,
+    unwatchFile,
     appendFile,
     appendFileSync,
 
@@ -436,6 +657,9 @@ export function createFsModule(memfs, getCwd) {
       R_OK: 4,
       W_OK: 2,
       X_OK: 1,
+      COPYFILE_EXCL: 1,
+      COPYFILE_FICLONE: 2,
+      COPYFILE_FICLONE_FORCE: 4,
     },
   };
 }
@@ -514,6 +738,9 @@ export const copyFile = (...args) => fs.copyFile(...args);
 export const rm = (...args) => fs.rm(...args);
 export const createReadStream = (...args) => fs.createReadStream(...args);
 export const createWriteStream = (...args) => fs.createWriteStream(...args);
+export const watch = (...args) => fs.watch(...args);
+export const watchFile = (...args) => fs.watchFile(...args);
+export const unwatchFile = (...args) => fs.unwatchFile(...args);
 export const constants = fs.constants;
 
 export { promises };

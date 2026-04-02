@@ -1,7 +1,10 @@
-const targetMode = (process.env.CONFORMANCE_TARGET || 'bridge').toLowerCase();
+/** Read at call time so MEMFS / initEdgeJS injected `process.env` is visible (wasm JS bridge). */
+function conformanceTargetMode() {
+  return (process.env.CONFORMANCE_TARGET || 'bridge').toLowerCase();
+}
 
 function modeDescription() {
-  return targetMode === 'node' ? 'node builtins' : 'napi-bridge modules';
+  return conformanceTargetMode() === 'node' ? 'node builtins' : 'napi-bridge modules';
 }
 
 function pickFirst(...values) {
@@ -11,29 +14,22 @@ function pickFirst(...values) {
   return undefined;
 }
 
-async function importWithContext(modulePath) {
-  try {
-    return await import(modulePath);
-  } catch (error) {
-    throw new Error(`Failed to import ${modulePath} in ${targetMode} mode: ${error.message}`);
-  }
-}
-
 export function getConformanceTargetMode() {
-  return targetMode;
+  return conformanceTargetMode();
 }
 
 export function printConformanceTarget(suiteName) {
-  console.log(`Target (${suiteName}): ${modeDescription()} [CONFORMANCE_TARGET=${targetMode}]`);
+  const m = conformanceTargetMode();
+  console.log(`Target (${suiteName}): ${modeDescription()} [CONFORMANCE_TARGET=${m}]`);
 }
 
 export async function loadEventEmitterModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:events');
     return { EventEmitter: mod.EventEmitter };
   }
 
-  const mod = await importWithContext('../../napi-bridge/eventemitter.js');
+  const mod = await import('../../napi-bridge/eventemitter.js');
   const EventEmitter = pickFirst(mod.EventEmitter, mod.default?.EventEmitter, mod.default);
   if (typeof EventEmitter !== 'function') {
     throw new Error('Bridge EventEmitter export not found');
@@ -42,12 +38,12 @@ export async function loadEventEmitterModule() {
 }
 
 export async function loadPathModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:path');
     return { path: pickFirst(mod.default, mod) };
   }
 
-  const mod = await importWithContext('../../napi-bridge/browser-builtins.js');
+  const mod = await import('../../napi-bridge/browser-builtins.js');
   if (!mod.pathBridge) {
     throw new Error('Bridge pathBridge export not found');
   }
@@ -55,12 +51,12 @@ export async function loadPathModule() {
 }
 
 export async function loadBufferModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:buffer');
     return { Buffer: mod.Buffer };
   }
 
-  const mod = await importWithContext('../../napi-bridge/browser-builtins.js');
+  const mod = await import('../../napi-bridge/browser-builtins.js');
   const Buffer = pickFirst(mod.bufferBridge?.Buffer, mod.bufferBridge);
   if (!Buffer) {
     throw new Error('Bridge buffer export not found');
@@ -69,12 +65,12 @@ export async function loadBufferModule() {
 }
 
 export async function loadUtilModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:util');
     return { util: pickFirst(mod.default, mod) };
   }
 
-  const mod = await importWithContext('../../napi-bridge/util.js');
+  const mod = await import('../../napi-bridge/util.js');
   const util = pickFirst(mod.default, mod.util, mod);
   if (!util) {
     throw new Error('Bridge util export not found');
@@ -83,7 +79,7 @@ export async function loadUtilModule() {
 }
 
 export async function loadUrlModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:url');
     return {
       url: {
@@ -95,7 +91,7 @@ export async function loadUrlModule() {
     };
   }
 
-  const mod = await importWithContext('../../napi-bridge/browser-builtins.js');
+  const mod = await import('../../napi-bridge/browser-builtins.js');
   if (!mod.urlBridge) {
     throw new Error('Bridge urlBridge export not found');
   }
@@ -110,7 +106,7 @@ export async function loadUrlModule() {
 }
 
 export async function loadStreamsModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:stream');
     return {
       Readable: mod.Readable,
@@ -123,7 +119,7 @@ export async function loadStreamsModule() {
     };
   }
 
-  const mod = await importWithContext('../../napi-bridge/streams.js');
+  const mod = await import('../../napi-bridge/streams.js');
   return {
     Readable: pickFirst(mod.Readable, mod.default?.Readable),
     Writable: pickFirst(mod.Writable, mod.default?.Writable),
@@ -136,12 +132,12 @@ export async function loadStreamsModule() {
 }
 
 export async function loadFsModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     const mod = await import('node:fs');
     return { fs: mod.default || mod };
   }
 
-  const mod = await importWithContext('../../napi-bridge/fs.js');
+  const mod = await import('../../napi-bridge/fs.js');
   const fs = pickFirst(mod.default, mod.fs, mod);
   if (!fs) {
     throw new Error('Bridge fs export not found');
@@ -150,11 +146,11 @@ export async function loadFsModule() {
 }
 
 export async function loadProcessModule() {
-  if (targetMode === 'node') {
+  if (conformanceTargetMode() === 'node') {
     return { processObject: process };
   }
 
-  const mod = await importWithContext('../../napi-bridge/browser-builtins.js');
+  const mod = await import('../../napi-bridge/browser-builtins.js');
   const processObject = mod.processBridge;
   if (!processObject) {
     throw new Error('Bridge processBridge export not found');
