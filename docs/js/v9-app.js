@@ -20,6 +20,8 @@ import { Dial } from './dial.js';
 let state = 'IDLE';
 let progressLoaded = 0;
 const progressTotal = 4; // Loading stages before boot (boot adds final step)
+let cliUrlPromise = null; // Pre-resolved CLI URL
+let cliReady = false; // True when iframe has loaded
 
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
@@ -105,25 +107,38 @@ new ResizeObserver(resizeGlass).observe(termScreen);
 
 // ── Zoom controller ──
 const zoom = new ZoomController(termWrap, {
-  onComplete: () => {
-    if (state === 'ZOOMING') {
+  onComplete: (direction) => {
+    if (direction === 'in' && state === 'ZOOMING') {
       state = 'BOOTING';
       startBoot();
+    } else if (direction === 'out') {
+      // Animation settled — apply idle CSS class for static state
+      termWrap.classList.add('idle');
     }
   },
-  onProgress: (p) => {
-    // Fade fog as we zoom in
+  onProgress: (p, direction) => {
+    if (direction === 'out') {
+      // Reverse: bring back fog/spotlight/glass as we zoom out
+      fog.style.opacity = String(1.0 - p);
+      spotlight.style.opacity = String(0.6 + p * 0.4);
+      if (glass) {
+        glass.fog = 0.12 * (1.0 - p);
+        glass.glassBlur = 0.4 * (1.0 - p * 0.9);
+      }
+      // Fade out overlay as we zoom out
+      termOverlay.style.opacity = String(Math.max(0, p * 1.5 - 0.5));
+      return;
+    }
+    // Zoom in: fade fog, brighten spotlight, clear glass
     fog.style.opacity = String(1.0 - p);
-    // Increase spotlight
     spotlight.style.opacity = String(0.6 + p * 0.4);
-    // Clear glass blur
     if (glass) {
       glass.fog = 0.12 * (1.0 - p);
       glass.glassBlur = 0.4 * (1.0 - p * 0.9);
     }
-    // Start fading in the terminal overlay early (at 70% zoom) to prevent black flash
-    if (p > 0.7) {
-      const fade = (p - 0.7) / 0.3;
+    // Crossfade terminal overlay over glass — start at 60% for seamless blend
+    if (p > 0.6) {
+      const fade = (p - 0.6) / 0.4;
       termOverlay.style.opacity = String(fade);
     }
   }
@@ -144,95 +159,58 @@ function handleActivate(e) {
   state = 'ZOOMING';
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
+
+  // Start loading CLI immediately — don't wait for animation to finish
+  cliReady = false;
+  cliUrlPromise = resolveWebURL();
+  cliUrlPromise.then(url => {
+    if (url && (state === 'ZOOMING' || state === 'BOOTING' || state === 'RUNNING')) {
+      cliFrame.src = url;
+    }
+  });
+
   zoom.zoomIn();
 }
 
-// ── Boot sequence ──
-const bootLines = [
-  { icon: 'Terminal', text: 'booting v9...' },
-  { icon: 'Cpu', text: 'initializing runtime' },
-  { icon: 'Shield', text: 'loading polyfills' },
-  { icon: 'Network', text: 'configuring cors proxy' },
-  { icon: 'Code', text: 'loading claude code cli' },
-  { icon: 'Zap', text: 'ready' },
-];
-
+// ── Boot: zoom complete → show CLI ──
 async function startBoot() {
-  // Overlay already partially faded in during zoom; make fully visible
+  // Overlay already faded in during zoom; lock it visible
   termOverlay.classList.add('visible');
   termOverlay.style.opacity = '';
-  bootText.innerHTML = '';
 
-  // Stop glass animation after overlay is opaque
-  setTimeout(() => {
-    if (glass) {
-      glass.fog = 0;
-      glass.glassBlur = 0;
-    }
-  }, 200);
-
-  // Typewriter each boot line
-  for (let i = 0; i < bootLines.length; i++) {
-    const line = bootLines[i];
-    const el = document.createElement('div');
-    el.className = 'boot-line';
-
-    const iconImg = document.createElement('img');
-    iconImg.className = 'boot-icon';
-    iconImg.src = `icons/${line.icon}.svg`;
-    iconImg.alt = '';
-    el.appendChild(iconImg);
-
-    const span = document.createElement('span');
-    el.appendChild(span);
-    bootText.appendChild(el);
-
-    // Fade in line
-    await sleep(80);
-    el.classList.add('visible');
-
-    // Typewriter text
-    for (let j = 0; j < line.text.length; j++) {
-      span.textContent += line.text[j];
-      await sleep(25 + Math.random() * 15);
-    }
-
-    // Check mark for completed lines
-    if (i < bootLines.length - 1) {
-      span.textContent += ' \u2713';
-      await sleep(200);
-    } else {
-      // Last line — add blinking cursor
-      const cursor = document.createElement('span');
-      cursor.className = 'boot-cursor';
-      el.appendChild(cursor);
-    }
+  // Stop glass rendering now that overlay is fully opaque
+  if (glass) {
+    glass.fog = 0;
+    glass.glassBlur = 0;
+    glass.stop();
   }
 
   setProgress(5);
 
-  // Wait a beat, then load CLI
-  await sleep(800);
-  loadCLI();
-}
-
-async function loadCLI() {
-  state = 'RUNNING';
-
-  // Stop background rendering to save GPU
-  if (glass) glass.stop();
-
-  const webUrl = await resolveWebURL();
+  // CLI was pre-loaded during zoom — wait for it if still pending
+  const webUrl = await cliUrlPromise;
   if (webUrl) {
-    cliFrame.src = webUrl;
+    // iframe src was already set; wait for load then reveal
+    if (cliFrame.src) {
+      await new Promise(resolve => {
+        // Try to check if already loaded (may throw cross-origin)
+        try {
+          if (cliFrame.contentDocument && cliFrame.contentDocument.readyState === 'complete') {
+            return resolve();
+          }
+        } catch { /* cross-origin — fall through to load event */ }
+        cliFrame.addEventListener('load', resolve, { once: true });
+      });
+    }
+    state = 'RUNNING';
+    cliReady = true;
     cliFrame.classList.add('visible');
-    cliFrame.addEventListener('load', () => {
-      bootText.style.display = 'none';
-    }, { once: true });
+    bootText.style.display = 'none';
   } else {
     showRuntimeUnavailable();
   }
 }
+
 
 function siteRootPrefix() {
   let p = new URL(window.location.href).pathname;
@@ -299,11 +277,6 @@ function showRuntimeUnavailable() {
   bootText.appendChild(panel);
 }
 
-// ── Helpers ──
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
 // ── Mouse/touch warp for glass shader ──
 function updateGlassMouse(clientX, clientY) {
   if (!glass) return;
@@ -326,12 +299,14 @@ function resetToIdle() {
   cliFrame.classList.remove('visible');
   cliFrame.src = '';
   termOverlay.classList.remove('visible');
-  termOverlay.style.opacity = '';
+  termOverlay.style.opacity = '0';
   bootText.style.display = '';
   bootText.innerHTML = '';
   termWrap.classList.remove('zoomed');
-  termWrap.classList.add('idle');
-  termWrap.style.transform = '';
+  // Don't add .idle yet or clear transform — let zoom controller
+  // animate from current position, then CSS idle takes over when settled
+
+  // Restart glass immediately so it's visible during zoom-out
   if (glass) { glass.fog = 0.12; glass.glassBlur = 0.4; glass.start(); }
 
   // Each dismiss makes idle terminal slightly smaller (stacks)
@@ -361,10 +336,11 @@ const swipeDismiss = new SwipeDismiss(termWrap, {
   },
 });
 
-// ── Keyboard shortcut: Escape triggers full dismiss animation ──
+// ── Keyboard shortcut: Escape triggers smooth zoom-out to idle ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && (state === 'RUNNING' || state === 'BOOTING' || state === 'UNAVAILABLE')) {
-    swipeDismiss.dismiss();
+    addDismissedTile();
+    resetToIdle();
   }
 });
 
