@@ -10,7 +10,8 @@ let Terminal, FitAddon, WebLinksAddon;
 const DEFAULT_HOME = '/home/user';
 const DEFAULT_WORKSPACE = '/workspace';
 const DEFAULT_BUNDLE_ENTRY = '/app/bundle.js';
-const DEFAULT_ANTHROPIC_BASE_URL = 'http://localhost:8081/anthropic';
+// Anthropic API host; loopback pages get default proxy :8081 via node-polyfills (see TRANSPORT.md).
+const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
 async function loadXterm() {
   try {
@@ -66,20 +67,20 @@ function baseEnv(apiKey) {
   };
 }
 
-function writeBanner(term, { apiKey, bundleUrl, autorun }) {
+function writeBanner(term, { bundleUrl, autorun }) {
   term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
   term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mNode.js in the browser\x1b[0m          \x1b[1;34m│\x1b[0m');
   term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
   term.writeln('');
   term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
-  if (apiKey) {
-    term.writeln('\x1b[32m✓ Anthropic API key configured\x1b[0m');
-  } else {
-    term.writeln('\x1b[33m⚠ No Anthropic API key configured\x1b[0m');
-    term.writeln('\x1b[90mSet via: sessionStorage.setItem("anthropic_api_key", "sk-ant-...")\x1b[0m');
-    term.writeln('\x1b[90mThen reload the page.\x1b[0m');
+  // No API-key banner: Claude Code uses subscription / OAuth; optional sessionStorage remains for dev.
+  const host = globalThis.location?.hostname || '';
+  const isLocalDev = host === 'localhost' || host === '127.0.0.1';
+  if (isLocalDev) {
+    term.writeln(
+      `\x1b[32m✓ Anthropic API (browser fetch → dev CORS proxy on :8081): ${DEFAULT_ANTHROPIC_BASE_URL}\x1b[0m`,
+    );
   }
-  term.writeln(`\x1b[32m✓ Anthropic proxy path: ${DEFAULT_ANTHROPIC_BASE_URL}\x1b[0m`);
   term.writeln(`\x1b[32m✓ Workspace root: ${DEFAULT_WORKSPACE}\x1b[0m`);
   if (bundleUrl) {
     const mode = autorun ? 'autorun enabled' : 'deferred start';
@@ -191,7 +192,18 @@ function createCliController({ term, runtime, processBridge, config }) {
 
     const apiKey = options.apiKey ?? getAnthropicKey();
     const cwd = options.cwd || DEFAULT_WORKSPACE;
-    const argv = options.argv || ['node', DEFAULT_BUNDLE_ENTRY];
+    const scriptArg = (() => {
+      try {
+        const raw = String(bundleUrl || '').split('?')[0];
+        if (raw.startsWith('http://') || raw.startsWith('https://')) {
+          return new URL(raw).pathname || DEFAULT_BUNDLE_ENTRY;
+        }
+        return raw || DEFAULT_BUNDLE_ENTRY;
+      } catch {
+        return DEFAULT_BUNDLE_ENTRY;
+      }
+    })();
+    const argv = options.argv || ['node', scriptArg];
     const clearTerminal = options.clear !== false;
 
     runCounter += 1;
@@ -204,7 +216,7 @@ function createCliController({ term, runtime, processBridge, config }) {
     if (clearTerminal) {
       term.reset();
     }
-    writeBanner(term, { apiKey, bundleUrl, autorun: false });
+    writeBanner(term, { bundleUrl, autorun: false });
     term.writeln('');
     term.writeln(`\x1b[32m✓ Launching bundled app (run ${runCounter})\x1b[0m`);
     term.writeln('');
@@ -417,7 +429,6 @@ async function boot() {
       await controller.start();
     } else {
       writeBanner(term, {
-        apiKey: getAnthropicKey(),
         bundleUrl: config.appBundle,
         autorun: config.autorun,
       });

@@ -3,6 +3,9 @@
   Playwright entry for the unified in-tab contract: runs tests/conformance/in-tab-api-contract-suite.mjs
   in real Chromium with the same import map + host polyfills as web/index.html (bridge target).
 
+  Live HTTPS cases need ?fetchProxy=http://127.0.0.1:<port>/__in-tab-fetch (tests/helpers/in-tab-fetch-proxy.mjs).
+  COOP/COEP would block or complicate cross-origin fetch to httpbin from the renderer; the relay is same-origin.
+
   Keep the import map in sync with web/index.html "imports" when adding modules.
 -->
 <html lang="en">
@@ -92,8 +95,11 @@
     globalThis.__HARNESS_BROWSER_FINISH__ = true;
     if (globalThis.process && globalThis.process.env) {
       globalThis.process.env.CONFORMANCE_TARGET = 'bridge';
-      globalThis.process.env.NODEJS_CONTRACT_OFFLINE = '1';
-      globalThis.process.env.CLAUDE_CONTRACT_OFFLINE = '1';
+      const params = new URLSearchParams(globalThis.location?.search || '');
+      const fetchProxy = params.get('fetchProxy');
+      if (fetchProxy) {
+        globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY = fetchProxy;
+      }
     }
   </script>
 </head>

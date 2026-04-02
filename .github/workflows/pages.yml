@@ -33,12 +33,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Claude Code CLI (bundle input only)
-        run: npm install @anthropic-ai/claude-code@2 --no-save
-
-      - name: Bundle Claude Code for browser
-        run: node scripts/bundle-claude-for-pages.mjs
-
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
@@ -50,8 +44,30 @@ jobs:
           make configure
           make build
 
-      - name: Assemble docs/ (current web + napi-bridge + dist)
+      # wasm + loader into docs/dist/, rewrite import maps in every web/*.html, .nojekyll
+      - name: Assemble docs/ (web + napi-bridge + edgejs)
         run: node scripts/prepare-github-pages.mjs
+
+      # After prepare: CLI bundle lands next to edgejs.* (@anthropic-ai/claude-code from npm ci)
+      - name: Bundle Claude Code for browser (Pages + import map externals)
+        run: node scripts/bundle-claude-for-pages.mjs
+
+      - name: Verify Pages artifact (runtime + landing payload)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/.nojekyll
+          test -f docs/index.html
+          test -f docs/js/v9-app.js
+          test -f docs/web/index.html
+          test -f docs/web/node-polyfills.js
+          test -f docs/web/oauth-bridge.html
+          test -f docs/napi-bridge/http-exports.js
+          test -f docs/dist/edgejs.js
+          test -f docs/dist/edgejs.wasm
+          test -f docs/dist/claude-code-cli.js
+          grep -qF '__V9_ANTHROPIC_FETCH_PROXY__' docs/web/node-polyfills.js
+          grep -qF 'anthropicProxyForCLIiframe' docs/js/v9-app.js
 
       - uses: actions/configure-pages@v5
 

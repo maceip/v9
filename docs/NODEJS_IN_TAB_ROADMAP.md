@@ -1,5 +1,7 @@
 # Node.js-in-tab: architecture synthesis and roadmap
 
+**Naming:** “in-tab” is not one runtime. The same API contract runs on **Chromium (real tab)**, **Node + `napi-bridge`**, and **Node + EdgeJS/Wasm** — see [`CONTRACT_HOSTS.md`](CONTRACT_HOSTS.md).
+
 This document merges two threads of direction for the project:
 
 1. **Uniformity** — one public Node-shaped interface, one behavioral contract, multiple substrates that must not drift.
@@ -18,8 +20,8 @@ Claude-named paths and a large reference integration app are **scaffolding**: th
 **Uniformity targets across components**
 
 - **One behavioral spec** — The conformance suite (and, over time, the compatibility matrix) is the source of truth for what “Node-in-tab” means here.
-- **One naming direction** — Prefer neutral env vars and artifacts (`NODEJS_IN_TAB_*`, `NODEJS_CONTRACT_OFFLINE`, `nodejs-in-tab-contract` entrypoints). Keep Claude-related names as aliases or legacy paths until a deliberate migration completes.
-- **Import maps** — The browser entry’s import map must stay aligned (`web/index.html`, contract HTML). Prefer **generating** this from a single module or JSON so drift is impossible.
+- **One naming direction** — Prefer neutral env vars and artifacts (`NODEJS_IN_TAB_*`, `nodejs-in-tab-contract` entrypoints). Keep Claude-related names as aliases or legacy paths until a deliberate migration completes.
+- **Import maps** — The browser entry’s import map must stay aligned (`web/index.html`, contract HTML). Prefer **generating** this from a single module or JSON so drift is impossible. **HTTP vs raw sockets:** see [`docs/TRANSPORT.md`](TRANSPORT.md) (`browserHttpFetch`, optional fetch proxy, in-tab contract `?fetchProxy=` for CI, Wisp/embedder hooks).
 - **Lifecycle parity** — Document and implement the same `argv`, `cwd`, `env`, stdio, exit codes, and signal behavior on every substrate; avoid “works in browser host but not in Wasm” without an explicit, tested gap.
 
 ---
@@ -36,7 +38,7 @@ Most blockers for **existing** Node repos are:
 | **Native addons (`*.node`)** | Often unsupported in-tab; needs a clear policy: hard error, host registry, or substitute. |
 | **Test runners** | `node:test`, Jest, Vitest, etc. add surface; tackle after loaders and lifecycle are solid. |
 
-**Reference app** — A large, real codebase (today Claude-oriented) remains the **integration anchor**: it proves depth beyond the conformance floor. The **product** narrative is compatibility and real-app runs; the anchor can stay implementation detail until more flagship apps exist.
+**Reference app** — A large, real codebase (today Claude-oriented) remains the **integration anchor**: it proves depth beyond the conformance floor. The **product** narrative is compatibility and real-app runs; the anchor can stay implementation detail until more flagship apps exist. Part of that depth is **`node:net` inspection APIs** (`BlockList`, `SocketAddress`, dual-stack toggles): apps may import and use them for policy checks **without** raw TCP. In-tab implementations live in `napi-bridge/net-stubs.js`; **`net.connect` / `listen`** stay blocked unless an embedder tunnel is registered — see [`TRANSPORT.md`](TRANSPORT.md). Behavioral coverage: `in-tab-api-contract` (regenerate the Wasm bundle with `npm run build:in-tab-api-contract:wasm` after suite edits so both substrates stay aligned).
 
 **Escape hatches**
 
@@ -97,7 +99,7 @@ Synthesized from prior lists after merge cleanup. Items 1–4 are **partially do
 
 10. **npm / app story** — Either a documented **bundle-first** path or MEMFS `node_modules` + **minimal resolver** (`package.json` `main` / `exports` only to start), aligned with the escape hatches above. Goal: a third-party app with dependencies can be loaded and run without manual intervention.
 
-11. **HTTP client/server parity** — Expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, etc.).
+11. **HTTP client/server parity** — Expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, optional relays, failure-injection tests).
 
 12. **Streams & backpressure** — Real apps often fail on subtle stream edge cases; invest where the suite still **skips** or **stubs**.
 

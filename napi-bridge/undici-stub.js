@@ -1,12 +1,13 @@
 /**
- * undici — Browser stub that delegates to native fetch().
+ * undici — Browser stub that delegates through transport-policy (fetch / optional proxy).
  *
  * Gemini CLI imports undici for HTTP requests and proxy support.
- * In the browser, we delegate to native fetch() and stub proxy agents
- * as no-ops (browser handles proxies at the network layer).
+ * In the browser, HTTP goes to browserHttpFetch() so NODEJS_IN_TAB_FETCH_PROXY
+ * applies consistently with node:http bridge — see transport-policy.mjs.
  */
 
 import { EventEmitter } from './eventemitter.js';
+import { browserHttpFetch, isNodeHost } from './transport-policy.mjs';
 
 // ─── Agent stubs ────────────────────────────────────────────────────
 // Gemini CLI imports Agent, ProxyAgent, EnvHttpProxyAgent from undici.
@@ -45,10 +46,11 @@ export function getGlobalDispatcher() {
   return _globalDispatcher;
 }
 
-// ─── fetch / Request / Response pass-through ────────────────────────
-// Use native browser implementations directly.
-
-export const fetch = globalThis.fetch.bind(globalThis);
+// ─── fetch / Request / Response ─────────────────────────────────────
+export function fetch(input, init) {
+  if (isNodeHost()) return globalThis.fetch(input, init);
+  return browserHttpFetch(input, init);
+}
 export const Request = globalThis.Request;
 export const Response = globalThis.Response;
 export const Headers = globalThis.Headers;

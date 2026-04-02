@@ -15,7 +15,7 @@ export function createHarness(title) {
   let failed = 0;
   let skipped = 0;
 
-  /** Log a skipped test (e.g. offline / wrong host); does not count as pass or fail. */
+  /** Log a skipped test (e.g. wrong platform); does not count as pass or fail. */
   function skip(name, reason) {
     const tail = reason ? ` — ${reason}` : '';
     console.log(`  SKIP: ${name}${tail}`);
@@ -97,7 +97,10 @@ export function createHarness(title) {
       globalThis.__HARNESS_BROWSER_RESULT__ = { passed, skipped, failed, ok: failed === 0 };
       return;
     }
-    process.exit(failed > 0 ? 1 : 0);
+    // Do not call process.exit() — on Windows, forced exit while native MessagePorts or
+    // other handles are still closing can trip libuv (async.c UV_HANDLE_CLOSING). Setting
+    // exitCode lets the event loop drain; the runner process exits when idle.
+    process.exitCode = failed > 0 ? 1 : 0;
   }
 
   return {

@@ -1,6 +1,6 @@
 /**
  * Phase 2 of the unified in-tab contract: EdgeJS initEdgeJS + MEMFS + runFileAsync executes
- * the same behavioral suite (esbuild CJS bundle, bridge target, offline HTTPS).
+ * the same behavioral suite (esbuild CJS bundle, bridge target). HTTPS uses Node fetch in host.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -46,11 +46,7 @@ export async function runWasmMemfsContractPhase(opts = {}) {
   }
 
   const prevTarget = process.env.CONFORMANCE_TARGET;
-  const prevOff = process.env.CLAUDE_CONTRACT_OFFLINE;
-  const prevOff2 = process.env.NODEJS_CONTRACT_OFFLINE;
   process.env.CONFORMANCE_TARGET = 'bridge';
-  process.env.CLAUDE_CONTRACT_OFFLINE = '1';
-  process.env.NODEJS_CONTRACT_OFFLINE = '1';
 
   try {
     const libSrc = readFileSync(libPath, 'utf8');
@@ -62,8 +58,6 @@ export async function runWasmMemfsContractPhase(opts = {}) {
       preferJsScriptBridge: true,
       env: {
         CONFORMANCE_TARGET: 'bridge',
-        CLAUDE_CONTRACT_OFFLINE: '1',
-        NODEJS_CONTRACT_OFFLINE: '1',
       },
     });
 
@@ -118,9 +112,5 @@ export async function runWasmMemfsContractPhase(opts = {}) {
   } finally {
     if (prevTarget !== undefined) process.env.CONFORMANCE_TARGET = prevTarget;
     else delete process.env.CONFORMANCE_TARGET;
-    if (prevOff !== undefined) process.env.CLAUDE_CONTRACT_OFFLINE = prevOff;
-    else delete process.env.CLAUDE_CONTRACT_OFFLINE;
-    if (prevOff2 !== undefined) process.env.NODEJS_CONTRACT_OFFLINE = prevOff2;
-    else delete process.env.NODEJS_CONTRACT_OFFLINE;
   }
 }

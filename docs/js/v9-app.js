@@ -241,13 +241,28 @@ function siteRootPrefix() {
   return p;
 }
 
+function anthropicProxyForCLIiframe() {
+  try {
+    const q = new URL(window.location.href).searchParams.get('proxy');
+    if (q) return q;
+  } catch { /* ignore */ }
+  for (const key of ['__V9_ANTHROPIC_FETCH_PROXY__', '__V9_PAGES_ANTHROPIC_PROXY__']) {
+    const v = globalThis[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
 async function resolveWebURL() {
   // docs/web/index.html is produced by scripts/prepare-github-pages.mjs (CI).
   // GitHub Pages project sites live under /<repo>/ — pass absolute-style bundle path.
   const root = siteRootPrefix();
   const bundlePath = `${root.replace(/\/$/, '')}/dist/claude-code-cli.js`;
   const base = `${window.location.origin}${root}`;
-  const webUrl = new URL(`web/index.html?bundle=${encodeURIComponent(bundlePath)}&autorun=1`, base).href;
+  const u = new URL(`web/index.html?bundle=${encodeURIComponent(bundlePath)}&autorun=1`, base);
+  const proxy = anthropicProxyForCLIiframe();
+  if (proxy) u.searchParams.set('proxy', proxy);
+  const webUrl = u.href;
 
   async function ok(url) {
     try {
