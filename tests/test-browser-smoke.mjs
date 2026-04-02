@@ -90,6 +90,16 @@ try {
         document.head.appendChild(script);
       });
 
+    // Bare specifier "fflate" (napi-bridge/zlib.js) needs a map — unlike /node_modules/ URLs on this static root.
+    const importMap = document.createElement('script');
+    importMap.type = 'importmap';
+    importMap.textContent = JSON.stringify({
+      imports: {
+        fflate: 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm',
+      },
+    });
+    document.head.appendChild(importMap);
+
     await loadScript(`${baseUrl}/dist/edgejs.js`);
     const { initEdgeJS } = await import(`${baseUrl}/napi-bridge/index.js`);
 
