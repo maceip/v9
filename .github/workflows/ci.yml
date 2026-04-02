@@ -29,7 +29,7 @@ jobs:
   integration:
     name: Integration tier
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     needs: quick
     steps:
       - uses: actions/checkout@v4
@@ -49,10 +49,12 @@ jobs:
           CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
           echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
 
+      # Pin tot (~ LLD 23): 3.1.64 wasm-ld can SIGSEGV on ubuntu-latest (ImportSection::addImport)
+      # — see docs/BUILD_TOOLCHAIN.md / docker/Dockerfile EMSDK_FLAVOR default.
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64
+          version: tot
 
       - name: Configure and build
         run: |
