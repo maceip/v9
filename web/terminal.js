@@ -377,7 +377,14 @@ async function boot() {
       ? globalThis.__edgeInitialFiles
       : {};
 
+    // Resolve dist/ relative to this module so /web/index.html setups fetch
+    // /dist/edgejs.{js,wasm} (not /web/edgejs.wasm from fetch('./edgejs.wasm')).
+    const moduleUrl = globalThis.__edgeModuleUrl || new URL('../dist/edgejs.js', import.meta.url).href;
+    const wasmUrl = globalThis.__edgeWasmUrl || new URL('../dist/edgejs.wasm', import.meta.url).href;
+
     runtime = await initEdgeJS({
+      moduleUrl,
+      wasmUrl,
       onStdout: (text) => globalThis._xtermWrite?.(text),
       onStderr: (text) => globalThis._xtermWrite?.(text),
       env: baseEnv(getAnthropicKey()),
