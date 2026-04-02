@@ -7,11 +7,16 @@ Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-i
 ## Quick start
 
 ```bash
-npm install
-# Build EdgeJS wasm/js (Emscripten 3.1.64 + make) — see docs/BUILD_TOOLCHAIN.md
-# npm run build
+make setup                        # one-time: install Emscripten 3.1.64 + npm deps
+source ~/emsdk/emsdk_env.sh       # activate Emscripten in your shell
+make all                          # fetch → configure → build → test
+```
 
-# Dev server (static + optional API proxy):
+See **[BUILDING.md](BUILDING.md)** for the full from-scratch walkthrough. For CI parity, Docker, Cory/EC2 runbook: **[`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md)**. Docker: [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml). GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
+
+Once built, start the dev server:
+
+```bash
 node scripts/dev-server.mjs
 ```
 
@@ -34,7 +39,7 @@ This path is a **reference-app** stress case on the same stack as any other `?bu
 
 **Contributors:** If you edit `tests/conformance/in-tab-api-contract-suite.mjs`, refresh the Wasm copy of the suite before the unified gate: `npm run build:in-tab-api-contract:wasm`, then `npm run test:nodejs-in-tab-contract` ([`docs/NODEJS_IN_TAB_ROADMAP.md`](docs/NODEJS_IN_TAB_ROADMAP.md) — one spec, browser + Wasm).
 
-**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **“Wasm runtime rebuild”** for artifacts only.
+**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
 
 Open the URL printed by the dev server (default terminal UI):
 

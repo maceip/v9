@@ -9,7 +9,8 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test test-integration test-soak-quick test-nightly lint size clean distclean help
+.PHONY: all setup setup-emsdk setup-node-deps fetch configure build test test-integration \
+        test-soak-quick test-soak-nightly test-nightly lint size clean distclean help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -21,6 +22,8 @@ OUTPUT_DIR := $(ROOT_DIR)/dist
 
 # ---- Emscripten ----
 # Resolve EMSDK_DIR. On Windows, HOME may be empty in Make, so fall back to USERPROFILE.
+EMSDK_VERSION ?= 3.1.64
+
 ifdef EMSDK
     EMSDK_DIR := $(subst \,/,$(EMSDK))
 else ifdef HOME
@@ -52,6 +55,29 @@ JS_OUT   := $(OUTPUT_DIR)/edgejs.js
 # ============================================================
 
 all: fetch configure build test
+
+# ---- Setup (install prerequisites from scratch) ----
+setup: setup-emsdk setup-node-deps
+	@echo ">>> Setup complete. Activate emsdk with: source $(EMSDK_DIR)/emsdk_env.sh"
+	@echo ">>> Then run: make all"
+
+setup-emsdk:
+	@echo ">>> Installing Emscripten SDK $(EMSDK_VERSION)..."
+	@if [ ! -d "$(EMSDK_DIR)" ]; then \
+		git clone https://github.com/emscripten-core/emsdk.git "$(EMSDK_DIR)"; \
+	fi
+	@cd "$(EMSDK_DIR)" && git pull 2>/dev/null || true
+	@cd "$(EMSDK_DIR)" && ./emsdk install $(EMSDK_VERSION) && ./emsdk activate $(EMSDK_VERSION)
+	@echo ">>> Emscripten $(EMSDK_VERSION) installed at $(EMSDK_DIR)"
+
+setup-node-deps:
+	@echo ">>> Installing Node.js dependencies..."
+	@command -v node >/dev/null 2>&1 || { echo "ERROR: Node.js >= 18 is required. Install from https://nodejs.org"; exit 1; }
+	@NODE_VER=$$(node -v | sed 's/v//;s/\..*//'); \
+	if [ "$$NODE_VER" -lt 18 ] 2>/dev/null; then \
+		echo "ERROR: Node.js >= 18 required, found $$(node -v)"; exit 1; \
+	fi
+	npm ci
 
 # ---- Fetch Sources ----
 fetch:
@@ -125,6 +151,9 @@ test-nightly:
 test-soak-quick:
 	cd "$(ROOT_DIR)" && npm run test:soak:quick
 
+test-soak-nightly:
+	cd "$(ROOT_DIR)" && EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly
+
 # ---- Clean ----
 clean:
 	@rm -rf "$(BUILD_DIR)" "$(OUTPUT_DIR)"
@@ -133,6 +162,26 @@ distclean: clean
 	@rm -rf "$(EDGEJS_SRC)"
 
 help:
-	@echo 'Wasm runtime:  make fetch && source "$$EMSDK/emsdk_env.sh" && make configure && make build'
-	@echo "Docs: docs/BUILD_TOOLCHAIN.md (CI, Linux/EC2, Windows, artifacts)."
-	@echo "Targets: fetch configure build clean distclean lint size test test-integration test-soak-quick test-nightly"
+	@echo "v9 — EdgeJS Browser Runtime Build"
+	@echo ""
+	@echo "From-scratch build (clean machine):"
+	@echo "  make setup              Install emsdk $(EMSDK_VERSION) + npm deps"
+	@echo "  source ~/emsdk/emsdk_env.sh   Activate Emscripten in shell"
+	@echo "  make all                fetch → configure → build → test"
+	@echo ""
+	@echo "Individual targets:"
+	@echo "  make fetch              Clone EdgeJS source + init napi submodule"
+	@echo "  make configure          Clean source, apply patch, CMake configure"
+	@echo "  make build              Compile → dist/edgejs.{wasm,js} + build/edge"
+	@echo "  make test               Quick tests (basic + napi-bridge + guardrails)"
+	@echo "  make test-integration   Full suite (requires Chromium + wasm artifacts)"
+	@echo "  make test-soak-quick    Short soak test run"
+	@echo "  make test-soak-nightly  Long nightly soak run"
+	@echo "  make lint               Lint JS/MJS files"
+	@echo "  make size               Report build artifact sizes"
+	@echo "  make clean              Remove build/ and dist/"
+	@echo "  make distclean          clean + remove edgejs-src/"
+	@echo ""
+	@echo "Variables:  EMSDK_VERSION=$(EMSDK_VERSION)  BUILD_TYPE=$(BUILD_TYPE)  JOBS=$(JOBS)"
+	@echo "Docs:       docs/BUILD_TOOLCHAIN.md (CI, Docker, Cory/EC2 runbook)"
+	@echo "            BUILDING.md (developer quick-start)"
