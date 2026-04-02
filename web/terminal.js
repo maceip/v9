@@ -444,6 +444,22 @@ async function boot() {
     term.writeln('\x1b[90mTerminal UI loaded - runtime will connect when Wasm is built.\x1b[0m');
   }
 
+  // Allow Ctrl+C to copy when there's a selection, Ctrl+V to paste
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c' && term.hasSelection()) {
+      navigator.clipboard.writeText(term.getSelection());
+      return false; // prevent xterm from handling
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      navigator.clipboard.readText().then(text => {
+        if (text) term.paste(text);
+      }).catch(() => {});
+      return false;
+    }
+    return true;
+  });
+
   term.onData((data) => {
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
@@ -478,6 +494,14 @@ async function boot() {
       term.writeln(`\r\n\x1b[32m[hud]\x1b[0m npm install ${pkg}`);
       if (runtime && typeof runtime.pushStdin === 'function') {
         runtime.pushStdin(`npm install ${pkg}\n`);
+      }
+    }
+    if (e.data.type === 'v9:set-theme') {
+      const t = e.data.theme;
+      if (t && term.options) {
+        term.options.theme = t;
+        // Also update body bg so the terminal container matches
+        document.body.style.background = t.background || '';
       }
     }
     if (e.data.type === 'v9:inject-file') {

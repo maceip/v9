@@ -94,12 +94,13 @@ export class ZoomController {
     if (!this._running) return;
     this._raf = requestAnimationFrame(() => this._loop());
 
-    // Spring physics
-    this.velocity.scale *= this.damping;
+    // Spring physics — zoom-out uses higher damping to prevent bounce
+    const d = this._direction === 'out' ? 0.86 : this.damping;
+    this.velocity.scale *= d;
     this.velocity.scale += (this.target.scale - this.current.scale) * this.stiffness;
     this.current.scale += this.velocity.scale;
 
-    this.velocity.y *= this.damping;
+    this.velocity.y *= d;
     this.velocity.y += (this.target.y - this.current.y) * this.stiffness;
     this.current.y += this.velocity.y;
 
