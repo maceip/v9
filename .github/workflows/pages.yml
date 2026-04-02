@@ -55,9 +55,14 @@ jobs:
 
       - name: Verify landing page essentials
         run: |
+          set -e
           test -f docs/index.html
           test -f docs/js/v9-app.js
           test -f docs/js/zoom.js
+          if [ -f docs/napi-bridge/zlib.js ]; then
+            grep -qF "from 'fflate'" docs/napi-bridge/zlib.js
+            ! grep -qF 'node_modules/fflate' docs/napi-bridge/zlib.js
+          fi
           echo "Landing page verified"
 
       - uses: actions/configure-pages@v5

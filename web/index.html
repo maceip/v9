@@ -4,6 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Node in browser — EdgeJS</title>
+  <!-- Lock document base to …/web/ so importmap "../napi-bridge/*" resolves under project Pages (/repo/), not github.io root. -->
+  <script>
+  (function () {
+    var b = document.createElement('base');
+    b.href = new URL('.', location.href).href;
+    var t = document.querySelector('head > title');
+    if (t && t.nextSibling) document.head.insertBefore(b, t.nextSibling);
+    else document.head.appendChild(b);
+  })();
+  </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }

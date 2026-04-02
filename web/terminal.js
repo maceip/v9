@@ -378,9 +378,10 @@ async function boot() {
 
   try {
     const ts = Date.now();
+    const napiRoot = new URL('../napi-bridge/', import.meta.url).href;
     const [{ initEdgeJS }, bridgeModule] = await Promise.all([
-      import(`../napi-bridge/index.js?t=${ts}`),
-      import('../napi-bridge/browser-builtins.js'),
+      import(`${napiRoot}index.js?t=${ts}`),
+      import(`${napiRoot}browser-builtins.js`),
     ]);
 
     processBridge = bridgeModule.processBridge;

@@ -5,7 +5,9 @@
  */
 
 import { Transform, PassThrough } from './streams.js';
-import * as fflate from '../node_modules/fflate/esm/browser.js';
+// Bare specifier: import map (web) → CDN; Node resolves via package.json "fflate".
+// Do not use ../node_modules/… — on GitHub Pages that becomes /v9/node_modules/… (404).
+import * as fflate from 'fflate';
 
 // ─── Sync APIs ───────────────────────────────────────────────────────
 
