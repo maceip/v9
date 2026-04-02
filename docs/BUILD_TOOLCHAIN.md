@@ -155,6 +155,8 @@ Optional reproducibility: after `make fetch`, `git -C edgejs-src checkout <sha>`
 
 | Symptom | Likely fix |
 |--------|------------|
+| **`wasm-ld` SIGSEGV** in `lld::wasm::ImportSection::addImport` at the **final link** (Emscripten **3.1.64** / **LLD 19**) | Confirmed on some hosts (e.g. **Ubuntu 24.04**, **kernel 6.17**, official `wasm-binaries` tarball). Not a corrupt download (same `md5` after re-install), not ASLR (`setarch -R` still crashes). **Workaround:** use a **newer SDK** so you get **LLD ≥ 22**, e.g. `cd ~/emsdk && ./emsdk install tot && ./emsdk activate tot`, then clean and `make configure && make build`. CI still pins **3.1.64**; if your machine needs `tot`, use that locally until LLVM 19 catches up. |
+| **`missing build/edge.js`** or tiny broken **`build/edge`** | Fixed in-repo: Emscripten often emits **`-o edge`** as a large **`build/edge`** JS file; the Makefile now renames it to **`edge.js`** and writes the Node shim via **`scripts/write-build-edge-shim.mjs`**. |
 | Contract **Phase 1** fails / browser won’t start | Set **`CHROME_BIN`** to Chromium; install `chromium` / `chromium-browser`; run `npm ci` so `playwright-core` is present. |
 | `Vendored OpenSSL is not yet wired for native target system 'Emscripten'` | Patch not applied; ensure `make configure` succeeds (no “patch failed” message). |
 | Missing `dist/edgejs.wasm` | Run `make build`; confirm `build/edge.wasm` exists and copy step in `Makefile` ran. |

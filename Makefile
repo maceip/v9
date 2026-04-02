@@ -89,9 +89,16 @@ $(WASM_OUT): $(BUILD_DIR)/CMakeCache.txt
 	@echo ">>> Building EdgeJS..."
 	@mkdir -p "$(OUTPUT_DIR)"
 	cmake --build "$(BUILD_DIR)" -j $(JOBS)
-	@cp -f "$(BUILD_DIR)/edge.js" "$(JS_OUT)" 2>/dev/null || echo "Warning: edge.js not found"
-	@cp -f "$(BUILD_DIR)/edge.wasm" "$(WASM_OUT)" 2>/dev/null || echo "Warning: edge.wasm not found"
-	@printf "const fs = require('node:fs');\nconst path = require('node:path');\nconst filename = path.join(__dirname, 'edge.js');\nconst source = fs.readFileSync(filename, 'utf8');\nconst wrapped = new Function('exports', 'require', 'module', '__filename', '__dirname', `${source}\\n;return module.exports || globalThis.EdgeJSModule || global.EdgeJSModule;`);\nmodule.exports = wrapped(module.exports, require, module, filename, __dirname);\n" > "$(BUILD_DIR)/edge"
+	@# Emscripten -o edge often emits the JS loader as build/edge (no suffix); normalize to edge.js.
+	@if [ ! -f "$(BUILD_DIR)/edge.js" ] && [ -f "$(BUILD_DIR)/edge" ]; then \
+	  _s=$$(wc -c < "$(BUILD_DIR)/edge" | tr -d ' \r'); \
+	  if [ "$$_s" -gt 5000 ]; then \
+	    mv -f "$(BUILD_DIR)/edge" "$(BUILD_DIR)/edge.js"; \
+	  fi; \
+	fi
+	@cp -f "$(BUILD_DIR)/edge.js" "$(JS_OUT)" 2>/dev/null || { echo ">>> ERROR: missing $(BUILD_DIR)/edge.js after build"; exit 1; }
+	@cp -f "$(BUILD_DIR)/edge.wasm" "$(WASM_OUT)" 2>/dev/null || { echo ">>> ERROR: missing $(BUILD_DIR)/edge.wasm"; exit 1; }
+	@node "$(ROOT_DIR)/scripts/write-build-edge-shim.mjs" "$(BUILD_DIR)"
 	@echo ">>> Build complete"
 
 # ---- Release Gate ----
