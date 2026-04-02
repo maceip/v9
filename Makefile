@@ -9,7 +9,7 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test test-integration test-soak-quick test-nightly clean distclean size help
+.PHONY: all setup fetch configure build test test-integration test-soak-quick test-nightly lint size clean distclean help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -106,6 +106,12 @@ release-gate:
 	@echo ">>> Running phase close release gate..."
 	cd "$(ROOT_DIR)" && node scripts/release-gate.mjs
 
+lint:
+	cd "$(ROOT_DIR)" && node scripts/lint-repo.mjs
+
+size:
+	cd "$(ROOT_DIR)" && node scripts/artifact-sizes.mjs
+
 # ---- Test Tiers ----
 test:
 	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs
@@ -129,4 +135,4 @@ distclean: clean
 help:
 	@echo 'Wasm runtime:  make fetch && source "$$EMSDK/emsdk_env.sh" && make configure && make build'
 	@echo "Docs: docs/BUILD_TOOLCHAIN.md (CI, Linux/EC2, Windows, artifacts)."
-	@echo "Targets: fetch configure build clean distclean test test-integration test-soak-quick"
+	@echo "Targets: fetch configure build clean distclean lint size test test-integration test-soak-quick test-nightly"
