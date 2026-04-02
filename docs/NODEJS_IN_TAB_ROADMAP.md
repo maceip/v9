@@ -73,6 +73,52 @@ Ordered so each step builds toward “run a real `package.json` repo” without 
 
 ---
 
+## High impact, relatively low effort
+
+Work that sharpens **product truth** and **maintainability** on top of the baseline milestones above (resolver, MEMFS, unified gate). Not a second “ten done” list — these are **directional** until each is implemented and marked complete in-repo.
+
+1. **One “Node surface” spec, two adapters** — Treat `napi-bridge` + the conformance suite as **the** contract; keep **browser** and **Wasm** as two adapters that must satisfy the **same** tests. The unified gate (`npm run test:nodejs-in-tab-contract`) already enforces alignment; the next step is making the **enumerated behaviors** (streams, HTTP, `child_process`, `worker_threads`, etc.) the **explicit product spec** and naming everything else around that.
+
+2. **Mechanical de‑Claude‑ing (no behavior change)** — Introduce **parallel neutral names**: `nodejs-in-tab-contract` artifacts, `NODEJS_IN_TAB_*` env vars, `dist/*` filenames where legacy ones remain, with **thin re-exports** or npm scripts so nothing breaks. Goal: lower cognitive load for contributors and users and match **general-purpose runtime** positioning.
+
+3. **Import map generation (or one shared source)** — Today `web/index.html` and `web/nodejs-in-tab-contract.html` must stay in sync **by hand**. **Generate** the import map from a single JSON or JS module consumed by the dev server, contract HTML, and docs snippets, plus a CI guard so maps cannot drift silently.
+
+4. **Compatibility matrix as the homepage** — Maintain **one** table: built-in → **full / partial / stub / N/A / Wasm-only**, with links to tests (or an explicit **SKIP** with reason). Cheap to maintain if every row maps to a conformance case in `tests/conformance/`.
+
+5. **App bootstrap path** — Document and stabilize **one** supported way to run a third-party app: **entry file + MEMFS seed + env + optional pre-bundle**. A small **`runInTab({ root, entry, argv })`** (or equivalent) that hides EdgeJS/Wasm behind init/teardown is mostly glue and docs, but it clarifies adoption.
+
+---
+
+## Ten strategic developmental targets (ordered to build on the foundation)
+
+Ordered **after** the baseline milestones in this document. These extend **branding**, **docs/spec surface**, **network & streams depth**, **debuggability**, and **security** — not the original “fflate / resolver / `node:test` stub” track.
+
+1. **Neutral runtime branding** — names, env vars, default HTML and test entrypoints; keep deprecated aliases until a deliberate removal.
+
+2. **Authoritative compatibility matrix** — tied to conformance cases (and explicit gaps).
+
+3. **Single generated import map** — consumed by `web/index.html`, contract HTML, and a **“maps must match”** CI check.
+
+4. **`runInTab` / host SDK** — one documented API: init, FS layout, `argv`, `env`, teardown (building on `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`).
+
+5. **npm / app story** — either a documented **bundle-first** path or MEMFS `node_modules` + **minimal resolver** (`package.json` `main` / `exports` only to start), aligned with the escape hatches above.
+
+6. **HTTP client/server parity** — expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, etc.).
+
+7. **Streams & backpressure** — real apps often fail on subtle stream edge cases; invest where the suite still **skips** or **stubs**.
+
+8. **Child process & shell model** — clear contract: what is **emulated**, what is **host-backed**, what is **unsupported** (complements `docs/PROCESS_LIFECYCLE.md` gaps).
+
+9. **Debuggability** — source maps, structured errors, optional logging bridge to the parent page; realistic inspect/trace for the Wasm path.
+
+10. **Security & capability model** — what arbitrary code may do in-tab; document for anyone **embedding** the runtime.
+
+### North star
+
+Be the project where **if it passes the in-tab contract and fits the compatibility matrix, you can ship it** — and embedders know what power they are granting to untrusted code.
+
+---
+
 ## What not to confuse
 
 - **Two substrates** is an implementation detail for maintainers, not a choice authors should have to make for day-to-day development.
