@@ -83,7 +83,7 @@ Legacy names `test:claude-contract:*` still point at the same commands during mi
 
 ## GitHub Pages (landing + Claude in iframe)
 
-The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) on **`main`** / **`dev`**:
+The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) runs on **`push` to `main`** (and **`workflow_dispatch`** so you can run it from another branch without double-deploy races).
 
 1. **`npm ci`** — includes **`@anthropic-ai/claude-code`** (devDependency), used only as input to the pre-bundle step below.
 2. **`make fetch`**, **`make configure`**, **`make build`** — produces **`dist/edgejs.{js,wasm}`**.
@@ -98,7 +98,9 @@ Generated trees **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`**, and 
 
 `node scripts/prepare-github-pages.mjs && node scripts/bundle-claude-for-pages.mjs`
 
-**Deploy failing in ~3s with environment errors:** GitHub’s **`github-pages`** [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) can restrict which branches may deploy. In the repo: **Settings → Environments → `github-pages` → Deployment branches**, allow **`main`** and **`dev`** (or all branches). Until that matches `.github/workflows/pages.yml`, Actions will not publish a new site even though the workflow file and `docs/` build are correct.
+**Deploy failing in ~3s with environment errors:** GitHub’s **`github-pages`** [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) can restrict which branches may deploy. In the repo: **Settings → Environments → `github-pages` → Deployment branches**, allow **`main`** (or all branches if you use **`workflow_dispatch`** from other refs).
+
+**“Canceling since a higher priority waiting request for pages exists”:** Usually two overlapping **`deploy-pages`** runs (e.g. **`main` + `dev` push** together, or **`cancel-in-progress: true`** killing an in-flight deploy). This repo triggers automatic deploy only on **`main`** and sets **`cancel-in-progress: false`** so runs queue instead of preempting.
 
 ## License / private
 

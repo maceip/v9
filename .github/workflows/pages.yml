@@ -6,8 +6,10 @@
 name: Deploy GitHub Pages
 
 on:
+  # One live URL — deploy from `main` only on push. Pushes to `dev` were starting a second
+  # concurrent deploy; GitHub then cancels with “higher priority waiting request for pages”.
   push:
-    branches: [main, dev]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,8 +18,10 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: pages-${{ github.repository }}
+  # Never cancel mid-deploy: canceled jobs still leave a queued Pages deployment and
+  # trigger the “higher priority waiting request” warning on the next run.
+  cancel-in-progress: false
 
 jobs:
   deploy:
