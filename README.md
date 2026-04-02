@@ -1,125 +1,64 @@
-# v9 — Claude Code in the Browser
+# v9 — Node.js in the browser (EdgeJS + N-API bridge)
 
-Run Claude Code's full interactive TUI in Chrome via WebAssembly + N-API bridge.
+Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-ins, xterm UI, and a conformance suite that stays aligned across **browser JS** and **Wasm/MEMFS**.
 
-**Status**: Claude Code v2.1.83 renders its Ink-based TUI in xterm.js, connects to the Anthropic API through a CORS proxy, and accepts keyboard input.
+**Not** tied to a single vendor CLI — that was early scaffolding. Product direction: general-purpose Node-in-tab (`docs/NODEJS_IN_TAB_ROADMAP.md`).
 
-## Quick Start (Developer)
+## Quick start
 
 ```bash
-# Prerequisites: Node.js 22+, Emscripten SDK (emsdk), Git Bash (Windows)
-
-# 1. Install dependencies
 npm install
+# Build EdgeJS wasm/js (toolchain-dependent):
+# npm run build   # or make / build-emscripten per Makefile
 
-# 2. Build the Wasm binary
-make clean && make configure && make build
-
-# 3. Bundle Claude Code for browser
-npm install @anthropic-ai/claude-code --save-dev
-npx esbuild node_modules/@anthropic-ai/claude-code/cli.js \
-  --bundle --format=cjs --platform=node --packages=external \
-  --outfile=dist/claude-code-cli.js
-sed -i '1{/^#!/d}' dist/claude-code-cli.js  # strip shebang
-
-# 4. Bundle the Anthropic SDK
-sh scripts/bundle-sdk.sh
-
-# 5. Start the dev server
+# Dev server (static + optional API proxy):
 node scripts/dev-server.mjs
-
-# 6. Open in Chrome
-#    http://localhost:8080/web/?bundle=/dist/claude-code-cli.js
-#
-#    First visit: open DevTools console and run:
-#    sessionStorage.setItem("anthropic_api_key", "sk-ant-...")
-#    Then reload the page.
 ```
 
-## Quick Start (System Builder)
+Open the URL printed by the dev server (default terminal UI):
 
-Exact commands that produced the working build:
+`http://localhost:8080/web/index.html?bundle=/dist/app-bundle.js`
+
+`bundle=` should point at a **pre-bundled** ESM/CJS app you place under `dist/` (or serve elsewhere). There is no magic npm-on-MEMFS yet; see the roadmap.
+
+## Validation
 
 ```bash
-# Build pipeline
-make clean
-make configure    # ~6 min — configures Emscripten cross-compilation
-make build        # ~5 min — compiles 800+ objects, links 4.9MB wasm
+# Core smoke tests
+npm test
 
-# Verify
-make release-gate                    # 12/12 checks, 7/7 checkpoints
-node tests/run-oneshot.mjs           # 29/29 pass
-node tests/conformance/test-eventemitter.mjs  # 28/28 pass
-
-# Bundle the CLI
-npm install @anthropic-ai/claude-code --save-dev
-npx esbuild node_modules/@anthropic-ai/claude-code/cli.js \
-  --bundle --format=cjs --platform=node --packages=external \
-  --outfile=dist/claude-code-cli.js
-sed -i '1{/^#!/d}' dist/claude-code-cli.js
-sh scripts/bundle-sdk.sh
-
-# Serve
-node scripts/dev-server.mjs
-# File server: http://localhost:8080/web/
-# CORS proxy:  http://localhost:8081/
-# Open: http://localhost:8080/web/?bundle=/dist/claude-code-cli.js
+# Dual gate — same API contract in real Chromium + Wasm MEMFS (CI-quality)
+npm run test:nodejs-in-tab-contract
 ```
 
-## Architecture
+## Build artifacts (what lives in `dist/`)
 
-```
-Browser Tab
-├── xterm.js                    Terminal emulator (keyboard → stdin, stdout → screen)
-├── web/terminal.js             Wires xterm ↔ runtime, loads CLI bundle
-├── web/node-polyfills.js       process, global, require shim, CORS proxy
-│
-├── napi-bridge/index.js        N-API bridge (140+ functions), JS execution path
-├── napi-bridge/browser-builtins.js  process, fs, http, path, os, crypto, etc.
-├── napi-bridge/eventemitter.js  Full Node.js EventEmitter + static methods
-├── napi-bridge/http.js          HTTP client via fetch() with streaming
-├── napi-bridge/streams.js       Readable/Writable/Duplex/Transform
-├── napi-bridge/fs.js            MEMFS-backed filesystem
-│
-├── dist/edgejs.wasm            4.9MB Wasm binary (EdgeJS runtime)
-├── dist/edgejs.js              Emscripten JS glue
-├── dist/claude-code-cli.js     12MB Claude Code bundle (esbuild CJS)
-├── dist/anthropic-sdk-bundle.js  175KB Anthropic SDK bundle
-│
-├── scripts/dev-server.mjs      HTTP file server + CORS proxy
-├── wasi-shims/napi-emscripten-library.js  Emscripten link stubs
-└── emscripten-toolchain.cmake  Cross-compilation config
-```
+| Artifact | How produced | Role |
+|----------|------------|------|
+| `edgejs.wasm`, `edgejs.js` | `npm run build` / `make` | Wasm runtime loaded by the bridge |
+| `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS (`esbuild`) |
+| `in-tab-api-contract.js` | `npm run build:in-tab-api-contract` (**Bun**) | Contract suite as ESM bundle (optional) |
+| `app-bundle.js` | Your esbuild/webpack step | Example default for `?bundle=` |
+| `anthropic-sdk-bundle.js` | `scripts/bundle-sdk.sh` (optional) | Overrides `@anthropic-ai/sdk` in the tab |
 
-## Key Design Decisions
+`.gitignore` excludes `dist/`; reproduce artifacts with the commands above.
 
-1. **JS Bridge Execution** — The Wasm binary boots but script execution bypasses the C++ libuv event loop. Scripts run in the browser's native V8 via `new Function()` with a Node.js-compatible `require()` backed by MEMFS.
+## npm scripts (high level)
 
-2. **Dual Process Objects** — `globalThis.process` (polyfill, loads first) and `require('process')` (processBridge, full Writable streams). Both are synchronized via `terminal.js` after `initEdgeJS()`.
+- **Tests:** `test`, `test:nodejs-in-tab-contract`, `test:in-tab-api-contract`, `test:browser`, `test:wasm`, `test:release-gate`
+- **Contract builds:** `build:in-tab-api-contract`, `build:in-tab-api-contract:wasm`
+- **Release gate:** `release-gate` (policy JSON under `.planning/...`)
 
-3. **CORS Proxy** — All `api.anthropic.com` and `platform.claude.com` requests are intercepted via a patched `fetch()` and routed through `localhost:8081` which forwards with proper headers.
+Legacy names `test:claude-contract:*` still point at the same commands during migration.
 
-4. **No Minified Code Dependencies** — All production fixes are in our bridge/polyfill files. Debug checkpoint patches (the `[V9]` traces) are only in the disposable `dist/claude-code-cli.js` bundle.
+## Repo layout (short)
 
-## File Inventory
+- `napi-bridge/` — browser mappings for Node built-ins  
+- `web/` — terminal page, import map, polyfills  
+- `tests/conformance/in-tab-api-contract-suite.mjs` — behavioral contract  
+- `docs/NODEJS_IN_TAB_ROADMAP.md` — architecture + next milestones  
+- `.planning/` — minimal release-gate metadata (large historical phase trees removed)
 
-| File | Purpose |
-|------|---------|
-| `Makefile` | Build pipeline (fetch → configure → build → release-gate) |
-| `emscripten-toolchain.cmake` | Emscripten compiler/linker flags |
-| `patches/edgejs-emscripten.patch` | EdgeJS source patches for Emscripten |
-| `napi-bridge/index.js` | Core N-API bridge, module resolver, JS execution |
-| `napi-bridge/browser-builtins.js` | processBridge, 28 Node.js builtin modules |
-| `napi-bridge/eventemitter.js` | EventEmitter with static methods |
-| `napi-bridge/http.js` | HTTP client via fetch() |
-| `napi-bridge/fs.js` | MEMFS filesystem |
-| `napi-bridge/streams.js` | Readable/Writable/Transform streams |
-| `web/node-polyfills.js` | Global polyfills, CORS proxy, exit handling |
-| `web/terminal.js` | xterm.js integration, CLI bundle loading |
-| `web/index.html` | Entry point with import map |
-| `scripts/dev-server.mjs` | Dev HTTP server + CORS proxy |
-| `scripts/bundle-sdk.sh` | Anthropic SDK bundler |
-| `scripts/release-gate.mjs` | Release quality gate |
-| `wasi-shims/napi-emscripten-library.js` | Emscripten JS library stubs |
-| `tests/run-oneshot.mjs` | Wasm + MEMFS + execution test |
-| `tests/conformance/test-eventemitter.mjs` | EventEmitter conformance tests |
+## License / private
+
+`private: true` in `package.json` — adjust for your distribution model.

@@ -1,5 +1,5 @@
 /**
- * Minimal worker for claude API contract — same pattern as app code using
+ * Minimal worker for in-tab API contract — same pattern as app code using
  * worker_threads (workerData in, postMessage out).
  */
 import { parentPort, workerData } from 'node:worker_threads';

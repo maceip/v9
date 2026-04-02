@@ -5,9 +5,8 @@
  * environment that Node.js code expects: process, Buffer, setImmediate,
  * hrtime, console.Console, setTimeout.unref, and CORS proxy intercept.
  *
- * Without this file, all 4 CLIs (Claude Code, Cody, Cline, Gemini CLI)
- * break on first import. Do NOT delete or inline this — keep it as a
- * standalone file that's loaded via <script> in index.html.
+ * Many bundled Node CLIs expect these globals before any ESM import.
+ * Keep this as a standalone file loaded via <script> before the import map.
  *
  * Load order: node-polyfills.js → import map → terminal.js → modules
  */
@@ -77,7 +76,7 @@
     globalThis.global = globalThis;
   }
 
-  // ─── claude-js / Bun macro globals (match src/entrypoints/cli.tsx) ─
+  // ─── Bun-style MACRO globals (some pre-bundled CLIs expect these) ─
   // ESM chunks may evaluate before the CLI entry's inline polyfills run.
   if (typeof globalThis.MACRO === 'undefined') {
     globalThis.MACRO = {
@@ -165,7 +164,7 @@
 
   if (typeof globalThis.process === 'undefined') {
     const _env = {
-      // Route API calls through CORS proxy — browser can't call api.anthropic.com directly
+      // Example: route vendor APIs through local dev proxy when needed
       ANTHROPIC_BASE_URL: 'http://localhost:8081',
     };
     const _cwd = '/';
@@ -177,7 +176,7 @@
 
     globalThis.process = {
       env: _env,
-      argv: ['/usr/bin/node', '/app/claude-code.js'],
+      argv: ['/usr/bin/node', '/app/bundle.js'],
       platform: 'linux',
       arch: 'x64',  // Report x64 to prevent "Unsupported architecture" from CLIs
       version: 'v22.0.0',
@@ -207,9 +206,8 @@
       listenerCount: (evt) => (_listeners[evt] || []).length,
       rawListeners: (evt) => (_listeners[evt] || []).slice(),
       exit: (code) => {
-        // Do NOT set process.exitCode here — Claude Code checks
-        // process.exitCode !== undefined to detect prior exit calls
-        // and skips initialization if set.
+        // Do NOT set process.exitCode here — some CLIs treat a preset exitCode
+        // as "already exiting" and skip init.
         globalThis.__exitTraces = globalThis.__exitTraces || [];
         globalThis.__exitTraces.push({ code, stack: new Error().stack });
         const err = new Error(`process.exit(${code})`);

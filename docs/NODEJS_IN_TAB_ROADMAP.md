@@ -83,6 +83,9 @@ Ordered so each step builds toward “run a real `package.json` repo” without 
 ## Related commands
 
 - Unified contract (browser host + Wasm): `npm run test:nodejs-in-tab-contract`
-- Legacy script names in `package.json` should delegate to the same gate where possible.
+- Suite only (Node or bridge): `npm run test:in-tab-api-contract` (+ `:bridge`, `:node`, `:bundle`)
+- Wasm bundle of the suite: `npm run build:in-tab-api-contract:wasm`
 
-This file should be updated as milestones complete and as the neutrality rename (Claude → Node-in-tab) proceeds.
+Legacy `test:claude-contract:*` npm scripts are thin aliases during migration.
+
+This file should be updated as milestones complete.

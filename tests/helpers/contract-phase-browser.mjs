@@ -1,6 +1,6 @@
 /**
  * Phase 1 of the unified in-tab contract: real Chromium loads the same import map + polyfills
- * as web/index.html and runs claude-contract-suite.mjs (bridge target).
+ * as web/index.html and runs in-tab-api-contract-suite.mjs (bridge target).
  */
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Playwright entry for the unified in-tab contract: runs tests/conformance/claude-contract-suite.mjs
+  Playwright entry for the unified in-tab contract: runs tests/conformance/in-tab-api-contract-suite.mjs
   in real Chromium with the same import map + host polyfills as web/index.html (bridge target).
 
   Keep the import map in sync with web/index.html "imports" when adding modules.
@@ -102,8 +102,8 @@
   <script type="module">
     const status = document.getElementById('status');
     try {
-      const { runClaudeApiContract } = await import('/tests/conformance/claude-contract-suite.mjs');
-      await runClaudeApiContract();
+      const { runInTabApiContract } = await import('/tests/conformance/in-tab-api-contract-suite.mjs');
+      await runInTabApiContract();
     } catch (e) {
       console.error(e);
       status.textContent = 'FATAL: ' + (e && e.message ? e.message : e);

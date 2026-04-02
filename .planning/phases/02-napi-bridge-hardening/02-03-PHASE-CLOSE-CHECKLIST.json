@@ -8,12 +8,10 @@
       "type": "required_files",
       "description": "Planning and release-gate source-of-truth files exist",
       "files": [
+        "README.md",
+        "docs/NODEJS_IN_TAB_ROADMAP.md",
         ".planning/PROJECT.md",
         ".planning/STATE.md",
-        ".planning/phases/02-napi-bridge-hardening/02-01-PLAN.md",
-        ".planning/phases/02-napi-bridge-hardening/02-01-SUMMARY.md",
-        ".planning/phases/02-napi-bridge-hardening/02-02-ENGINEERING-WORKSTREAMS.md",
-        ".planning/phases/02-napi-bridge-hardening/02-03-PHASE-CLOSE-CHECKLIST.md",
         ".planning/phases/02-napi-bridge-hardening/02-03-PHASE-CLOSE-CHECKLIST.json"
       ]
     },

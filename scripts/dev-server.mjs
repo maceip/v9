@@ -256,4 +256,4 @@ proxy.on('upgrade', (req, socket, head) => {
 
 fileServer.listen(8080, () => console.log('File server: http://localhost:8080/'));
 proxy.listen(8081, () => console.log('CORS proxy:  http://localhost:8081/'));
-console.log('\nOpen: http://localhost:8080/web/index.html?bundle=/dist/claude-code-cli.js');
+console.log('\nOpen: http://localhost:8080/web/index.html?bundle=/dist/app-bundle.js');

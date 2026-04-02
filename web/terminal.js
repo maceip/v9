@@ -1,16 +1,15 @@
 /**
  * Terminal UI - xterm.js integration with EdgeJS runtime.
  *
- * The browser page exposes a small controller on `globalThis.__edgeCli`
- * so tests can launch Claude Code with deterministic argv/env settings
- * without relying on brittle onboarding-only keyboard flows.
+ * Exposes `globalThis.__edgeCli` so tests (or embedders) can start a bundled
+ * Node CLI with deterministic argv/env without depending on interactive flows.
  */
 
 let Terminal, FitAddon, WebLinksAddon;
 
 const DEFAULT_HOME = '/home/user';
 const DEFAULT_WORKSPACE = '/workspace';
-const DEFAULT_BUNDLE_ENTRY = '/app/claude-code.js';
+const DEFAULT_BUNDLE_ENTRY = '/app/bundle.js';
 const DEFAULT_ANTHROPIC_BASE_URL = 'http://localhost:8081/anthropic';
 
 async function loadXterm() {
@@ -44,7 +43,7 @@ function getConfig() {
   const params = new URLSearchParams(globalThis.location?.search || '');
   return {
     proxyUrl: params.get('proxy') || 'http://localhost:8081',
-    claudeCodeBundle: params.get('bundle') || '/dist/claude-code-cli.js',
+    appBundle: params.get('bundle') || '/dist/app-bundle.js',
     autorun: params.get('autorun') !== '0',
   };
 }
@@ -69,7 +68,7 @@ function baseEnv(apiKey) {
 
 function writeBanner(term, { apiKey, bundleUrl, autorun }) {
   term.writeln('\x1b[1;34m╭──────────────────────────────────╮\x1b[0m');
-  term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mClaude Code - Browser Edition\x1b[0m   \x1b[1;34m│\x1b[0m');
+  term.writeln('\x1b[1;34m│\x1b[0m  \x1b[1;37mNode.js in the browser\x1b[0m          \x1b[1;34m│\x1b[0m');
   term.writeln('\x1b[1;34m╰──────────────────────────────────╯\x1b[0m');
   term.writeln('');
   term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
@@ -84,10 +83,11 @@ function writeBanner(term, { apiKey, bundleUrl, autorun }) {
   term.writeln(`\x1b[32m✓ Workspace root: ${DEFAULT_WORKSPACE}\x1b[0m`);
   if (bundleUrl) {
     const mode = autorun ? 'autorun enabled' : 'deferred start';
-    term.writeln(`\x1b[32m✓ Claude bundle: ${bundleUrl} (${mode})\x1b[0m`);
+    term.writeln(`\x1b[32m✓ App bundle: ${bundleUrl} (${mode})\x1b[0m`);
   } else {
-    term.writeln('\x1b[90mNo Claude bundle configured. Add ?bundle=/dist/claude-code-cli.js\x1b[0m');
+    term.writeln('\x1b[90mNo app bundle. Example: ?bundle=/dist/app-bundle.js\x1b[0m');
   }
+  
 }
 
 function ensureDirectory(runtime, path) {
@@ -98,9 +98,9 @@ function ensureDirectory(runtime, path) {
   }
 }
 
-function claudeProjectStateDir(cwd) {
+function appProjectStateDir(cwd) {
   const projectKey = String(cwd || DEFAULT_WORKSPACE).replace(/[\\/]/g, '-');
-  return `${DEFAULT_HOME}/.claude/projects/${projectKey}`;
+  return `${DEFAULT_HOME}/.node-in-tab/projects/${projectKey}`;
 }
 
 function configureProcessBridge(processBridge, { argv, cwd, apiKey, extraEnv = {} }) {
@@ -127,7 +127,7 @@ function configureProcessBridge(processBridge, { argv, cwd, apiKey, extraEnv = {
   processBridge.argv0 = argv[0] || 'node';
   processBridge.execArgv = [];
   processBridge.execPath = '/usr/local/bin/node';
-  processBridge.title = 'claude-code-browser';
+  processBridge.title = 'node-in-tab';
   processBridge.exitCode = undefined;
   processBridge.chdir(cwd);
   globalThis.process = processBridge;
@@ -178,15 +178,15 @@ function createCliController({ term, runtime, processBridge, config }) {
     if (lastExitCode !== null) {
       return lastExitCode;
     }
-    term.writeln(`\r\n\x1b[90m[claude exit ${code}]\x1b[0m`);
+    term.writeln(`\r\n\x1b[90m[process exit ${code}]\x1b[0m`);
     finishExit(code);
     return code;
   };
 
   const start = async (options = {}) => {
-    const bundleUrl = options.bundle || config.claudeCodeBundle;
+    const bundleUrl = options.bundle || config.appBundle;
     if (!bundleUrl) {
-      throw new Error('No Claude Code bundle configured');
+      throw new Error('No app bundle configured (?bundle=…)');
     }
 
     const apiKey = options.apiKey ?? getAnthropicKey();
@@ -206,13 +206,13 @@ function createCliController({ term, runtime, processBridge, config }) {
     }
     writeBanner(term, { apiKey, bundleUrl, autorun: false });
     term.writeln('');
-    term.writeln(`\x1b[32m✓ Launching Claude Code run ${runCounter}\x1b[0m`);
+    term.writeln(`\x1b[32m✓ Launching bundled app (run ${runCounter})\x1b[0m`);
     term.writeln('');
 
     ensureDirectory(runtime, DEFAULT_HOME);
-    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude`);
-    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude/projects`);
-    ensureDirectory(runtime, claudeProjectStateDir(cwd));
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.node-in-tab`);
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.node-in-tab/projects`);
+    ensureDirectory(runtime, appProjectStateDir(cwd));
     ensureDirectory(runtime, DEFAULT_WORKSPACE);
     resetProcessBridge(processBridge);
     configureProcessBridge(processBridge, { argv, cwd, apiKey, extraEnv: options.env || {} });
@@ -231,7 +231,7 @@ function createCliController({ term, runtime, processBridge, config }) {
         const launchResult = main(runtime);
         Promise.resolve(launchResult).catch((runtimeError) => {
           lastError = runtimeError;
-          term.writeln(`\x1b[31m✗ Claude Code failed: ${_safe(runtimeError.message)}\x1b[0m`);
+          term.writeln(`\x1b[31m✗ Bundled app failed: ${_safe(runtimeError.message)}\x1b[0m`);
           finishExit(1);
         });
       }
@@ -251,7 +251,7 @@ function createCliController({ term, runtime, processBridge, config }) {
         runtime.require(DEFAULT_BUNDLE_ENTRY, '/app');
       } catch (fallbackError) {
         lastError = fallbackError;
-        term.writeln(`\x1b[31m✗ Claude Code failed: ${_safe(fallbackError.message)}\x1b[0m`);
+        term.writeln(`\x1b[31m✗ Bundled app failed: ${_safe(fallbackError.message)}\x1b[0m`);
         finishExit(1);
         throw fallbackError;
       }
@@ -283,7 +283,7 @@ function createCliController({ term, runtime, processBridge, config }) {
       currentExitPromise,
       exitCodePoll,
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`Timed out waiting for Claude exit after ${timeoutMs}ms`)), timeoutMs);
+        setTimeout(() => reject(new Error(`Timed out waiting for process exit after ${timeoutMs}ms`)), timeoutMs);
       }),
     ]);
   };
@@ -304,13 +304,13 @@ function createCliController({ term, runtime, processBridge, config }) {
   };
 }
 
-async function registerAnthropicSdk(runtime, term) {
+async function registerOptionalVendorSdk(runtime, term) {
   try {
     const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
     runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
     runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
   } catch {
-    term.writeln('\x1b[33m[sdk] Bundle not found. Run: node scripts/prepare-browser-assets.mjs\x1b[0m');
+    term.writeln('\x1b[33m[sdk] Optional @anthropic-ai/sdk override not present (dist/anthropic-sdk-bundle.js)\x1b[0m');
   }
 }
 
@@ -385,7 +385,7 @@ async function boot() {
     });
 
     ensureDirectory(runtime, DEFAULT_HOME);
-    ensureDirectory(runtime, `${DEFAULT_HOME}/.claude`);
+    ensureDirectory(runtime, `${DEFAULT_HOME}/.node-in-tab`);
     ensureDirectory(runtime, DEFAULT_WORKSPACE);
     configureProcessBridge(processBridge, {
       argv: ['node', DEFAULT_BUNDLE_ENTRY],
@@ -398,7 +398,7 @@ async function boot() {
     }
     syncProcessTerminalSize(processBridge, term.cols, term.rows);
 
-    await registerAnthropicSdk(runtime, term);
+    await registerOptionalVendorSdk(runtime, term);
 
     const controller = createCliController({ term, runtime, processBridge, config });
     globalThis.__edgeCli = controller;
@@ -406,17 +406,17 @@ async function boot() {
     globalThis.__edgeRuntime = runtime;
     globalThis.__edgeProcess = processBridge;
 
-    if (config.claudeCodeBundle && config.autorun) {
+    if (config.appBundle && config.autorun) {
       await controller.start();
     } else {
       writeBanner(term, {
         apiKey: getAnthropicKey(),
-        bundleUrl: config.claudeCodeBundle,
+        bundleUrl: config.appBundle,
         autorun: config.autorun,
       });
-      if (config.claudeCodeBundle) {
+      if (config.appBundle) {
         term.writeln('');
-        term.writeln('\x1b[90mDeferred start mode. Use __edgeCli.start() to launch Claude Code.\x1b[0m');
+        term.writeln('\x1b[90mDeferred start. Call __edgeCli.start() to run the bundle.\x1b[0m');
       }
     }
   } catch (err) {

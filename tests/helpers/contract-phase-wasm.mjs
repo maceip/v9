@@ -13,16 +13,16 @@ const DEFAULT_ROOT = join(__dirname, '..', '..');
 
 /**
  * @param {{ rootDir?: string, runBuild?: boolean }} [opts]
- * runBuild: run `node scripts/build-claude-contract-wasm.mjs` if artifacts missing (default true)
+ * runBuild: run `node scripts/build-in-tab-api-contract-wasm.mjs` if artifacts missing (default true)
  */
 export async function runWasmMemfsContractPhase(opts = {}) {
   const rootDir = opts.rootDir ?? DEFAULT_ROOT;
   const runBuild = opts.runBuild !== false;
-  const libPath = join(rootDir, 'dist', 'claude-contract-wasm-lib.cjs');
-  const runPath = join(rootDir, 'dist', 'claude-contract-wasm-run.cjs');
+  const libPath = join(rootDir, 'dist', 'in-tab-api-contract-wasm-lib.cjs');
+  const runPath = join(rootDir, 'dist', 'in-tab-api-contract-wasm-run.cjs');
 
   if ((!existsSync(libPath) || !existsSync(runPath)) && runBuild) {
-    const script = join(rootDir, 'scripts', 'build-claude-contract-wasm.mjs');
+    const script = join(rootDir, 'scripts', 'build-in-tab-api-contract-wasm.mjs');
     const r = spawnSync(process.execPath, [script], { stdio: 'inherit', cwd: rootDir });
     if (r.status !== 0) {
       return {
@@ -30,7 +30,7 @@ export async function runWasmMemfsContractPhase(opts = {}) {
         name: 'wasm-memfs',
         checksPassed: 0,
         checksFailed: 1,
-        notes: ['build-claude-contract-wasm.mjs failed'],
+        notes: ['build-in-tab-api-contract-wasm.mjs failed'],
       };
     }
   }
@@ -68,8 +68,8 @@ export async function runWasmMemfsContractPhase(opts = {}) {
     });
 
     runtime.fs.mkdirSync('/contracts', { recursive: true });
-    runtime.fs.writeFileSync('/contracts/claude-contract-wasm-lib.cjs', libSrc, 'utf8');
-    runtime.fs.writeFileSync('/contracts/claude-contract-wasm-run.cjs', runSrc, 'utf8');
+    runtime.fs.writeFileSync('/contracts/in-tab-api-contract-wasm-lib.cjs', libSrc, 'utf8');
+    runtime.fs.writeFileSync('/contracts/in-tab-api-contract-wasm-run.cjs', runSrc, 'utf8');
 
     if (typeof runtime.runFileAsync !== 'function') {
       return {
@@ -83,7 +83,7 @@ export async function runWasmMemfsContractPhase(opts = {}) {
 
     delete globalThis.__HARNESS_BROWSER_RESULT__;
 
-    const code = await runtime.runFileAsync('/contracts/claude-contract-wasm-run.cjs');
+    const code = await runtime.runFileAsync('/contracts/in-tab-api-contract-wasm-run.cjs');
     const harness = globalThis.__HARNESS_BROWSER_RESULT__;
     delete globalThis.__HARNESS_BROWSER_RESULT__;
 
