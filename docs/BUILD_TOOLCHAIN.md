@@ -39,6 +39,29 @@ test -f dist/edgejs.wasm && test -f dist/edgejs.js && test -f build/edge && echo
 
 After artifacts exist, run **tests** (next section on EC2, or `npm ci && npm run test:nodejs-in-tab-contract` locally).
 
+## Docker (engineer laptops — reproducible like Cory)
+
+EC2 (Cory) stays always-on; **your laptop can go offline** and still get the same toolchain via **Linux in Docker** (bind-mount this repo).
+
+- **Image:** `docker/Dockerfile` — Ubuntu 24.04, Node **22**, **emsdk** (default **`tot`** so **wasm-ld** matches the stable Cory link path; override with `--build-arg EMSDK_FLAVOR=3.1.64` if you want CI-pinned LLVM and accept possible host/kernel crashes).
+- **Build image:** from repo root:  
+  `docker build -f docker/Dockerfile -t v9-wasm-toolchain .`
+- **Full Wasm build in container:**  
+  `docker run --rm -v "$PWD:/workspace" -w /workspace v9-wasm-toolchain bash -lc 'make fetch && make configure && make build'`
+- **Compose:**  
+  `docker compose -f docker/compose.yaml build` then  
+  `docker compose -f docker/compose.yaml run --rm v9-build`
+
+Tests that launch **Chromium** are not fully configured in the slim image; run **`npm ci`** and contract tests **on the host** with your normal `CHROME_BIN`, or extend the Dockerfile with `chromium-browser` + deps.
+
+### Optional: S3 / shared artifacts (no compile)
+
+To **sync** pre-built `dist/` + `build/edge*` from **S3** (or adapt the script): set **`WASM_ASSETS_S3_URI`** and run:
+
+`node scripts/fetch-wasm-assets.mjs`
+
+Lay out the bucket prefix like the CI artifact tree (`dist/edgejs.wasm`, `dist/edgejs.js`, `build/edge`, `build/edge.js`).
+
 ## Run tests on Cory / EC2 (parity with CI)
 
 CI’s **Integration** job does two things in order: **build Wasm** (`make configure` / `make build`), then **run tests** (`make test-integration`, which includes `npm run test:nodejs-in-tab-contract` and `make test-soak-quick`). On Cory’s machine, mirror that.

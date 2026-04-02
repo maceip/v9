@@ -61,6 +61,7 @@
     "lint": "make lint",
     "size": "make size",
     "clean": "make clean",
+    "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
     "pages:prepare": "node scripts/prepare-github-pages.mjs"
   },
   "keywords": [

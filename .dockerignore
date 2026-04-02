@@ -1,0 +1,13 @@
+# Keep build context small; bind-mounted workspace still sees these at runtime.
+node_modules
+edgejs-src
+build
+dist
+.tmp
+.git
+**/.DS_Store
+**/Thumbs.db
+npm-debug.log
+*.log
+.claude-code-main
+tmp-cdp-chrome
