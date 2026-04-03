@@ -1,28 +1,24 @@
 /**
- * Mobile D-Pad — virtual keypad for terminal input on touch devices.
+ * Mobile D-Pad — pill-shaped game-controller overlay for terminal input.
  *
- * Layout (full d-pad):
- *   [Esc]  [Up]   [Tab]
- *   [Left] [Home] [Right]
- *   [Ctrl] [Down] [End]
+ * Modeled after a compact Bluetooth gamepad:
+ *   Left side:  D-pad cross (Up/Down/Left/Right)
+ *   Right side: Diamond buttons — Esc(Y) Home(X) Ctrl(B) Tab(A) + Enter(center)
  *
- * When the on-screen keyboard opens (detected via visualViewport),
- * the d-pad animates into a compact horizontal rail above the keyboard.
- * When the keyboard closes, it morphs back to the full 3x3 grid.
- *
- * Tapping any button also focuses a hidden input to trigger the keyboard.
+ * 50% opacity at rest, 100% on touch.
+ * When the on-screen keyboard opens, morphs into a compact rail above it.
  */
 
 const KEYS = {
-  esc:   { label: 'Esc',  seq: '\x1b' },
-  tab:   { label: 'Tab',  seq: '\t' },
-  ctrl:  { label: 'Ctrl', modifier: true },
-  up:    { label: '\u2191', seq: '\x1b[A' },
-  down:  { label: '\u2193', seq: '\x1b[B' },
-  left:  { label: '\u2190', seq: '\x1b[D' },
-  right: { label: '\u2192', seq: '\x1b[C' },
+  esc:   { label: 'Esc',   seq: '\x1b' },
+  tab:   { label: 'Tab',   seq: '\t' },
+  ctrl:  { label: 'Ctrl',  modifier: true },
+  enter: { label: '\u23CE', seq: '\r' },
+  up:    { label: '\u25B2', seq: '\x1b[A' },
+  down:  { label: '\u25BC', seq: '\x1b[B' },
+  left:  { label: '\u25C0', seq: '\x1b[D' },
+  right: { label: '\u25B6', seq: '\x1b[C' },
   home:  { label: '\u2302', seq: '\x1b[H' },
-  end:   { label: 'End',  seq: '\x1b[F' },
 };
 
 export class DPad {
@@ -31,6 +27,7 @@ export class DPad {
     this.ctrlActive = false;
     this.visible = false;
     this.keyboardOpen = false;
+    this._touching = false;
     this._build();
     this._bindKeyboard();
   }
@@ -39,27 +36,51 @@ export class DPad {
     this.el = document.createElement('div');
     this.el.id = 'dpad';
 
-    // Full d-pad grid (3x3)
-    const grid = document.createElement('div');
-    grid.className = 'dpad-grid';
-    const gridKeys = ['esc','up','tab','left','home','right','ctrl','down','end'];
-    for (const k of gridKeys) {
-      const btn = document.createElement('button');
-      btn.dataset.key = k;
-      btn.className = 'dpad-btn';
-      if (k === 'home') btn.classList.add('dpad-center');
-      else if (KEYS[k].modifier) btn.classList.add('dpad-mod');
-      else if (['up','down','left','right'].includes(k)) btn.classList.add('dpad-arrow');
-      else btn.classList.add('dpad-mod');
-      btn.textContent = KEYS[k].label;
-      grid.appendChild(btn);
-    }
-    this.el.appendChild(grid);
+    // ── Pill body (full controller) ──
+    const pill = document.createElement('div');
+    pill.className = 'dpad-pill';
 
-    // Keyboard rail (horizontal strip)
+    // Left half: D-pad cross
+    const cross = document.createElement('div');
+    cross.className = 'dpad-cross';
+    for (const dir of ['up', 'down', 'left', 'right']) {
+      const btn = document.createElement('button');
+      btn.dataset.key = dir;
+      btn.className = `dpad-cross-btn dpad-cross-${dir}`;
+      btn.innerHTML = `<span>${KEYS[dir].label}</span>`;
+      cross.appendChild(btn);
+    }
+    // Center nub
+    const nub = document.createElement('div');
+    nub.className = 'dpad-cross-nub';
+    cross.appendChild(nub);
+    pill.appendChild(cross);
+
+    // Right half: Diamond buttons
+    const diamond = document.createElement('div');
+    diamond.className = 'dpad-diamond';
+    // Y=Esc(top), X=Home(left), B=Ctrl(right), A=Tab(bottom), center=Enter
+    const slots = [
+      { key: 'esc',   cls: 'dpad-dia-top' },
+      { key: 'home',  cls: 'dpad-dia-left' },
+      { key: 'enter', cls: 'dpad-dia-center' },
+      { key: 'ctrl',  cls: 'dpad-dia-right' },
+      { key: 'tab',   cls: 'dpad-dia-bottom' },
+    ];
+    for (const s of slots) {
+      const btn = document.createElement('button');
+      btn.dataset.key = s.key;
+      btn.className = `dpad-dia-btn ${s.cls}`;
+      btn.textContent = KEYS[s.key].label;
+      diamond.appendChild(btn);
+    }
+    pill.appendChild(diamond);
+    this.el.appendChild(pill);
+
+    // ── Keyboard rail (compact strip) ──
     const rail = document.createElement('div');
     rail.className = 'dpad-rail';
-    const railKeys = ['esc','tab','ctrl','up','down','left','right','home','end'];
+    const railKeys = ['esc','tab','ctrl','enter','left','down','up','right','home'];
     for (const k of railKeys) {
       const btn = document.createElement('button');
       btn.dataset.key = k;
@@ -69,7 +90,7 @@ export class DPad {
     }
     this.el.appendChild(rail);
 
-    // Hidden input for triggering on-screen keyboard
+    // ── Hidden input for on-screen keyboard ──
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'dpad-keyboard-input';
@@ -82,7 +103,7 @@ export class DPad {
 
     document.body.appendChild(this.el);
 
-    // Bind all buttons
+    // ── Button handlers ──
     this.el.querySelectorAll('[data-key]').forEach(btn => {
       const handler = (e) => {
         e.preventDefault();
@@ -110,20 +131,35 @@ export class DPad {
       this.hiddenInput.value = '';
     });
 
-    // Prevent keyboard from closing when tapping dpad buttons
+    // Prevent keyboard from closing when tapping buttons
     this.el.addEventListener('touchstart', (e) => {
-      if (e.target.dataset.key) e.preventDefault();
+      if (e.target.closest('[data-key]')) e.preventDefault();
     }, { passive: false });
+
+    // 50% → 100% opacity on touch
+    this.el.addEventListener('touchstart', () => {
+      this._touching = true;
+      this.el.classList.add('touching');
+    }, { passive: true });
+    const endTouch = () => {
+      this._touching = false;
+      // Delay so the press feedback is visible
+      setTimeout(() => {
+        if (!this._touching) this.el.classList.remove('touching');
+      }, 300);
+    };
+    this.el.addEventListener('touchend', endTouch, { passive: true });
+    this.el.addEventListener('touchcancel', endTouch, { passive: true });
   }
 
   _onKey(key, btn) {
     const def = KEYS[key];
     if (!def) return;
 
-    // Haptic feedback
+    // Haptic
     if (navigator.vibrate) navigator.vibrate(8);
 
-    // Visual press feedback
+    // Press animation
     btn.classList.add('pressed');
     setTimeout(() => btn.classList.remove('pressed'), 120);
 
@@ -151,16 +187,13 @@ export class DPad {
   _send(seq) {
     try {
       this.cliFrame?.contentWindow?.postMessage({ type: 'v9:key-input', seq }, '*');
-    } catch { /* cross-origin fallback — ignored */ }
+    } catch { /* cross-origin */ }
   }
 
   _bindKeyboard() {
     if (!window.visualViewport) return;
-
     const vv = window.visualViewport;
-    let stableHeight = vv.height;
 
-    // Debounce: wait for viewport to settle
     let debounce = null;
     vv.addEventListener('resize', () => {
       clearTimeout(debounce);
@@ -171,12 +204,10 @@ export class DPad {
 
         if (this.keyboardOpen !== wasOpen) {
           this.el.classList.toggle('keyboard-open', this.keyboardOpen);
-          // Position rail just above keyboard
           if (this.keyboardOpen) {
             this.el.style.setProperty('--kb-height', `${heightDiff}px`);
           }
         }
-        stableHeight = vv.height;
       }, 60);
     });
   }
