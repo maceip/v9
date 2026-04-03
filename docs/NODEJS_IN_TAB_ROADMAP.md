@@ -30,11 +30,11 @@
 
 ## Next direction (not yet “done” in-repo)
 
-- **Explicit product spec** from the conformance suite (streams, HTTP, child_process, workers, …).
-- **Neutral naming** (`NODEJS_IN_TAB_*`, generated import maps, de-Claude mechanical aliases).
-- **Compatibility matrix** (built-in → full / partial / stub) linked to tests or SKIP reasons.
-- **Stable embedder API** — document `runInTab`-style bootstrap on top of `runNodeEntry`.
-- **Security / capability** model for untrusted code in-tab.
+- **Explicit product spec** from the conformance suite (streams, HTTP, child_process, workers, …). **In progress:** [`NODEJS_SURFACE_SPEC.md`](NODEJS_SURFACE_SPEC.md) maps suite modules to conformance; expand as cases land.
+- **Neutral naming** (`NODEJS_IN_TAB_*`, generated import maps, de-Claude mechanical aliases). **In progress:** browser import map source is [`web/nodejs-in-tab-import-map.json`](../web/nodejs-in-tab-import-map.json); regenerate HTML with `npm run apply:import-map`; CI guard `npm run test:import-map-consistency`. Conformance target may also use `NODEJS_IN_TAB_CONFORMANCE_TARGET` as an alias for `CONFORMANCE_TARGET`.
+- **Compatibility matrix** (built-in → full / partial / stub) linked to tests or SKIP reasons. **In progress:** [`COMPATIBILITY_MATRIX.md`](COMPATIBILITY_MATRIX.md).
+- **Stable embedder API** — document `runInTab`-style bootstrap on top of `runNodeEntry`. **In progress:** [`RUN_IN_TAB.md`](RUN_IN_TAB.md), API in `napi-bridge/run-in-tab.mjs`, test `npm run test:run-in-tab`.
+- **Security / capability** model for untrusted code in-tab. **In progress:** [`CAPABILITY_MODEL.md`](CAPABILITY_MODEL.md).
 
 **North star:** If it passes the in-tab contract and matches the matrix, you can ship it — and embedders know what power they grant.
 
