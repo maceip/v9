@@ -94,10 +94,20 @@ new ResizeObserver(resizeGlass).observe(termScreen);
 const zoom = new ZoomController(termWrap, {
   onComplete: (direction) => {
     if (direction === 'in' && state === 'ZOOMING') {
-      state = 'RUNNING';
       if (glass) { glass.fog = 0; glass.glassBlur = 0; glass.stop(); }
-      // If CLI not loaded yet, load it now
-      if (!cliLoaded) loadCLI();
+
+      // First time: show API key prompt after zoom animation finishes
+      if (!apiKeyPrompted && !cliLoaded) {
+        apiKeyPrompted = true;
+        state = 'PROMPTING';
+        showApiKeyPrompt(() => {
+          state = 'RUNNING';
+          loadCLI();
+        });
+      } else {
+        state = 'RUNNING';
+        if (!cliLoaded) loadCLI();
+      }
     } else if (direction === 'out') {
       state = 'IDLE';
       termWrap.classList.add('idle');
@@ -141,35 +151,34 @@ function handleActivate(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // First activation: show API key prompt before booting
-  if (!apiKeyPrompted && !cliLoaded) {
-    apiKeyPrompted = true;
-    showApiKeyPrompt();
-    return;
+  state = 'ZOOMING';
+  termWrap.classList.remove('idle');
+  termWrap.classList.add('zoomed');
+
+  // Start loading CLI on first click
+  if (!cliLoaded && !cliFrame.src) {
+    resolveWebURL().then(url => { if (url) cliFrame.src = url; });
   }
 
-  doZoomIn();
+  zoom.zoomIn();
 }
 
-function showApiKeyPrompt() {
-  state = 'PROMPTING';
+// ── API key prompt — navbar-style panel shown after zoom-in ──
+function showApiKeyPrompt(onDone) {
   apiPrompt.classList.add('visible');
   apiInput.value = '';
-  apiInput.focus();
+  setTimeout(() => apiInput.focus(), 50);
 
   function submit() {
     const key = apiInput.value.trim();
-    if (key) {
-      // Store in sessionStorage — terminal.js reads it via getAnthropicKey()
-      sessionStorage.setItem('anthropic_api_key', key);
-    }
+    if (key) sessionStorage.setItem('anthropic_api_key', key);
     cleanup();
-    doZoomIn();
+    onDone();
   }
 
   function skip() {
     cleanup();
-    doZoomIn();
+    onDone();
   }
 
   function onKey(e) {
@@ -178,34 +187,12 @@ function showApiKeyPrompt() {
     if (e.key === 'Escape') skip();
   }
 
-  function onClick(e) {
-    // Click outside the prompt = skip
-    if (!apiPrompt.contains(e.target)) skip();
-  }
-
   function cleanup() {
     apiPrompt.classList.remove('visible');
     apiInput.removeEventListener('keydown', onKey);
-    document.removeEventListener('mousedown', onClick);
   }
 
   apiInput.addEventListener('keydown', onKey);
-  // Delay the click listener so the current click doesn't immediately dismiss
-  setTimeout(() => document.addEventListener('mousedown', onClick, { once: true }), 100);
-}
-
-function doZoomIn() {
-  state = 'ZOOMING';
-  termWrap.classList.remove('idle');
-  termWrap.classList.add('zoomed');
-
-  if (!cliLoaded && !cliFrame.src) {
-    resolveWebURL().then(url => {
-      if (url) cliFrame.src = url;
-    });
-  }
-
-  zoom.zoomIn();
 }
 
 // ── Load CLI into visible state ──

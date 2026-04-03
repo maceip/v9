@@ -22,8 +22,8 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    this.zoomInDuration = 380;  // ms — fast pop open
-    this.zoomOutDuration = 320; // ms — smooth close
+    this.zoomInDuration = 260;  // ms — fast pop open
+    this.zoomOutDuration = 300; // ms — smooth close
 
     this._shrink = 0;
     const idle = getIdleParams();

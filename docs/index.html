@@ -481,59 +481,64 @@
     }
     #cli-frame.visible { opacity: 1; pointer-events: auto; }
 
-    /* ── API key prompt — 80s rounded callout ── */
+    /* ── API key prompt — 80s navbar panel with pipe connectors ── */
     #api-key-prompt {
       position: fixed;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%) scale(0.9);
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-110%);
       z-index: 300;
-      width: 380px;
-      max-width: calc(100% - 32px);
+      max-width: 460px;
+      width: calc(100% - 80px);
       border: 2px solid var(--frame-border);
-      border-radius: 16px;
+      border-radius: 10px;
       background:
         linear-gradient(170deg, rgba(255,255,255,0.05) 0%, transparent 40%, rgba(0,0,0,0.06) 100%),
         var(--frame-bg);
       box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.03),
+        inset 0 -1px 0 rgba(0,0,0,0.2),
         0 0 0 0.5px rgba(255,255,255,0.1),
-        0 0 40px rgba(255,255,255,0.06),
-        0 8px 32px rgba(0,0,0,0.4),
-        0 16px 64px rgba(0,0,0,0.2);
-      padding: 24px;
+        0 0 15px rgba(255,255,255,0.06),
+        0 4px 12px rgba(0,0,0,0.25),
+        0 8px 32px rgba(0,0,0,0.3);
+      padding: 10px 14px;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
       font-family: 'IBM Plex Mono', monospace;
       color: var(--fg);
     }
     #api-key-prompt.visible {
       opacity: 1;
       pointer-events: auto;
-      transform: translate(-50%, -50%) scale(1);
+      transform: translateX(-50%) translateY(0);
     }
-    #api-key-prompt .prompt-title {
-      font-size: 13px;
+    .prompt-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #api-key-prompt .prompt-label {
+      font-size: 10px;
       font-weight: 500;
-      letter-spacing: 0.08em;
-      margin-bottom: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
       color: var(--accent);
-    }
-    #api-key-prompt .prompt-desc {
-      font-size: 12px;
-      line-height: 1.5;
-      color: var(--text-secondary);
-      margin-bottom: 16px;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     #api-key-prompt .prompt-input {
-      width: 100%;
-      height: 36px;
-      border-radius: 8px;
+      flex: 1;
+      min-width: 0;
+      height: 28px;
+      border-radius: 6px;
       border: 1.5px solid var(--frame-joint);
       background: rgba(0,0,0,0.3);
       color: var(--fg);
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 13px;
-      padding: 0 12px;
+      font-size: 12px;
+      padding: 0 10px;
       outline: none;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
@@ -541,27 +546,34 @@
       border-color: var(--accent);
       box-shadow: 0 0 8px var(--accent-dim);
     }
-    #api-key-prompt .prompt-input::placeholder {
-      color: var(--text-secondary);
-    }
+    #api-key-prompt .prompt-input::placeholder { color: var(--text-secondary); }
     #api-key-prompt .prompt-hint {
-      font-size: 10px;
+      font-size: 9px;
       color: var(--text-secondary);
-      margin-top: 10px;
       text-align: center;
+      margin-top: 6px;
     }
-    /* 80s rounded connector tab on top */
-    #api-key-prompt::before {
+    /* 80s rounded pipe connectors hanging from the panel */
+    #api-key-prompt::before,
+    #api-key-prompt::after {
       content: '';
       position: absolute;
-      top: -10px; left: 50%;
-      transform: translateX(-50%);
-      width: 40px; height: 10px;
-      background: var(--frame-bg);
-      border: 2px solid var(--frame-border);
-      border-bottom: none;
-      border-radius: 8px 8px 0 0;
+      bottom: -12px;
+      width: 2px; height: 12px;
+      background: var(--frame-border);
     }
+    #api-key-prompt::before { left: 24px; }
+    #api-key-prompt::after { right: 24px; }
+    /* Rounded feet */
+    .prompt-pipe-left, .prompt-pipe-right {
+      position: absolute;
+      bottom: -18px;
+      width: 10px; height: 8px;
+      border: 2px solid var(--frame-border);
+      border-top: none;
+    }
+    .prompt-pipe-left { left: 19px; border-radius: 0 0 6px 6px; }
+    .prompt-pipe-right { right: 19px; border-radius: 0 0 6px 6px; }
 
     /* ── Idle state: terminal in distance ── */
     #terminal-wrap.idle {
@@ -771,12 +783,15 @@
   <!-- Dismissed window tray -->
   <div id="dismissed-tray"></div>
 
-  <!-- API Key prompt — shown before first terminal boot -->
+  <!-- API Key prompt — navbar panel with 80s pipe connectors -->
   <div id="api-key-prompt">
-    <div class="prompt-title">ANTHROPIC API KEY</div>
-    <div class="prompt-desc">Paste your key to connect Claude Code. Press Escape to skip.</div>
-    <input class="prompt-input" id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
-    <div class="prompt-hint">Esc to skip &middot; Enter to connect</div>
+    <div class="prompt-row">
+      <span class="prompt-label">API KEY</span>
+      <input class="prompt-input" id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+    </div>
+    <div class="prompt-hint">enter to connect &middot; esc to skip</div>
+    <div class="prompt-pipe-left"></div>
+    <div class="prompt-pipe-right"></div>
   </div>
 
   <!-- Default GitHub Pages demo proxy (web/pages-proxy-default.js); override with ?proxy= or __V9_ANTHROPIC_FETCH_PROXY__. -->
