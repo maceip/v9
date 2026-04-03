@@ -1,144 +1,54 @@
-# Node.js-in-tab: architecture synthesis and roadmap
+# Node.js in a browser tab — roadmap
 
-**Naming:** “in-tab” is not one runtime. The same API contract runs on **Chromium (real tab)**, **Node + `napi-bridge`**, and **Node + EdgeJS/Wasm** — see [`CONTRACT_HOSTS.md`](CONTRACT_HOSTS.md).
+**Goal:** Run **real, unmodified Node-style apps** in a tab (Chromium or Wasm + MEMFS) so developers can adopt this runtime with confidence. One **Node-shaped** contract, two substrates — see [`CONTRACT_HOSTS.md`](CONTRACT_HOSTS.md).
 
-This document merges two threads of direction for the project:
-
-1. **Uniformity** — one public Node-shaped interface, one behavioral contract, multiple substrates that must not drift.
-2. **Existing apps** — closing the gap to “clone a repo and run it” (`npm start`, tests), where the hard problems are **ecosystem mechanics**, not a few missing `fs` methods.
-
-Claude-named paths and a large reference integration app are **scaffolding**: they stress-test real-world patterns. The product goal is **general-purpose Node-in-tab**, not a single-vendor wrapper.
+**Proof in CI:** `npm run test:nodejs-in-tab-contract` (browser + Wasm) and `npm run test:integration` (full gate including MEMFS slices). See the testing matrix at the end of this file.
 
 ---
 
-## One interface, dual substrate (no product schism)
+## What “done” means here
 
-- **Single interface (what authors target)** — The Node-shaped surface: built-ins, idioms, and behavior encoded in the conformance suite and `napi-bridge` semantics. App code is written against this, not against “browser vs Wasm.”
-- **Dual substrate (how it runs)** — Today: (a) real Chromium + import map + `napi-bridge`, and (b) EdgeJS-in-Wasm + MEMFS + the same bridges bundled into the VM. Same contract; two hosts — analogous to Node on different OSes.
-- **Single validation gate** — One command must exercise **both** substrates against the **same** suite so implementations stay aligned. Split “browser-only” / “wasm-only” checks are for maintainers, not the primary CI story.
-
-**Uniformity targets across components**
-
-- **One behavioral spec** — The conformance suite (and, over time, the compatibility matrix) is the source of truth for what “Node-in-tab” means here.
-- **One naming direction** — Prefer neutral env vars and artifacts (`NODEJS_IN_TAB_*`, `nodejs-in-tab-contract` entrypoints). Keep Claude-related names as aliases or legacy paths until a deliberate migration completes.
-- **Import maps** — The browser entry’s import map must stay aligned (`web/index.html`, contract HTML). Prefer **generating** this from a single module or JSON so drift is impossible. **HTTP vs raw sockets:** see [`docs/TRANSPORT.md`](TRANSPORT.md) (`browserHttpFetch`, optional fetch proxy, in-tab contract `?fetchProxy=` for CI, Wisp/embedder hooks).
-- **Lifecycle parity** — Document and implement the same `argv`, `cwd`, `env`, stdio, exit codes, and signal behavior on every substrate; avoid “works in browser host but not in Wasm” without an explicit, tested gap.
+- **Contract suite** defines behavior; both substrates run the same tests.
+- **MEMFS + resolver** close the gap toward `npm start` on copied `node_modules` (not every edge case — see compatibility matrix direction below).
 
 ---
 
-## Honest gap: interface vs “drop in `npm start`”
+## Completed milestones (verified in-repo)
 
-Most blockers for **existing** Node repos are:
-
-| Area | Why it matters |
-|------|----------------|
-| **`node_modules` + resolution** | Real apps depend on `package.json`, `exports`, `imports`, conditions, hoisting, symlinks. |
-| **CJS ↔ ESM interop** | Published packages mix formats; loaders must match common patterns. |
-| **Process lifecycle** | `argv`, `cwd`, stdio, `exit` / `exitCode`, signals (often simulated). |
-| **Native addons (`*.node`)** | Often unsupported in-tab; needs a clear policy: hard error, host registry, or substitute. |
-| **Test runners** | `node:test`, Jest, Vitest, etc. add surface; tackle after loaders and lifecycle are solid. |
-
-**Reference app** — A large, real codebase (today Claude-oriented) remains the **integration anchor**: it proves depth beyond the conformance floor. The **product** narrative is compatibility and real-app runs; the anchor can stay implementation detail until more flagship apps exist. Part of that depth is **`node:net` inspection APIs** (`BlockList`, `SocketAddress`, dual-stack toggles): apps may import and use them for policy checks **without** raw TCP. In-tab implementations live in `napi-bridge/net-stubs.js`; **`net.connect` / `listen`** stay blocked unless an embedder tunnel is registered — see [`TRANSPORT.md`](TRANSPORT.md). Behavioral coverage: `in-tab-api-contract` (regenerate the Wasm bundle with `npm run build:in-tab-api-contract:wasm` after suite edits so both substrates stay aligned).
-
-**Escape hatches**
-
-- **Pre-bundle path** — For arbitrary graphs before the resolver is complete, an app-level esbuild/rollup step can reduce import-map pressure while keeping the same entry semantics.
-- **Compatibility matrix** — Every row links to a test or an explicit SKIP with reason; include columns like “interpretive,” “pre-bundle only,” “unsupported.”
+1. **`node_modules` on MEMFS** — `tests/helpers/seed-memfs-from-host.mjs`; `npm run test:memfs-node-modules`.
+2. **CJS loader** — MEMFS `require` + `createRequire.resolve`; `test:memfs-reference-app` / `test:memfs-exports`.
+3. **Process lifecycle** — `docs/PROCESS_LIFECYCLE.md`, `processBridge`; `npm run test:run-node-entry`.
+4. **Entry API** — `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`.
+5. **Native addons** — `ERR_DLOPEN_FAILED` for `*.node`; `npm run test:native-addon-reject`.
+6. **Pre-bundle escape hatch** — `scripts/bundle-app-graph.mjs`; `npm run test:bundle-app-graph`.
+7. **Resolver — `exports` patterns, `imports`, conditions** — `napi-bridge/package-resolve.js` + MEMFS resolution (`import` vs `require`, `development`/`production` via `NODE_ENV`); `npm run test:memfs-exports`.
+8. **ESM in MEMFS** — Transpile + dynamic `import()`; **top-level await** via esbuild ESM bundle + `import(data:…)`; **circular dynamic import** no longer hard-fails; `npm run test:memfs-esm-entry`, `test:memfs-esm-tla`, `test:memfs-import-meta-dynamic`, `test:memfs-dynamic-import-cycle`.
+9. **Reference / multi-package apps** — Real packages from host disk → MEMFS: `fflate` only (`test:memfs-reference-app`) and **fflate + `isomorphic-timers-promises`** with mixed ESM + TLA (`test:memfs-multi-package-app`).
+10. **`node:test` in-tab** — Stub with `describe` / `test` / hooks (suite-scoped, ordered); ESM entries use `await describe(…)` so work finishes before module completion; `npm run test:memfs-node-test`. Host parity fixture: `npm run test:node-test-runner`.
 
 ---
 
-## Architectural priorities (high impact)
+## Next direction (not yet “done” in-repo)
 
-1. **Contract + matrix as the floor** — Expand the suite where real apps break; keep both substrates on the unified gate.
-2. **Resolver + loaders** — Minimal `package.json` resolution, then full `exports`/`imports`, CJS path, ESM path, `createRequire`.
-3. **MEMFS + real `node_modules` trees** — Load from disk or tarball into the VM; symlink-aware layout when feasible.
-4. **Lifecycle API** — Stable host/bootstrap API (`runInTab` or equivalent): FS layout, entry, `argv`, `env`, stdio hooks, teardown.
-5. **Native addon policy** — Explicit behavior and diagnostics, not silent failure.
-6. **Security / capability model** — As arbitrary app code becomes runnable, document what the tab may and may not do.
+- **Explicit product spec** from the conformance suite (streams, HTTP, child_process, workers, …).
+- **Neutral naming** (`NODEJS_IN_TAB_*`, generated import maps, de-Claude mechanical aliases).
+- **Compatibility matrix** (built-in → full / partial / stub) linked to tests or SKIP reasons.
+- **Stable embedder API** — document `runInTab`-style bootstrap on top of `runNodeEntry`.
+- **Security / capability** model for untrusted code in-tab.
 
----
-
-## Completed baseline milestones (verified in-repo)
-
-Ordered so each step built toward “run a real `package.json` repo” without pretending parity where it does not exist.
-
-1. **`node_modules` on MEMFS** — **Done:** `tests/helpers/seed-memfs-from-host.mjs` materializes host paths into `runtime.fs`; `npm run test:memfs-node-modules` checks a real `node_modules/fflate` tree byte-for-byte in MEMFS.
-2. **CJS loader** — **Done:** existing MEMFS `require` + `module-shim` `createRequire.resolve` delegating to `_memfsRequire.resolve(id, dir)`; covered by `test:memfs-reference-app` / `test:memfs-exports`.
-3. **Process lifecycle contract** — **Done:** `docs/PROCESS_LIFECYCLE.md` + bridge `process` stubs read `processBridge` `argv`/`env`; `npm run test:run-node-entry` checks argv propagation.
-4. **Entrypoint contract** — **Done:** `runtime.runNodeEntry({ entry, cwd, argv, argv0, env })` and `import { runNodeEntry } from '@aspect/v9-edgejs-browser/napi-bridge/run-in-tab'` (`napi-bridge/run-in-tab.mjs`).
-5. **Native addon policy** — **Done:** `require` throws `ERR_DLOPEN_FAILED` for `*.node`; `npm run test:native-addon-reject`.
-6. **Pre-bundle escape hatch** — **Done:** `scripts/bundle-app-graph.mjs` (esbuild `--entry` / `--outfile`); `npm run test:bundle-app-graph`; see roadmap “Pre-bundle path” above.
-
----
-
-## Next developmental targets (building on the foundation)
-
-Synthesized from prior lists after merge cleanup. Items 1–4 are **partially done** milestones promoted from the baseline list (infrastructure exists but has known gaps). Items 5–14 are **directional** until each is implemented and marked complete in-repo.
-
-### Partially done (infrastructure exists, gaps remain)
-
-1. **Resolver — `exports` patterns & `imports` field** — Baseline done: `napi-bridge/package-resolve.js` + `_resolveNodeModuleBare`; simple `exports` object forms and `main` work (`npm run test:memfs-exports`). **Remaining:** `exports` pattern syntax, `imports` field, subpath conditions beyond `node`/`require`/`import`.
-
-2. **ESM loader + CJS interop — full fidelity** — Interpretive bridge done: esbuild transpile + `import.meta.url` define + MEMFS `import()` via `globalThis.__memfsDynamicImport`; tests `npm run test:memfs-esm-entry`, `npm run test:memfs-import-meta-dynamic`. **Remaining:** top-level `await` in entries, circular dynamic imports, full `import.meta` surface beyond what esbuild defines.
-
-3. **Reference app CI — beyond fflate** — Baseline done: `npm run test:memfs-reference-app` (host `fflate` → MEMFS → `require('fflate')` + `gzipSync`); runs in `test:integration` / `make test-integration`. **Remaining:** exercise a real multi-dependency app with mixed CJS/ESM, deeper dependency trees, and more realistic entry patterns.
-
-4. **Test execution — beyond the `node:test` stub** — Baseline done: host gate `npm run test:node-test-runner`; in-tab gate `npm run test:memfs-node-test` (minimal `node:test` stub + ESM entry). **Remaining:** full `node:test` semantics in-tab (describe/it nesting, async, reporter API); other runners (Jest, Vitest) depend on subprocess/spawn story.
-
-### New targets
-
-5. **One “Node surface” spec, two adapters** — Treat `napi-bridge` + the conformance suite as **the** contract; keep **browser** and **Wasm** as two adapters that must satisfy the **same** tests. The unified gate (`npm run test:nodejs-in-tab-contract`) already enforces alignment; the next step is making the **enumerated behaviors** (streams, HTTP, `child_process`, `worker_threads`, etc.) the **explicit product spec** and naming everything else around that.
-
-6. **Neutral runtime branding (mechanical de‑Claude‑ing)** — Introduce **parallel neutral names**: `nodejs-in-tab-contract` artifacts, `NODEJS_IN_TAB_*` env vars, `dist/*` filenames where legacy ones remain, with **thin re-exports** or npm scripts so nothing breaks. No behavior change — just lower cognitive load for contributors and users to match **general-purpose runtime** positioning. Keep deprecated aliases until a deliberate removal.
-
-7. **Import map generation (one shared source)** — Today `web/index.html` and `web/nodejs-in-tab-contract.html` must stay in sync **by hand**. **Generate** the import map from a single JSON or JS module consumed by the dev server, contract HTML, and docs snippets, plus a CI **”maps must match”** guard so maps cannot drift silently.
-
-8. **Authoritative compatibility matrix** — Maintain **one** table: built-in → **full / partial / stub / N/A / Wasm-only**, with links to tests (or an explicit **SKIP** with reason). Cheap to maintain if every row maps to a conformance case in `tests/conformance/`. This becomes the project's **homepage-level** artifact.
-
-9. **`runInTab` / host SDK (app bootstrap path)** — Document and stabilize **one** supported way to run a third-party app: **entry file + MEMFS seed + env + optional pre-bundle**. One documented API — `runInTab({ root, entry, argv })` or equivalent — covering init, FS layout, `argv`, `env`, stdio hooks, and teardown (building on `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`). Hides EdgeJS/Wasm behind init/teardown; clarifies adoption for embedders.
-
-10. **npm / app story** — Either a documented **bundle-first** path or MEMFS `node_modules` + **minimal resolver** (`package.json` `main` / `exports` only to start), aligned with the escape hatches above. Goal: a third-party app with dependencies can be loaded and run without manual intervention.
-
-11. **HTTP client/server parity** — Expand `undici` / `fetch` bridge where tests prove behavior; keep **network policy** explicit (offline, allowlist, optional relays, failure-injection tests).
-
-12. **Streams & backpressure** — Real apps often fail on subtle stream edge cases; invest where the suite still **skips** or **stubs**.
-
-13. **Child process & shell model** — Clear contract: what is **emulated**, what is **host-backed**, what is **unsupported** (complements `docs/PROCESS_LIFECYCLE.md` gaps).
-
-14. **Debuggability & security** — Source maps, structured errors, optional logging bridge to the parent page; realistic inspect/trace for the Wasm path. Document the **capability model**: what arbitrary code may do in-tab, for anyone **embedding** the runtime.
-
-### North star
-
-Be the project where **if it passes the in-tab contract and fits the compatibility matrix, you can ship it** — and embedders know what power they are granting to untrusted code.
-
----
-
-## What not to confuse
-
-- **Two substrates** is an implementation detail for maintainers, not a choice authors should have to make for day-to-day development.
-- **One npm test command** for the repo should remain the **unified dual gate**; avoid documentation that implies validating only one substrate for “release quality.”
-
-### Testing matrix (what proves what)
-
-| Command / target | Chromium (real tab) | Node hosts Wasm + MEMFS | Same `in-tab-api-contract` suite | MEMFS roadmap / resolver / `node:test` slices |
-|------------------|----------------------|---------------------------|-----------------------------------|-----------------------------------------------|
-| `npm run test:nodejs-in-tab-contract` | Yes (Playwright + `web/nodejs-in-tab-contract.html`) | Yes (bundled suite in MEMFS + `runFileAsync`) | **Yes** — both phases | No |
-| `npm run test:integration` | **Yes** (includes unified contract) + browser smoke | Yes | **Yes** (via unified contract) | **Yes** — seed, exports, ESM, stub, host `node --test`, etc. |
-| `npm run test:memfs-*` (individual) | No | Yes | No | **Subset** — see script names in `package.json` |
-| `npm run test:in-tab-api-contract:bridge` | No | Yes (Node runs bridge target **without** unified wrapper) | Yes (single target) | No |
-
-**Release-quality bar for substrate alignment:** run `npm run test:nodejs-in-tab-contract` (or full `npm run test:integration`). Running only MEMFS roadmap tests validates the resolver and glue but **does not** prove every contract check in **headless Chromium**.
-
-**Gaps (still true):** `exports` patterns / `imports` field, full host `node:test` semantics in-tab, and anything not covered by a file in `tests/conformance/`. Those are **product** gaps, not “the wrong test command.”
+**North star:** If it passes the in-tab contract and matches the matrix, you can ship it — and embedders know what power they grant.
 
 ---
 
 ## Related commands
 
-- Unified contract (browser host + Wasm): `npm run test:nodejs-in-tab-contract`
-- Suite only (Node or bridge): `npm run test:in-tab-api-contract` (+ `:bridge`, `:node`, `:bundle`)
-- Wasm bundle of the suite: `npm run build:in-tab-api-contract:wasm`
+| Command | Role |
+|--------|------|
+| `npm run test:nodejs-in-tab-contract` | **Dual substrate** (Playwright + Wasm) on the same suite |
+| `npm run test:integration` | Full repo integration gate |
+| `npm run test:in-tab-api-contract` | Suite on one target (+ `:bridge`, `:node`, `:bundle`) |
+| `npm run build:in-tab-api-contract:wasm` | Rebuild Wasm bundle after suite edits |
 
-Legacy `test:claude-contract:*` npm scripts are thin aliases during migration.
+Legacy `test:claude-contract:*` scripts remain thin aliases during migration.
 
-This file should be updated as milestones complete.
+Update this file when milestones land.
