@@ -687,9 +687,7 @@
   }
 
   if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
-    globalThis.addEventListener('message', (event) => {
-      if (event.origin !== globalThis.location?.origin) return;
-      const data = event.data;
+    function _handleOAuthCallback(data) {
       if (!data || data.type !== 'edge-oauth-callback') return;
       const port = String(data.port || '');
       if (!port) return;
@@ -698,9 +696,19 @@
       if (!server) return;
       const target = new URL(`http://localhost:${port}${data.path || '/callback'}`);
       if (data.search) target.search = data.search.startsWith('?') ? data.search : `?${data.search}`;
-      try { event.source?.close?.(); } catch {}
       server._handleRedirect?.(target.toString());
+    }
+    // Primary: postMessage from popup with window.opener intact
+    globalThis.addEventListener('message', (event) => {
+      if (event.origin !== globalThis.location?.origin) return;
+      _handleOAuthCallback(event.data);
+      try { event.source?.close?.(); } catch {}
     });
+    // Fallback: BroadcastChannel for when COOP severs window.opener
+    try {
+      const bc = new BroadcastChannel('v9-oauth-bridge');
+      bc.onmessage = (event) => _handleOAuthCallback(event.data);
+    } catch { /* BroadcastChannel not supported */ }
     globalThis.__browserRuntimeOAuthBridgeInstalled = true;
   }
 
