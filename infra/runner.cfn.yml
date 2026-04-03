@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  v9 EdgeJS — Self-hosted GitHub Actions runner on EC2 (Graviton Spot).
+  Pre-baked AMI with Emscripten + Node 22 eliminates 5-min SDK install per CI run.
+  Build cache persists on EBS between runs.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: v9-edgejs
+  GitHubRunnerToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub runner registration token (Settings → Actions → Runners → New)
+  GitHubOwnerRepo:
+    Type: String
+    Default: maceip/v9
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the runner instance
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for the runner
+  KeyPairName:
+    Type: String
+    Default: ''
+    Description: Optional SSH key pair for debugging
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
+
+Resources:
+  # ── Security Group ──────────────────────────────────────────────────
+  RunnerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} GitHub Actions runner'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound (GitHub, npm, emsdk)
+
+  # ── IAM Role ────────────────────────────────────────────────────────
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-runner'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ArtifactAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-artifacts-${AWS::AccountId}'
+                  - !Sub 'arn:aws:s3:::${ProjectName}-artifacts-${AWS::AccountId}/*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunnerRole]
+
+  # ── Launch Template (Graviton Spot) ─────────────────────────────────
+  RunnerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${ProjectName}-runner'
+      LaunchTemplateData:
+        ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            SpotInstanceType: one-time
+            InstanceInterruptionBehavior: terminate
+        IamInstanceProfile:
+          Arn: !GetAtt RunnerInstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref RunnerSG
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 50
+              VolumeType: gp3
+              Iops: 3000
+              Throughput: 250
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${ProjectName}-runner'
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+
+            # ── System packages ───────────────────────────────────────
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              ca-certificates curl git python3 build-essential cmake \
+              ninja-build pkg-config xz-utils jq docker.io
+
+            # ── Node.js 22 ────────────────────────────────────────────
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y --no-install-recommends nodejs
+
+            # ── Emscripten SDK (persistent) ───────────────────────────
+            git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk
+            cd /opt/emsdk
+            ./emsdk install tot
+            ./emsdk activate tot
+            echo 'source /opt/emsdk/emsdk_env.sh' >> /etc/profile.d/emsdk.sh
+
+            # ── Chromium (for browser tests) ──────────────────────────
+            apt-get install -y --no-install-recommends chromium-browser || \
+              apt-get install -y --no-install-recommends chromium || true
+
+            # ── GitHub Actions Runner ─────────────────────────────────
+            useradd -m -s /bin/bash runner
+            usermod -aG docker runner
+
+            RUNNER_DIR=/home/runner/actions-runner
+            mkdir -p "$RUNNER_DIR"
+            cd "$RUNNER_DIR"
+
+            ARCH=$(dpkg --print-architecture)
+            RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | tr -d v)
+            curl -sL "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-$ARCH-$RUNNER_VERSION.tar.gz" | tar xz
+
+            chown -R runner:runner "$RUNNER_DIR"
+
+            su - runner -c "cd $RUNNER_DIR && ./config.sh \
+              --url https://github.com/${GitHubOwnerRepo} \
+              --token ${GitHubRunnerToken} \
+              --name v9-graviton-spot \
+              --labels self-hosted,linux,arm64,v9-runner \
+              --unattended \
+              --replace"
+
+            # Install and start as service
+            cd "$RUNNER_DIR"
+            ./svc.sh install runner
+            ./svc.sh start
+
+  # ── Runner Instance ─────────────────────────────────────────────────
+  RunnerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref RunnerLaunchTemplate
+        Version: !GetAtt RunnerLaunchTemplate.LatestVersionNumber
+      InstanceType: c7g.4xlarge
+      SubnetId: !Ref SubnetId
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
+
+Outputs:
+  RunnerInstanceId:
+    Value: !Ref RunnerInstance
+
+  RunnerPublicIp:
+    Value: !GetAtt RunnerInstance.PublicIp
+    Description: SSH access (if key pair provided)
+
+  RunnerLabels:
+    Value: self-hosted,linux,arm64,v9-runner
+    Description: Use these labels in runs-on to target this runner

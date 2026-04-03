@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  v9 EdgeJS — CodeBuild project for nightly soak tests.
+  72 vCPU, 145 GB RAM — runs 2-hour soak without GitHub Actions minute limits.
+  Triggered by EventBridge schedule or manually via AWS Console / CLI.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: v9-edgejs
+  GitHubOwnerRepo:
+    Type: String
+    Default: maceip/v9
+  GitHubBranch:
+    Type: String
+    Default: main
+  SoakProfile:
+    Type: String
+    Default: nightly
+    AllowedValues: [quick, integration, nightly]
+
+Resources:
+  # ── IAM Role for CodeBuild ──────────────────────────────────────────
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-codebuild-soak'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}-soak*'
+        - PolicyName: ArtifactAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProjectName}-artifacts-${AWS::AccountId}/*'
+
+  # ── CodeBuild Project ───────────────────────────────────────────────
+  SoakProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${ProjectName}-soak'
+      Description: Nightly soak tests — long-running stability + perf
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      TimeoutInMinutes: 150
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_2XLARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: SOAK_PROFILE
+            Value: !Ref SoakProfile
+          - Name: EDGEJS_STRICT_IMPORTS
+            Value: '1'
+          - Name: SOAK_REPORT_PATH
+            Value: soak-report.json
+      Source:
+        Type: GITHUB
+        Location: !Sub 'https://github.com/${GitHubOwnerRepo}.git'
+        GitCloneDepth: 1
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                nodejs: 22
+              commands:
+                - git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk
+                - cd /opt/emsdk && ./emsdk install tot && ./emsdk activate tot
+                - source /opt/emsdk/emsdk_env.sh
+                - npm ci
+                - apt-get update && (apt-get install -y chromium-browser || apt-get install -y chromium)
+                - export CHROME_BIN="$(which chromium-browser || which chromium)"
+            build:
+              commands:
+                - source /opt/emsdk/emsdk_env.sh
+                - make fetch configure build
+                - make test-integration
+                - npm run test:soak:${SOAK_PROFILE}
+          artifacts:
+            files:
+              - soak-report.json
+              - dist/edgejs.wasm
+              - dist/edgejs.js
+            discard-paths: no
+      Artifacts:
+        Type: NO_ARTIFACTS
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub '/aws/codebuild/${ProjectName}-soak'
+
+  # ── EventBridge Schedule (nightly at 04:17 UTC) ─────────────────────
+  SoakScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-nightly-soak'
+      Description: Trigger nightly soak build
+      ScheduleExpression: 'cron(17 4 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: codebuild-soak
+          Arn: !GetAtt SoakProject.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-eventbridge-soak'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartBuild
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource: !GetAtt SoakProject.Arn
+
+Outputs:
+  CodeBuildProjectName:
+    Value: !Ref SoakProject
+    Description: 'aws codebuild start-build --project-name <this>'
+
+  CodeBuildProjectArn:
+    Value: !GetAtt SoakProject.Arn
+
+  LogGroupName:
+    Value: !Sub '/aws/codebuild/${ProjectName}-soak'

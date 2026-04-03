@@ -1,50 +1,87 @@
 #!/usr/bin/env node
 /**
- * Optional: pull pre-built Wasm outputs from S3 (or any HTTPS URL) into dist/ + build/
- * so engineers can skip `make build` inside Docker or on thin laptops.
+ * Pull pre-built Wasm outputs into dist/ + build/ so engineers skip `make build`.
  *
- * Env:
- *   WASM_ASSETS_S3_URI   s3://bucket/prefix/   (uses AWS CLI: aws s3 sync)
- *   WASM_ASSETS_URL      https://.../          (single zip URL — future)
+ * Supports two backends (checked in order):
  *
- * Expected layout after sync (same as make build + write-build-edge-shim):
- *   dist/edgejs.wasm dist/edgejs.js
- *   build/edge build/edge.js (or only dist/ + build/edge if you zip CI artifact)
+ *   1. WASM_ASSETS_CDN_URL  — CloudFront HTTPS (no AWS CLI needed)
+ *      Example: https://d111111abcdef8.cloudfront.net
+ *      Files fetched: /main/latest/dist/edgejs.wasm, .../edgejs.js, .../build/edge
  *
- * Example:
- *   export WASM_ASSETS_S3_URI=s3://my-org-v9-artifacts/edgejs-wasm-main/latest/
- *   node scripts/fetch-wasm-assets.mjs
+ *   2. WASM_ASSETS_S3_URI   — AWS CLI s3 sync
+ *      Example: s3://v9-edgejs-artifacts-123456789/main/latest/
+ *
+ * Usage:
+ *   export WASM_ASSETS_CDN_URL=https://d111111abcdef8.cloudfront.net
+ *   node scripts/fetch-wasm-assets.mjs            # latest from main
+ *   node scripts/fetch-wasm-assets.mjs abc123      # specific commit SHA
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+const ref = process.argv[2] || 'latest';
+const cdnUrl = process.env.WASM_ASSETS_CDN_URL || '';
 const s3uri = process.env.WASM_ASSETS_S3_URI || '';
 
-if (!s3uri) {
-  console.error('Set WASM_ASSETS_S3_URI (e.g. s3://bucket/prefix/) or extend this script for HTTPS.');
-  process.exit(1);
+const ASSETS = [
+  { remote: `main/${ref}/dist/edgejs.wasm`, local: 'dist/edgejs.wasm' },
+  { remote: `main/${ref}/dist/edgejs.js`, local: 'dist/edgejs.js' },
+  { remote: `main/${ref}/build/edge`, local: 'build/edge' },
+];
+
+async function fetchFromCDN(baseUrl) {
+  console.log(`Fetching from CDN: ${baseUrl} (ref: ${ref})`);
+  for (const { remote, local } of ASSETS) {
+    const url = `${baseUrl.replace(/\/+$/, '')}/${remote}`;
+    const dest = join(root, local);
+    mkdirSync(join(dest, '..'), { recursive: true });
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} → ${res.status} ${res.statusText}`);
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(dest, buf);
+    console.log(`  ${local} (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+  }
 }
 
-// Mirror bucket layout: prefix should contain dist/ and build/ (as CI artifact tree).
-const aws = spawnSync('aws', ['s3', 'sync', s3uri, root], {
-  stdio: 'inherit',
-  cwd: root,
-  shell: false,
-});
-if (aws.status !== 0) {
-  console.error('aws s3 sync failed. Install AWS CLI and configure credentials / IAM role.');
-  process.exit(aws.status ?? 1);
+function fetchFromS3(uri) {
+  console.log(`Syncing from S3: ${uri}`);
+  const aws = spawnSync('aws', ['s3', 'sync', uri, root], {
+    stdio: 'inherit',
+    cwd: root,
+    shell: false,
+  });
+  if (aws.status !== 0) {
+    console.error('aws s3 sync failed. Install AWS CLI and configure credentials / IAM role.');
+    process.exit(aws.status ?? 1);
+  }
 }
 
-const ok =
-  existsSync(join(root, 'dist', 'edgejs.wasm')) &&
-  existsSync(join(root, 'dist', 'edgejs.js')) &&
-  existsSync(join(root, 'build', 'edge'));
-if (!ok) {
-  console.error('After sync, expected dist/edgejs.{wasm,js} and build/edge — adjust S3 keys or --include list.');
+function verify() {
+  const ok =
+    existsSync(join(root, 'dist', 'edgejs.wasm')) &&
+    existsSync(join(root, 'dist', 'edgejs.js')) &&
+    existsSync(join(root, 'build', 'edge'));
+  if (!ok) {
+    console.error('Expected dist/edgejs.{wasm,js} and build/edge — check remote paths.');
+    process.exit(1);
+  }
+  console.log('Wasm assets ready. Skip `make build` and go straight to testing.');
+}
+
+if (cdnUrl) {
+  await fetchFromCDN(cdnUrl);
+  verify();
+} else if (s3uri) {
+  fetchFromS3(s3uri);
+  verify();
+} else {
+  console.error(`Set one of:
+  WASM_ASSETS_CDN_URL=https://<cloudfront-domain>
+  WASM_ASSETS_S3_URI=s3://<bucket>/<prefix>/`);
   process.exit(1);
 }
-console.log('WASM assets in place under repo root.');

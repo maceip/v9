@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  v9 EdgeJS — S3 artifact cache + CloudFront CDN.
+  Engineers skip the 45-min Emscripten build: `npm run fetch:wasm-assets`.
+  CI uploads artifacts on every successful integration build.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: v9-edgejs
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # ── S3 Bucket for Wasm build artifacts ──────────────────────────────
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: ExpireBranchArtifacts
+            Status: Enabled
+            Prefix: branches/
+            ExpirationInDays: 14
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${ArtifactBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CDN}'
+
+  # ── CloudFront CDN ──────────────────────────────────────────────────
+  CDNOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${ProjectName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CDN:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${ProjectName} Wasm artifact CDN'
+        DefaultCacheBehavior:
+          TargetOriginId: s3-artifacts
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          Compress: true
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+        Origins:
+          - Id: s3-artifacts
+            DomainName: !GetAtt ArtifactBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CDNOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+
+  # ── IAM: CI upload role (GitHub Actions OIDC) ──────────────────────
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  CIUploadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ci-upload'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringLike:
+                'token.actions.githubusercontent.com:sub': 'repo:maceip/v9:*'
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+      Policies:
+        - PolicyName: ArtifactReadWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+
+  # ── IAM: Engineer read-only role for fetch:wasm-assets ─────────────
+  EngineerReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-engineer-read'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ArtifactReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+
+Outputs:
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Sub '${ProjectName}-artifact-bucket'
+
+  ArtifactBucketArn:
+    Value: !GetAtt ArtifactBucket.Arn
+
+  CDNDomainName:
+    Value: !GetAtt CDN.DomainName
+    Description: CloudFront URL for fetching artifacts (use as WASM_ASSETS_CDN_URL)
+    Export:
+      Name: !Sub '${ProjectName}-cdn-domain'
+
+  CDNDistributionId:
+    Value: !Ref CDN
+
+  CIUploadRoleArn:
+    Value: !GetAtt CIUploadRole.Arn
+    Description: ARN for GitHub Actions OIDC — set as WASM_CI_ROLE_ARN repo secret
+    Export:
+      Name: !Sub '${ProjectName}-ci-role-arn'

@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   quick:
     name: Quick tier
@@ -36,7 +40,7 @@ jobs:
 
       - uses: ./.github/actions/setup-wasm-toolchain
 
-      - name: Upload Wasm build artifacts
+      - name: Upload Wasm build artifacts (GitHub)
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -45,6 +49,24 @@ jobs:
             dist/edgejs.wasm
             dist/edgejs.js
             build/edge
+
+      # ── S3 artifact cache (engineers skip 45-min build with npm run fetch:wasm-assets) ──
+      - name: Configure AWS credentials
+        if: success() && github.ref == 'refs/heads/main' && vars.WASM_CI_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.WASM_CI_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Upload artifacts to S3
+        if: success() && github.ref == 'refs/heads/main' && vars.WASM_CI_ROLE_ARN != ''
+        run: |
+          BUCKET="${{ vars.WASM_ARTIFACT_BUCKET }}"
+          SHA="${{ github.sha }}"
+          aws s3 sync dist/ "s3://${BUCKET}/main/latest/dist/" --size-only
+          aws s3 sync build/ "s3://${BUCKET}/main/latest/build/" --include "edge" --include "edge.js" --size-only
+          aws s3 sync dist/ "s3://${BUCKET}/main/${SHA}/dist/" --size-only
+          aws s3 sync build/ "s3://${BUCKET}/main/${SHA}/build/" --include "edge" --include "edge.js" --size-only
 
       - name: Integration tests
         run: |

@@ -1,0 +1,43 @@
+# Build and push docker/Dockerfile to ECR so engineers + CI runners use a pre-baked image.
+# Triggered on changes to Docker config or manually.
+name: ECR toolchain publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - 'emscripten-toolchain.cmake'
+      - 'wasi-shims/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: Build & push toolchain image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: vars.WASM_CI_ROLE_ARN != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.WASM_CI_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPO_NAME || 'v9-edgejs/wasm-toolchain' }}"
+          docker build -f docker/Dockerfile -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
+          echo "Pushed $IMAGE:latest and $IMAGE:${{ github.sha }}"

@@ -9,7 +9,7 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test test-integration test-soak-quick test-soak-nightly test-nightly lint size clean distclean help
+.PHONY: all setup fetch configure build test test-integration test-soak-quick test-soak-nightly test-nightly lint size clean distclean infra-deploy help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -135,7 +135,11 @@ clean:
 distclean: clean
 	@rm -rf "$(EDGEJS_SRC)"
 
+# ---- AWS Infrastructure ----
+infra-deploy:
+	@bash "$(ROOT_DIR)/infra/deploy.sh" all
+
 help:
 	@echo 'Wasm runtime:  make fetch && source "$$EMSDK/emsdk_env.sh" && make configure && make build'
 	@echo "Docs: docs/BUILD_TOOLCHAIN.md (CI, Linux/EC2, Windows, artifacts)."
-	@echo "Targets: fetch configure build clean distclean lint size test test-integration test-soak-quick test-nightly"
+	@echo "Targets: fetch configure build clean distclean lint size test test-integration test-soak-quick test-nightly infra-deploy"

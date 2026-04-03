@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  v9 EdgeJS — ECR repository for the v9-wasm-toolchain Docker image.
+  All engineers and CI pull the same pre-baked image.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: v9-edgejs
+
+Resources:
+  ToolchainRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}/wasm-toolchain'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCIPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt ToolchainRepo.RepositoryUri
+    Description: 'docker pull <this-uri>:latest'
+    Export:
+      Name: !Sub '${ProjectName}-ecr-uri'
+
+  RepositoryArn:
+    Value: !GetAtt ToolchainRepo.Arn
