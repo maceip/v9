@@ -25,14 +25,22 @@
           if (!params.has(key)) params.set(key, value);
         }
       }
+      const payload = {
+        type: 'edge-oauth-callback',
+        port,
+        path,
+        search: params.toString(),
+      };
       if (window.opener) {
-        window.opener.postMessage({
-          type: 'edge-oauth-callback',
-          port,
-          path,
-          search: params.toString(),
-        }, callbackOrigin);
+        window.opener.postMessage(payload, callbackOrigin);
       }
+      // Fallback: BroadcastChannel for when COOP severs window.opener
+      // (e.g. claude.ai sets cross-origin-opener-policy: same-origin)
+      try {
+        const bc = new BroadcastChannel('v9-oauth-bridge');
+        bc.postMessage(payload);
+        bc.close();
+      } catch { /* BroadcastChannel not supported */ }
       window.close();
     })();
   </script>
