@@ -22,12 +22,13 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters — snappy pull, crisp landing
-    // Higher stiffness = faster pull, lower damping = more organic settle
-    // Higher threshold = snap to final position sooner (avoids creeping tail)
-    this.stiffness = 0.07;
-    this.damping = 0.78;
-    this.threshold = 0.004;
+    // Spring parameters (zoom-in only — zoom-out uses lerp)
+    // stiffness: how hard the spring pulls toward target
+    // damping: friction (higher = less overshoot, slower settle)
+    // threshold: snap to target when this close
+    this.stiffness = 0.09;
+    this.damping = 0.82;
+    this.threshold = 0.005;
 
     // State — read idle params from responsive breakpoints
     this._shrink = 0; // additional scale reduction after dismissals
@@ -94,26 +95,35 @@ export class ZoomController {
     if (!this._running) return;
     this._raf = requestAnimationFrame(() => this._loop());
 
-    // Spring physics — zoom-out uses higher damping to prevent bounce
-    const d = this._direction === 'out' ? 0.86 : this.damping;
-    this.velocity.scale *= d;
-    this.velocity.scale += (this.target.scale - this.current.scale) * this.stiffness;
-    this.current.scale += this.velocity.scale;
+    if (this._direction === 'out') {
+      // Zoom-out: smooth exponential lerp (no spring, zero wobble)
+      const lerpRate = 0.10;
+      this.current.scale += (this.target.scale - this.current.scale) * lerpRate;
+      this.current.y += (this.target.y - this.current.y) * lerpRate;
+    } else {
+      // Zoom-in: spring physics for snappy organic feel
+      this.velocity.scale *= this.damping;
+      this.velocity.scale += (this.target.scale - this.current.scale) * this.stiffness;
+      this.current.scale += this.velocity.scale;
 
-    this.velocity.y *= d;
-    this.velocity.y += (this.target.y - this.current.y) * this.stiffness;
-    this.current.y += this.velocity.y;
+      this.velocity.y *= this.damping;
+      this.velocity.y += (this.target.y - this.current.y) * this.stiffness;
+      this.current.y += this.velocity.y;
+    }
 
     // Check convergence
     const dScale = Math.abs(this.target.scale - this.current.scale);
     const dY = Math.abs(this.target.y - this.current.y);
-    const vMag = Math.abs(this.velocity.scale) + Math.abs(this.velocity.y);
+    const vMag = this._direction === 'out' ? 0 : Math.abs(this.velocity.scale) + Math.abs(this.velocity.y);
 
     this.onProgress(this.progress, this._direction);
 
-    if (dScale < this.threshold && dY < this.threshold && vMag < this.threshold) {
+    const t = this._direction === 'out' ? 0.002 : this.threshold;
+    if (dScale < t && dY < t && vMag < t) {
       this.current.scale = this.target.scale;
       this.current.y = this.target.y;
+      this.velocity.scale = 0;
+      this.velocity.y = 0;
       this._running = false;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
