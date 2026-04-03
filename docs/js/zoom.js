@@ -1,20 +1,20 @@
 /**
- * Terminal zoom animation — damped spring physics.
- * Adapted from wobble-project's lerp + GSAP snap interaction.
+ * Terminal zoom animation — duration-based easing with zero wobble.
  *
- * Physics model:
- *   velocity *= damping
- *   velocity += (target - current) * stiffness
- *   current += velocity
+ * Zoom-in:  fast cubic ease-out (quick start, smooth deceleration)
+ * Zoom-out: smooth cubic ease-in-out (gentle start and end)
  */
 
-// Detect idle scale/y from CSS media queries
 function getIdleParams() {
   const w = window.innerWidth;
-  if (w <= 380)  return { scale: 0.55, y: 5 };   // Fold folded
-  if (w <= 899)  return { scale: 0.48, y: 6 };   // Fold expanded / tablet
-  return { scale: 0.42, y: 8 };                   // Desktop
+  if (w <= 380)  return { scale: 0.55, y: 5 };
+  if (w <= 899)  return { scale: 0.48, y: 6 };
+  return { scale: 0.42, y: 8 };
 }
+
+// Easing functions
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
 
 export class ZoomController {
   constructor(element, opts = {}) {
@@ -22,124 +22,89 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    // Spring parameters (zoom-in only — zoom-out uses lerp)
-    // stiffness: how hard the spring pulls toward target
-    // damping: friction (higher = less overshoot, slower settle)
-    // threshold: snap to target when this close
-    this.stiffness = 0.09;
-    this.damping = 0.82;
-    this.threshold = 0.005;
+    this.zoomInDuration = 380;  // ms — fast pop open
+    this.zoomOutDuration = 320; // ms — smooth close
 
-    // State — read idle params from responsive breakpoints
-    this._shrink = 0; // additional scale reduction after dismissals
+    this._shrink = 0;
     const idle = getIdleParams();
     this.idleScale = idle.scale;
     this.idleY = idle.y;
     this.current = { scale: idle.scale, y: idle.y };
-    this.target = { scale: idle.scale, y: idle.y };
-    this.velocity = { scale: 0, y: 0 };
 
     this._running = false;
     this._raf = null;
-    this._done = true;
-    this._direction = null; // 'in' or 'out'
+    this._direction = null;
+    this._t0 = 0;
+    this._from = { scale: 0, y: 0 };
+    this._to = { scale: 0, y: 0 };
 
     this._apply();
   }
 
-  /** Make idle state smaller (called after dismiss) */
-  setShrink(amount) {
-    this._shrink = amount;
-  }
+  setShrink(amount) { this._shrink = amount; }
 
-  /** Trigger zoom to full viewport (scale=1, y=0) */
   zoomIn() {
-    this.target.scale = 1.0;
-    this.target.y = 0;
-    this._done = false;
-    this._direction = 'in';
-    this._startLoop();
+    this._animate(
+      { scale: this.current.scale, y: this.current.y },
+      { scale: 1.0, y: 0 },
+      'in'
+    );
   }
 
-  /** Zoom back out to idle (smaller after each dismiss) */
   zoomOut() {
     const idle = getIdleParams();
     this.idleScale = Math.max(0.2, idle.scale - this._shrink);
     this.idleY = idle.y + this._shrink * 10;
-    this.target.scale = this.idleScale;
-    this.target.y = this.idleY;
-    // Ensure current state is valid (swipe dismiss may have cleared element transform)
-    if (this.current.scale < this.idleScale) {
-      this.current.scale = 1.0;
-      this.current.y = 0;
-    }
-    this.velocity.scale = 0;
-    this.velocity.y = 0;
-    this._done = false;
-    this._direction = 'out';
-    this._startLoop();
+    this._animate(
+      { scale: this.current.scale, y: this.current.y },
+      { scale: this.idleScale, y: this.idleY },
+      'out'
+    );
   }
 
-  /** Get current zoom progress 0..1 */
   get progress() {
     return Math.max(0, Math.min(1, (this.current.scale - this.idleScale) / (1.0 - this.idleScale)));
   }
 
-  _startLoop() {
-    if (this._running) return; // already animating — target change is enough
-    this._running = true;
-    this._loop();
+  _animate(from, to, direction) {
+    this._from = { ...from };
+    this._to = { ...to };
+    this._direction = direction;
+    this._t0 = performance.now();
+    if (!this._running) {
+      this._running = true;
+      this._loop();
+    }
   }
 
   _loop() {
     if (!this._running) return;
     this._raf = requestAnimationFrame(() => this._loop());
 
-    if (this._direction === 'out') {
-      // Zoom-out: smooth exponential lerp (no spring, zero wobble)
-      const lerpRate = 0.10;
-      this.current.scale += (this.target.scale - this.current.scale) * lerpRate;
-      this.current.y += (this.target.y - this.current.y) * lerpRate;
-    } else {
-      // Zoom-in: spring physics for snappy organic feel
-      this.velocity.scale *= this.damping;
-      this.velocity.scale += (this.target.scale - this.current.scale) * this.stiffness;
-      this.current.scale += this.velocity.scale;
+    const dur = this._direction === 'in' ? this.zoomInDuration : this.zoomOutDuration;
+    const elapsed = performance.now() - this._t0;
+    const raw = Math.min(1, elapsed / dur);
+    const ease = this._direction === 'in' ? easeOutCubic(raw) : easeInOutCubic(raw);
 
-      this.velocity.y *= this.damping;
-      this.velocity.y += (this.target.y - this.current.y) * this.stiffness;
-      this.current.y += this.velocity.y;
-    }
-
-    // Check convergence
-    const dScale = Math.abs(this.target.scale - this.current.scale);
-    const dY = Math.abs(this.target.y - this.current.y);
-    const vMag = this._direction === 'out' ? 0 : Math.abs(this.velocity.scale) + Math.abs(this.velocity.y);
+    this.current.scale = this._from.scale + (this._to.scale - this._from.scale) * ease;
+    this.current.y = this._from.y + (this._to.y - this._from.y) * ease;
 
     this.onProgress(this.progress, this._direction);
+    this._apply();
 
-    const t = this._direction === 'out' ? 0.002 : this.threshold;
-    if (dScale < t && dY < t && vMag < t) {
-      this.current.scale = this.target.scale;
-      this.current.y = this.target.y;
-      this.velocity.scale = 0;
-      this.velocity.y = 0;
+    if (raw >= 1) {
+      this.current.scale = this._to.scale;
+      this.current.y = this._to.y;
       this._running = false;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
-      if (!this._done) {
-        this._done = true;
-        this.onComplete(this._direction);
-      }
+      this._apply();
+      this.onComplete(this._direction);
     }
-
-    this._apply();
   }
 
   _apply() {
-    const s = this.current.scale;
-    const y = this.current.y;
-    this.el.style.transform = `scale(${s}) translateY(${y}%)`;
+    this.el.style.transform = `scale(${this.current.scale}) translateY(${this.current.y}%)`;
   }
 
   destroy() {

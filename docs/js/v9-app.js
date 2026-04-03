@@ -132,15 +132,73 @@ setProgress(100);
 termWrap.addEventListener('click', handleActivate, true);
 termWrap.addEventListener('touchend', handleActivate, true);
 
+let apiKeyPrompted = false;
+const apiPrompt = document.getElementById('api-key-prompt');
+const apiInput = document.getElementById('api-key-input');
+
 function handleActivate(e) {
   if (state !== 'IDLE') return;
   e.preventDefault();
   e.stopPropagation();
+
+  // First activation: show API key prompt before booting
+  if (!apiKeyPrompted && !cliLoaded) {
+    apiKeyPrompted = true;
+    showApiKeyPrompt();
+    return;
+  }
+
+  doZoomIn();
+}
+
+function showApiKeyPrompt() {
+  state = 'PROMPTING';
+  apiPrompt.classList.add('visible');
+  apiInput.value = '';
+  apiInput.focus();
+
+  function submit() {
+    const key = apiInput.value.trim();
+    if (key) {
+      // Store in sessionStorage — terminal.js reads it via getAnthropicKey()
+      sessionStorage.setItem('anthropic_api_key', key);
+    }
+    cleanup();
+    doZoomIn();
+  }
+
+  function skip() {
+    cleanup();
+    doZoomIn();
+  }
+
+  function onKey(e) {
+    e.stopPropagation();
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') skip();
+  }
+
+  function onClick(e) {
+    // Click outside the prompt = skip
+    if (!apiPrompt.contains(e.target)) skip();
+  }
+
+  function cleanup() {
+    apiPrompt.classList.remove('visible');
+    apiInput.removeEventListener('keydown', onKey);
+    document.removeEventListener('mousedown', onClick);
+  }
+
+  apiInput.addEventListener('keydown', onKey);
+  // Delay the click listener so the current click doesn't immediately dismiss
+  setTimeout(() => document.addEventListener('mousedown', onClick, { once: true }), 100);
+}
+
+function doZoomIn() {
   state = 'ZOOMING';
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
 
-  // Start loading CLI on first click only
   if (!cliLoaded && !cliFrame.src) {
     resolveWebURL().then(url => {
       if (url) cliFrame.src = url;

@@ -422,12 +422,15 @@
     /* When zoomed in, hide glass canvas entirely so iframe gets pointer events */
     #terminal-wrap.zoomed #glass-canvas { opacity: 0; }
 
-    /* Terminal overlay — dark bg behind terminal text, always visible */
+    /* Terminal overlay — dark bg for terminal readability, hidden at idle */
     #terminal-overlay {
       position: absolute; inset: 0;
       z-index: 4;
+      opacity: 0;
       background: rgba(10,10,15,0.97);
+      transition: opacity 0.3s ease;
     }
+    #terminal-wrap.zoomed #terminal-overlay { opacity: 1; }
 
     /* Boot text */
     #boot-text {
@@ -477,6 +480,88 @@
       z-index: 5;
     }
     #cli-frame.visible { opacity: 1; pointer-events: auto; }
+
+    /* ── API key prompt — 80s rounded callout ── */
+    #api-key-prompt {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(0.9);
+      z-index: 300;
+      width: 380px;
+      max-width: calc(100% - 32px);
+      border: 2px solid var(--frame-border);
+      border-radius: 16px;
+      background:
+        linear-gradient(170deg, rgba(255,255,255,0.05) 0%, transparent 40%, rgba(0,0,0,0.06) 100%),
+        var(--frame-bg);
+      box-shadow:
+        0 0 0 0.5px rgba(255,255,255,0.1),
+        0 0 40px rgba(255,255,255,0.06),
+        0 8px 32px rgba(0,0,0,0.4),
+        0 16px 64px rgba(0,0,0,0.2);
+      padding: 24px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      font-family: 'IBM Plex Mono', monospace;
+      color: var(--fg);
+    }
+    #api-key-prompt.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    #api-key-prompt .prompt-title {
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+      color: var(--accent);
+    }
+    #api-key-prompt .prompt-desc {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+    #api-key-prompt .prompt-input {
+      width: 100%;
+      height: 36px;
+      border-radius: 8px;
+      border: 1.5px solid var(--frame-joint);
+      background: rgba(0,0,0,0.3);
+      color: var(--fg);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      padding: 0 12px;
+      outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    #api-key-prompt .prompt-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 8px var(--accent-dim);
+    }
+    #api-key-prompt .prompt-input::placeholder {
+      color: var(--text-secondary);
+    }
+    #api-key-prompt .prompt-hint {
+      font-size: 10px;
+      color: var(--text-secondary);
+      margin-top: 10px;
+      text-align: center;
+    }
+    /* 80s rounded connector tab on top */
+    #api-key-prompt::before {
+      content: '';
+      position: absolute;
+      top: -10px; left: 50%;
+      transform: translateX(-50%);
+      width: 40px; height: 10px;
+      background: var(--frame-bg);
+      border: 2px solid var(--frame-border);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+    }
 
     /* ── Idle state: terminal in distance ── */
     #terminal-wrap.idle {
@@ -685,6 +770,14 @@
 
   <!-- Dismissed window tray -->
   <div id="dismissed-tray"></div>
+
+  <!-- API Key prompt — shown before first terminal boot -->
+  <div id="api-key-prompt">
+    <div class="prompt-title">ANTHROPIC API KEY</div>
+    <div class="prompt-desc">Paste your key to connect Claude Code. Press Escape to skip.</div>
+    <input class="prompt-input" id="api-key-input" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+    <div class="prompt-hint">Esc to skip &middot; Enter to connect</div>
+  </div>
 
   <!-- Default GitHub Pages demo proxy (web/pages-proxy-default.js); override with ?proxy= or __V9_ANTHROPIC_FETCH_PROXY__. -->
   <script src="web/pages-proxy-default.js"></script>
