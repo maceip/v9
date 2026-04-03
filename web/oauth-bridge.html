@@ -10,37 +10,60 @@
   <script>
     (function () {
       const current = new URL(window.location.href);
-      const callbackOrigin = current.searchParams.get('edge_callback_origin') || window.location.origin;
-      const port = current.searchParams.get('edge_callback_port') || '';
-      const path = current.searchParams.get('edge_callback_path') || '/callback';
-      const preserved = current.searchParams.get('edge_callback_search');
+
+      // Read callback info from query params (legacy) or sessionStorage (clean URL mode)
+      let callbackOrigin = current.searchParams.get('edge_callback_origin');
+      let port = current.searchParams.get('edge_callback_port');
+      let path = current.searchParams.get('edge_callback_path');
+
+      if (!port) {
+        // Clean URL mode: callback info stored in sessionStorage by polyfill
+        try {
+          const stored = JSON.parse(sessionStorage.getItem('__v9_oauth_callback') || '{}');
+          callbackOrigin = stored.origin || window.location.origin;
+          port = stored.port || '';
+          path = stored.path || '/callback';
+          sessionStorage.removeItem('__v9_oauth_callback');
+        } catch { /* ignore */ }
+      }
+
+      callbackOrigin = callbackOrigin || window.location.origin;
+      path = path || '/callback';
+
+      // Collect OAuth params from the URL (code, state, etc.)
       const params = new URLSearchParams(current.search);
       params.delete('edge_callback_origin');
       params.delete('edge_callback_port');
       params.delete('edge_callback_path');
       params.delete('edge_callback_search');
+
+      const preserved = current.searchParams.get('edge_callback_search');
       if (preserved) {
         const extra = new URLSearchParams(preserved);
         for (const [key, value] of extra.entries()) {
           if (!params.has(key)) params.set(key, value);
         }
       }
+
       const payload = {
         type: 'edge-oauth-callback',
         port,
         path,
         search: params.toString(),
       };
+
+      // Try postMessage (works if window.opener is intact)
       if (window.opener) {
         window.opener.postMessage(payload, callbackOrigin);
       }
-      // Fallback: BroadcastChannel for when COOP severs window.opener
-      // (e.g. claude.ai sets cross-origin-opener-policy: same-origin)
+
+      // Fallback: BroadcastChannel (works even when COOP severs window.opener)
       try {
         const bc = new BroadcastChannel('v9-oauth-bridge');
         bc.postMessage(payload);
         bc.close();
       } catch { /* BroadcastChannel not supported */ }
+
       window.close();
     })();
   </script>

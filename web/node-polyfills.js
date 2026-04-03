@@ -553,6 +553,20 @@
           headers: { ...filterBrowserRequestHeaders(init?.headers || {}), 'X-Proxy-Host': origHost },
         };
 
+        // Rewrite redirect_uri in token exchange body to match the bridge
+        // URL we sent in the auth request (must match exactly for OAuth).
+        if (url.includes('/oauth/token') && proxyInit.body && typeof proxyInit.body === 'string') {
+          try {
+            const body = JSON.parse(proxyInit.body);
+            if (body.redirect_uri && (body.redirect_uri.includes('localhost') || body.redirect_uri.includes('127.0.0.1'))) {
+              const baseHref = globalThis.location?.href || '';
+              const bridge = new URL('oauth-bridge.html', new URL('./', baseHref));
+              body.redirect_uri = bridge.toString();
+              proxyInit.body = JSON.stringify(body);
+            }
+          } catch { /* not JSON or no redirect_uri */ }
+        }
+
         if (typeof input === 'string') {
           return _origFetch.call(globalThis, url, proxyInit);
         }
@@ -677,12 +691,31 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
-    // Don't rewrite redirect_uri — Claude's OAuth server only accepts
-    // registered URIs (localhost:<port>/callback). Instead, keep the
-    // original redirect_uri and poll the popup for the localhost redirect.
-    // The popup will navigate to http://localhost:<port>/callback?code=...
-    // which won't load, but we can read the URL and extract the code.
-    return url;
+    try {
+      const parsed = new URL(url);
+      const redirectUri = parsed.searchParams.get('redirect_uri');
+      if (!redirectUri) return url;
+      const local = new URL(redirectUri);
+      const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
+      if (!isLoopback) return url;
+      const port = local.port || '80';
+      if (!getBrowserLocalServerRegistry()[port]) return url;
+      // Build a CLEAN bridge URL (no query params — store callback info
+      // in sessionStorage instead, to avoid redirect_uri rejection).
+      const baseHref = globalThis.location?.href || 'http://localhost:8080/web/index.html';
+      const bridge = new URL('oauth-bridge.html', new URL('./', baseHref));
+      try {
+        sessionStorage.setItem('__v9_oauth_callback', JSON.stringify({
+          origin: globalThis.location?.origin || bridge.origin,
+          port,
+          path: local.pathname || '/callback',
+        }));
+      } catch { /* ignore */ }
+      parsed.searchParams.set('redirect_uri', bridge.toString());
+      return parsed.toString();
+    } catch {
+      return url;
+    }
   }
 
   if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
