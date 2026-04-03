@@ -681,29 +681,12 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
-    // Keep redirect_uri as http://localhost:<port>/callback (server-registered).
-    // Store callback info in sessionStorage for oauth-bridge.html to read.
-    // The OAuth popup is routed through auth.stare.network, which intercepts
-    // the localhost redirect server-side and rewrites it to oauth-bridge.html.
-    try {
-      const parsed = new URL(url);
-      const redirectUri = parsed.searchParams.get('redirect_uri');
-      if (!redirectUri) return url;
-      const local = new URL(redirectUri);
-      const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
-      if (!isLoopback) return url;
-      const port = local.port || '80';
-      if (!getBrowserLocalServerRegistry()[port]) return url;
-      // Store callback info so oauth-bridge.html can deliver it
-      try {
-        sessionStorage.setItem('__v9_oauth_callback', JSON.stringify({
-          origin: globalThis.location?.origin || globalThis.location?.href,
-          port,
-          path: local.pathname || '/callback',
-        }));
-      } catch { /* ignore */ }
-      // Don't change redirect_uri — server only accepts localhost
-    } catch { /* ignore */ }
+    // Can't rewrite redirect_uri — Claude's OAuth server only accepts
+    // registered URIs (localhost and platform.claude.com). Can't proxy
+    // claude.ai's login page either (CSP, CDN CORS, Google origin checks).
+    // The CLI handles this: opens popup with automatic URL (localhost
+    // redirect, will fail in browser), and shows manual URL in terminal
+    // (platform.claude.com redirect, user copies code).
     return url;
   }
 
@@ -738,20 +721,7 @@
       if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
         return Promise.resolve({ opened: false, reason: 'invalid-url' });
       }
-      let rewrittenUrl = maybeRewriteOAuthUrl(url);
-      // Route OAuth popup through auth.stare.network reverse proxy.
-      // The proxy strips COOP/CORP headers (preserving window.opener)
-      // and intercepts the localhost callback redirect, rewriting it
-      // to oauth-bridge.html on maceip.github.io.
-      if (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai')) {
-        try {
-          const target = new URL(rewrittenUrl);
-          target.hostname = 'auth.stare.network';
-          target.port = '';
-          target.protocol = 'https:';
-          rewrittenUrl = target.toString();
-        } catch { /* keep original */ }
-      }
+      const rewrittenUrl = maybeRewriteOAuthUrl(url);
       const popup = globalThis.open?.(
         rewrittenUrl,
         options.target || '_blank',
