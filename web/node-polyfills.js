@@ -710,14 +710,15 @@
         return Promise.resolve({ opened: false, reason: 'invalid-url' });
       }
       let rewrittenUrl = maybeRewriteOAuthUrl(url);
-      // Route claude.com OAuth through the CORS proxy to avoid
-      // cross-origin-resource-policy / x-frame-options blocks.
-      // Uses /__proxy/<host>/path format for full-page navigations.
-      if (_proxyUrl && (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai'))) {
+      // Route claude.com/claude.ai OAuth through a subdomain reverse proxy
+      // to strip COOP/CORP headers that sever window.opener in popups.
+      if (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai')) {
         try {
           const target = new URL(rewrittenUrl);
-          const proxy = new URL(_proxyUrl);
-          rewrittenUrl = `${proxy.origin}/__proxy/${target.host}${target.pathname}${target.search}${target.hash}`;
+          target.hostname = 'auth.stare.network';
+          target.port = '';
+          target.protocol = 'https:';
+          rewrittenUrl = target.toString();
         } catch { /* keep original */ }
       }
       const popup = globalThis.open?.(
