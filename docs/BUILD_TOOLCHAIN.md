@@ -159,7 +159,7 @@ Optional: `EDGEJS_STRICT_IMPORTS=1` is used in parts of `make test-integration` 
 
 ## npm scripts
 
-- `npm run build` runs `build-emscripten.sh`, which **delegates to** `make fetch configure build` (same as above).
+- `npm run build` delegates to `make fetch configure build` (same as above).
 - `npm run build:debug` uses `BUILD_TYPE=Debug`.
 
 Legacy layouts that used `src/` and root-level `edgejs.wasm` are obsolete; the **Makefile** layout is authoritative.

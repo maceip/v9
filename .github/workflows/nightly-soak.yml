@@ -13,32 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Chromium
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-          CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
-          echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
-
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: tot
-
-      - name: Configure and build
-        run: |
-          source "$EMSDK/emsdk_env.sh"
-          make fetch
-          make configure
-          make build
+      - uses: ./.github/actions/setup-wasm-toolchain
 
       - name: Nightly integration + soak
         env:

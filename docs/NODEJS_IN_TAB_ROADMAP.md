@@ -139,6 +139,5 @@ Be the project where **if it passes the in-tab contract and fits the compatibili
 - Suite only (Node or bridge): `npm run test:in-tab-api-contract` (+ `:bridge`, `:node`, `:bundle`)
 - Wasm bundle of the suite: `npm run build:in-tab-api-contract:wasm`
 
-Legacy `test:claude-contract:*` npm scripts are thin aliases during migration.
 
 This file should be updated as milestones complete.

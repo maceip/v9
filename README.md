@@ -60,7 +60,7 @@ npm run test:nodejs-in-tab-contract
 | `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS (`esbuild`) |
 | `in-tab-api-contract.js` | `npm run build:in-tab-api-contract` (**Bun**) | Contract suite as ESM bundle (optional) |
 | `app-bundle.js` | Your esbuild/webpack step | Example default for `?bundle=` |
-| `anthropic-sdk-bundle.js` | `scripts/bundle-sdk.sh` (optional) | Overrides `@anthropic-ai/sdk` in the tab |
+| `anthropic-sdk-bundle.js` | `scripts/bundle-vendor.sh sdk` (optional) | Overrides `@anthropic-ai/sdk` in the tab |
 
 `.gitignore` excludes `dist/`; reproduce artifacts with the commands above.
 
@@ -70,7 +70,6 @@ npm run test:nodejs-in-tab-contract
 - **Contract builds:** `build:in-tab-api-contract`, `build:in-tab-api-contract:wasm`
 - **Release gate:** `release-gate` (policy JSON under `.planning/...`)
 
-Legacy names `test:claude-contract:*` still point at the same commands during migration.
 
 ## Repo layout (short)
 

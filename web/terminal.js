@@ -288,7 +288,7 @@ function createCliController({ term, runtime, processBridge, config }) {
   };
 }
 
-/** Optional pre-bundled @anthropic-ai/sdk (scripts/bundle-sdk.sh). Silent if missing — vendor resolves via import map. */
+/** Optional pre-bundled @anthropic-ai/sdk (scripts/bundle-vendor.sh sdk). Silent if missing — vendor resolves via import map. */
 async function registerOptionalVendorSdk(runtime) {
   try {
     const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');

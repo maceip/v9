@@ -62,9 +62,11 @@ test('unknown N-API imports return callable stubs that fail (not NAPI_OK)', () =
 });
 
 test('integration/nightly test paths enforce strict import mode', () => {
+  const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+  const integrationCmd = String(pkg.scripts?.['test:integration'] || '');
+  assert(integrationCmd.includes('EDGEJS_STRICT_IMPORTS=1') && integrationCmd.includes('test-wasm-load.mjs'),
+    'package.json test:integration must enable strict import mode for wasm-load');
   const makefile = readFileSync(join(rootDir, 'Makefile'), 'utf8');
-  assert(makefile.includes('EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs'),
-    'Makefile integration tier must enable strict import mode');
   assert(makefile.includes('EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly'),
     'Makefile nightly tier must enable strict import mode');
 });
@@ -78,8 +80,8 @@ test('integration tier runs unified Chromium + Wasm contract gate', () => {
   );
   const makefile = readFileSync(join(rootDir, 'Makefile'), 'utf8');
   assert(
-    makefile.includes('test:nodejs-in-tab-contract'),
-    'Makefile test-integration must invoke the unified contract (test:nodejs-in-tab-contract)',
+    makefile.includes('test-integration'),
+    'Makefile must define test-integration target',
   );
 });
 

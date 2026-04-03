@@ -1,0 +1,41 @@
+name: Setup Wasm Toolchain
+description: Install Node 22, Chromium, and Emscripten SDK then fetch/configure/build the Wasm runtime.
+
+inputs:
+  install-chromium:
+    description: Install Chromium and set CHROME_BIN
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+
+    - name: Install Chromium
+      if: inputs.install-chromium == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+        CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
+        echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
+
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: tot
+
+    - name: Fetch, configure, build
+      shell: bash
+      run: |
+        source "$EMSDK/emsdk_env.sh"
+        make fetch
+        make configure
+        make build

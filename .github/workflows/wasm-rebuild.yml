@@ -1,5 +1,5 @@
 # Standalone Wasm runtime rebuild + artifacts (no npm test tier).
-# Use from Actions → "Wasm runtime rebuild" → Run workflow when you only need binaries.
+# Use from Actions -> "Wasm runtime rebuild" -> Run workflow when you only need binaries.
 name: Wasm runtime rebuild
 
 on:
@@ -13,19 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+      - uses: ./.github/actions/setup-wasm-toolchain
         with:
-          version: tot
+          install-chromium: 'false'
 
-      - name: Fetch, configure, build
+      - name: Verify outputs
         run: |
-          set -euxo pipefail
-          source "$EMSDK/emsdk_env.sh"
-          emcc --version | head -1
-          make fetch
-          make configure
-          make build
           test -f dist/edgejs.wasm
           test -f dist/edgejs.js
           test -f build/edge

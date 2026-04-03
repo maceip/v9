@@ -9,7 +9,7 @@ SHELL := /bin/bash
 
 JOBS ?= $(shell nproc 2>/dev/null || echo $(NUMBER_OF_PROCESSORS) 2>/dev/null || echo 4)
 
-.PHONY: all setup fetch configure build test test-integration test-soak-quick test-nightly lint size clean distclean help
+.PHONY: all setup fetch configure build test test-integration test-soak-quick test-soak-nightly test-nightly lint size clean distclean help
 
 # ---- Paths ----
 # Normalize CURDIR to forward slashes (MSYS make sometimes mixes them)
@@ -112,18 +112,21 @@ lint:
 size:
 	cd "$(ROOT_DIR)" && node scripts/artifact-sizes.mjs
 
-# ---- Test Tiers ----
+# ---- Test Tiers (delegate to npm scripts — single source of truth in package.json) ----
 test:
-	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs
+	cd "$(ROOT_DIR)" && npm test
 
 test-integration:
-	cd "$(ROOT_DIR)" && node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && EDGEJS_STRICT_IMPORTS=1 node tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs
+	cd "$(ROOT_DIR)" && npm run test:integration
 
 test-nightly:
 	cd "$(ROOT_DIR)" && EDGEJS_STRICT_IMPORTS=1 node tests/test-soak.mjs --profile nightly
 
 test-soak-quick:
 	cd "$(ROOT_DIR)" && npm run test:soak:quick
+
+test-soak-nightly:
+	cd "$(ROOT_DIR)" && npm run test:soak:nightly
 
 # ---- Clean ----
 clean:
