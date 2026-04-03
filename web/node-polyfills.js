@@ -692,12 +692,25 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
-    // Can't rewrite redirect_uri — Claude's OAuth server only accepts
-    // registered URIs (localhost and platform.claude.com). Can't proxy
-    // claude.ai's login page either (CSP, CDN CORS, Google origin checks).
-    // The CLI handles this: opens popup with automatic URL (localhost
-    // redirect, will fail in browser), and shows manual URL in terminal
-    // (platform.claude.com redirect, user copies code).
+    // Don't rewrite redirect_uri (server only accepts localhost).
+    // Store callback info in sessionStorage so oauth-bridge.html can
+    // deliver the auth code when the V9 OAuth Bridge extension
+    // redirects the failed localhost callback to the bridge page.
+    try {
+      const parsed = new URL(url);
+      const redirectUri = parsed.searchParams.get('redirect_uri');
+      if (!redirectUri) return url;
+      const local = new URL(redirectUri);
+      const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
+      if (!isLoopback) return url;
+      const port = local.port || '80';
+      if (!getBrowserLocalServerRegistry()[port]) return url;
+      localStorage.setItem('__v9_oauth_callback', JSON.stringify({
+        origin: globalThis.location?.origin,
+        port,
+        path: local.pathname || '/callback',
+      }));
+    } catch { /* ignore */ }
     return url;
   }
 

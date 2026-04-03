@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "regexSubstitution": "https://maceip.github.io/v9/web/oauth-bridge.html?\\1"
+      }
+    },
+    "condition": {
+      "regexFilter": "^http://localhost:\\d+/callback\\?(.*)",
+      "resourceTypes": ["main_frame"]
+    }
+  }
+]
