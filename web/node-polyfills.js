@@ -167,6 +167,17 @@
       // Example: route vendor APIs through local dev proxy when needed
       ANTHROPIC_BASE_URL: 'http://localhost:8081',
     };
+    // Enable HTTP relay on GitHub Pages — tunnels real TCP listeners
+    // through a WebSocket so localhost:<port> actually works in-tab.
+    try {
+      const host = globalThis.location?.hostname || '';
+      if (host.endsWith('.github.io') || _env.NODEJS_IN_TAB_HTTP_RELAY) {
+        _env.NODEJS_IN_TAB_HTTP_RELAY = '1';
+        if (!_env.NODEJS_IN_TAB_HTTP_RELAY_WS) {
+          _env.NODEJS_IN_TAB_HTTP_RELAY_WS = 'wss://relay.stare.network/__in-tab-http-ws';
+        }
+      }
+    } catch { /* ignore */ }
     const _cwd = '/';
     // Minimal EventEmitter for signal handling (signal-exit library needs this)
     const _listeners = {};
