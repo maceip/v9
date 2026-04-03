@@ -11,19 +11,19 @@
     (function () {
       const current = new URL(window.location.href);
 
-      // Read callback info from query params (legacy) or sessionStorage (clean URL mode)
+      // Read callback info from query params (legacy) or localStorage
+      // (set by polyfill before popup opened, shared across tabs)
       let callbackOrigin = current.searchParams.get('edge_callback_origin');
       let port = current.searchParams.get('edge_callback_port');
       let path = current.searchParams.get('edge_callback_path');
 
       if (!port) {
-        // Clean URL mode: callback info stored in sessionStorage by polyfill
         try {
-          const stored = JSON.parse(sessionStorage.getItem('__v9_oauth_callback') || '{}');
+          const stored = JSON.parse(localStorage.getItem('__v9_oauth_callback') || '{}');
           callbackOrigin = stored.origin || window.location.origin;
           port = stored.port || '';
           path = stored.path || '/callback';
-          sessionStorage.removeItem('__v9_oauth_callback');
+          localStorage.removeItem('__v9_oauth_callback');
         } catch { /* ignore */ }
       }
 
