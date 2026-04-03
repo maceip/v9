@@ -65,7 +65,7 @@ for (const htmlPath of walkHtmlFiles(docsWeb)) {
   writeFileSync(htmlPath, html, 'utf8');
 }
 
-for (const f of ['edgejs.js', 'edgejs.wasm']) {
+for (const f of ['edgejs.js', 'edgejs.wasm', 'anthropic-sdk-bundle.js']) {
   const from = join(srcDist, f);
   const to = join(docsDist, f);
   if (existsSync(from)) copyFileSync(from, to);

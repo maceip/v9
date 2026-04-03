@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -42,6 +43,35 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Fetch the latest Wasm build artifacts from CI so dist/ has edgejs.{js,wasm}
+      - name: Download latest Wasm artifacts from CI
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          mkdir -p dist
+          # Find the most recent successful CI run on main that uploaded wasm artifacts
+          RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main \
+            --status success --limit 10 --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion=="success")][0].databaseId')
+          if [ -n "$RUN_ID" ]; then
+            echo "Downloading wasm artifacts from CI run $RUN_ID"
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --pattern "edgejs-wasm-*" --dir /tmp/wasm-artifacts || true
+            # Artifacts unpack into a subdirectory named after the artifact
+            find /tmp/wasm-artifacts -name 'edgejs.js' -exec cp {} dist/ \;
+            find /tmp/wasm-artifacts -name 'edgejs.wasm' -exec cp {} dist/ \;
+            ls -la dist/edgejs.* 2>/dev/null || echo "Warning: wasm files not found in artifact"
+          else
+            echo "No successful CI run with wasm artifacts found"
+          fi
+
+      # Bundle the Anthropic SDK for browser use
+      - name: Bundle Anthropic SDK
+        continue-on-error: true
+        run: sh scripts/bundle-sdk.sh
 
       # Assemble web/ + napi-bridge/ into docs/ and write .nojekyll
       - name: Assemble docs/ (web + napi-bridge)
