@@ -465,7 +465,6 @@ async function boot() {
       const t = e.data.theme;
       if (t && term.options) {
         term.options.theme = t;
-        // Also update body bg so the terminal container matches
         document.body.style.background = t.background || '';
       }
     }
@@ -481,7 +480,77 @@ async function boot() {
         }
       }
     }
+    // Re-fit terminal to container (called by parent after zoom completes)
+    if (e.data.type === 'v9:refit') {
+      if (fitAddon) {
+        fitAddon.fit();
+        if (runtime && typeof runtime.setTerminalSize === 'function') {
+          runtime.setTerminalSize(term.cols, term.rows);
+        }
+        syncProcessTerminalSize(processBridge, term.cols, term.rows);
+      }
+    }
+    // D-pad key input from parent
+    if (e.data.type === 'v9:key-input') {
+      const seq = e.data.seq;
+      if (seq && runtime && typeof runtime.pushStdin === 'function') {
+        runtime.pushStdin(seq);
+      } else if (seq && typeof globalThis._stdinPush === 'function') {
+        globalThis._stdinPush(seq);
+      }
+    }
   });
+
+  // ── Swipe-to-dismiss detection (forward to parent since iframe captures touch) ──
+  let _swipeTouch = null;
+  document.addEventListener('touchstart', (e) => {
+    if (!e.touches[0]) return;
+    const t = e.touches[0];
+    _swipeTouch = { sx: t.clientX, sy: t.clientY, decided: false, startTime: Date.now() };
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!_swipeTouch || _swipeTouch.decided) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dy = t.clientY - _swipeTouch.sy;
+    const dx = t.clientX - _swipeTouch.sx;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 15) {
+      _swipeTouch.decided = true;
+      // Downward swipe with vertical dominance
+      if (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+        _swipeTouch.swiping = true;
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    if (!_swipeTouch) return;
+    if (_swipeTouch.swiping) {
+      const elapsed = Date.now() - _swipeTouch.startTime;
+      // Only dismiss for deliberate swipes (fast flick or long drag)
+      if (elapsed < 500) {
+        try {
+          window.parent.postMessage({ type: 'v9:swipe-dismiss' }, '*');
+        } catch { /* sandboxed */ }
+      }
+    }
+    _swipeTouch = null;
+  }, { passive: true });
+
+  // ── Refit on iframe visibility changes ──
+  if (fitAddon) {
+    // Initial delayed refit to catch late layout
+    setTimeout(() => {
+      fitAddon.fit();
+      if (runtime && typeof runtime.setTerminalSize === 'function') {
+        runtime.setTerminalSize(term.cols, term.rows);
+      }
+      syncProcessTerminalSize(processBridge, term.cols, term.rows);
+    }, 300);
+  }
 }
 
 function _safe(str) {
