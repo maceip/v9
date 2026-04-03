@@ -583,13 +583,22 @@
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
       if (typeof url === 'string' && (url.includes('api.anthropic.com') || url.includes('platform.claude.com'))) {
         const target = new URL(url);
+        const origHost = target.hostname;
         const proxy = new URL(_proxyUrl);
         target.hostname = proxy.hostname;
         target.port = proxy.port;
         target.protocol = proxy.protocol;
         url = target.toString();
+        this.__proxyHost = origHost;
       }
       return _origXHROpen.call(this, method, url, ...rest);
+    };
+    const _origXHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (this.__proxyHost) {
+        _origXHRSetRequestHeader.call(this, 'X-Proxy-Host', this.__proxyHost);
+      }
+      return _origXHRSend.call(this, body);
     };
     const _origXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
     XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
