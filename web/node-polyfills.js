@@ -677,22 +677,12 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
-    try {
-      const parsed = new URL(url);
-      const redirectUri = parsed.searchParams.get('redirect_uri');
-      if (!redirectUri) return url;
-      const local = new URL(redirectUri);
-      const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
-      if (!isLoopback) return url;
-      const port = local.port || '80';
-      if (!getBrowserLocalServerRegistry()[port]) return url;
-      const bridgeUrl = buildOAuthBridgeUrl(local.toString());
-      if (!bridgeUrl) return url;
-      parsed.searchParams.set('redirect_uri', bridgeUrl);
-      return parsed.toString();
-    } catch {
-      return url;
-    }
+    // Don't rewrite redirect_uri — Claude's OAuth server only accepts
+    // registered URIs (localhost:<port>/callback). Instead, keep the
+    // original redirect_uri and poll the popup for the localhost redirect.
+    // The popup will navigate to http://localhost:<port>/callback?code=...
+    // which won't load, but we can read the URL and extract the code.
+    return url;
   }
 
   if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
