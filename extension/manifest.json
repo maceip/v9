@@ -1,9 +1,15 @@
 {
   "manifest_version": 3,
   "name": "V9 OAuth Bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Redirects OAuth localhost callbacks to the V9 OAuth bridge page",
-  "permissions": ["declarativeNetRequest"],
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "http://localhost/*"
+  ],
   "declarative_net_request": {
     "rule_resources": [{
       "id": "v9_oauth_rules",

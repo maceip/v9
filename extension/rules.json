@@ -9,7 +9,7 @@
       }
     },
     "condition": {
-      "regexFilter": "^http://localhost:\\d+/callback\\?(.*)",
+      "regexFilter": "http://localhost:\\d+/callback\\?(.*)",
       "resourceTypes": ["main_frame"]
     }
   }
