@@ -709,7 +709,17 @@
       if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
         return Promise.resolve({ opened: false, reason: 'invalid-url' });
       }
-      const rewrittenUrl = maybeRewriteOAuthUrl(url);
+      let rewrittenUrl = maybeRewriteOAuthUrl(url);
+      // Route claude.com OAuth through the CORS proxy to avoid
+      // cross-origin-resource-policy / x-frame-options blocks.
+      // Uses /__proxy/<host>/path format for full-page navigations.
+      if (_proxyUrl && (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai'))) {
+        try {
+          const target = new URL(rewrittenUrl);
+          const proxy = new URL(_proxyUrl);
+          rewrittenUrl = `${proxy.origin}/__proxy/${target.host}${target.pathname}${target.search}${target.hash}`;
+        } catch { /* keep original */ }
+      }
       const popup = globalThis.open?.(
         rewrittenUrl,
         options.target || '_blank',
