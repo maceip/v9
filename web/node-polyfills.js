@@ -717,18 +717,10 @@
       if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
         return Promise.resolve({ opened: false, reason: 'invalid-url' });
       }
-      let rewrittenUrl = maybeRewriteOAuthUrl(url);
-      // Route claude.com/claude.ai OAuth through a subdomain reverse proxy
-      // to strip COOP/CORP headers that sever window.opener in popups.
-      if (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai')) {
-        try {
-          const target = new URL(rewrittenUrl);
-          target.hostname = 'auth.stare.network';
-          target.port = '';
-          target.protocol = 'https:';
-          rewrittenUrl = target.toString();
-        } catch { /* keep original */ }
-      }
+      // OAuth popup goes directly to claude.com/claude.ai — no proxy.
+      // COOP (same-origin) on claude.ai severs window.opener, so
+      // oauth-bridge.html uses BroadcastChannel as a fallback.
+      const rewrittenUrl = maybeRewriteOAuthUrl(url);
       const popup = globalThis.open?.(
         rewrittenUrl,
         options.target || '_blank',
