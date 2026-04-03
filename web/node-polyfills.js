@@ -553,19 +553,9 @@
           headers: { ...filterBrowserRequestHeaders(init?.headers || {}), 'X-Proxy-Host': origHost },
         };
 
-        // Rewrite redirect_uri in token exchange body to match the bridge
-        // URL we sent in the auth request (must match exactly for OAuth).
-        if (url.includes('/oauth/token') && proxyInit.body && typeof proxyInit.body === 'string') {
-          try {
-            const body = JSON.parse(proxyInit.body);
-            if (body.redirect_uri && (body.redirect_uri.includes('localhost') || body.redirect_uri.includes('127.0.0.1'))) {
-              const baseHref = globalThis.location?.href || '';
-              const bridge = new URL('oauth-bridge.html', new URL('./', baseHref));
-              body.redirect_uri = bridge.toString();
-              proxyInit.body = JSON.stringify(body);
-            }
-          } catch { /* not JSON or no redirect_uri */ }
-        }
+        // redirect_uri stays as localhost in both auth request and token
+        // exchange — no rewrite needed since the auth proxy intercepts
+        // the localhost redirect server-side.
 
         if (typeof input === 'string') {
           return _origFetch.call(globalThis, url, proxyInit);
@@ -691,6 +681,10 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
+    // Keep redirect_uri as http://localhost:<port>/callback (server-registered).
+    // Store callback info in sessionStorage for oauth-bridge.html to read.
+    // The OAuth popup is routed through auth.stare.network, which intercepts
+    // the localhost redirect server-side and rewrites it to oauth-bridge.html.
     try {
       const parsed = new URL(url);
       const redirectUri = parsed.searchParams.get('redirect_uri');
@@ -700,22 +694,17 @@
       if (!isLoopback) return url;
       const port = local.port || '80';
       if (!getBrowserLocalServerRegistry()[port]) return url;
-      // Build a CLEAN bridge URL (no query params — store callback info
-      // in sessionStorage instead, to avoid redirect_uri rejection).
-      const baseHref = globalThis.location?.href || 'http://localhost:8080/web/index.html';
-      const bridge = new URL('oauth-bridge.html', new URL('./', baseHref));
+      // Store callback info so oauth-bridge.html can deliver it
       try {
         sessionStorage.setItem('__v9_oauth_callback', JSON.stringify({
-          origin: globalThis.location?.origin || bridge.origin,
+          origin: globalThis.location?.origin || globalThis.location?.href,
           port,
           path: local.pathname || '/callback',
         }));
       } catch { /* ignore */ }
-      parsed.searchParams.set('redirect_uri', bridge.toString());
-      return parsed.toString();
-    } catch {
-      return url;
-    }
+      // Don't change redirect_uri — server only accepts localhost
+    } catch { /* ignore */ }
+    return url;
   }
 
   if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
@@ -749,10 +738,20 @@
       if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
         return Promise.resolve({ opened: false, reason: 'invalid-url' });
       }
-      // OAuth popup goes directly to claude.com/claude.ai — no proxy.
-      // COOP (same-origin) on claude.ai severs window.opener, so
-      // oauth-bridge.html uses BroadcastChannel as a fallback.
-      const rewrittenUrl = maybeRewriteOAuthUrl(url);
+      let rewrittenUrl = maybeRewriteOAuthUrl(url);
+      // Route OAuth popup through auth.stare.network reverse proxy.
+      // The proxy strips COOP/CORP headers (preserving window.opener)
+      // and intercepts the localhost callback redirect, rewriting it
+      // to oauth-bridge.html on maceip.github.io.
+      if (rewrittenUrl.includes('claude.com') || rewrittenUrl.includes('claude.ai')) {
+        try {
+          const target = new URL(rewrittenUrl);
+          target.hostname = 'auth.stare.network';
+          target.port = '';
+          target.protocol = 'https:';
+          rewrittenUrl = target.toString();
+        } catch { /* keep original */ }
+      }
       const popup = globalThis.open?.(
         rewrittenUrl,
         options.target || '_blank',
