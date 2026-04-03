@@ -17,6 +17,6 @@
     var q = new URLSearchParams(loc.search || '').get('proxy');
     if (q) return;
     // Dedicated fetch-proxy service (systemd, auto-restarts on reboot).
-    G.__V9_PAGES_ANTHROPIC_PROXY__ = 'http://3.120.153.36:8082';
+    G.__V9_PAGES_ANTHROPIC_PROXY__ = 'https://www.stare.network';
   } catch (_) { /* ignore */ }
 })();
