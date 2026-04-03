@@ -96,7 +96,7 @@ export default {
         headers: {
           'Access-Control-Allow-Origin': origin,
           'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access, x-proxy-secret',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta, anthropic-dangerous-direct-browser-access, x-proxy-secret, x-proxy-host, x-app, x-claude-code-session-id, x-client-request-id, x-organization-uuid',
           'Access-Control-Max-Age': '86400',
         },
       });
