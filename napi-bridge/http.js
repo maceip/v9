@@ -1001,7 +1001,7 @@ class FakeServer extends EventEmitter {
     }
     this.relaySession = String(session);
     const base = _inTabPublicHttpBase();
-    this.publicUrl = `${base}/__in-tab-http/${encodeURIComponent(this.relaySession)}/${this._.port}/`;
+    this.publicUrl = `${base}/__in-tab-http/${encodeURIComponent(this.relaySession)}/${this._port}/`;
 
     const wsUrl = _inTabRelayWebSocketUrl(this.relaySession, this._port);
     if (!wsUrl) {
