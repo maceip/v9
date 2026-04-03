@@ -94,20 +94,9 @@ new ResizeObserver(resizeGlass).observe(termScreen);
 const zoom = new ZoomController(termWrap, {
   onComplete: (direction) => {
     if (direction === 'in' && state === 'ZOOMING') {
+      state = 'RUNNING';
       if (glass) { glass.fog = 0; glass.glassBlur = 0; glass.stop(); }
-
-      // First time: show API key prompt after zoom animation finishes
-      if (!apiKeyPrompted && !cliLoaded) {
-        apiKeyPrompted = true;
-        state = 'PROMPTING';
-        showApiKeyPrompt(() => {
-          state = 'RUNNING';
-          loadCLI();
-        });
-      } else {
-        state = 'RUNNING';
-        if (!cliLoaded) loadCLI();
-      }
+      if (!cliLoaded) loadCLI();
     } else if (direction === 'out') {
       state = 'IDLE';
       termWrap.classList.add('idle');
@@ -142,10 +131,6 @@ setProgress(100);
 termWrap.addEventListener('click', handleActivate, true);
 termWrap.addEventListener('touchend', handleActivate, true);
 
-let apiKeyPrompted = false;
-const apiPrompt = document.getElementById('api-key-prompt');
-const apiInput = document.getElementById('api-key-input');
-
 function handleActivate(e) {
   if (state !== 'IDLE') return;
   e.preventDefault();
@@ -155,44 +140,11 @@ function handleActivate(e) {
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
 
-  // Start loading CLI on first click
   if (!cliLoaded && !cliFrame.src) {
     resolveWebURL().then(url => { if (url) cliFrame.src = url; });
   }
 
   zoom.zoomIn();
-}
-
-// ── API key prompt — navbar-style panel shown after zoom-in ──
-function showApiKeyPrompt(onDone) {
-  apiPrompt.classList.add('visible');
-  apiInput.value = '';
-  setTimeout(() => apiInput.focus(), 50);
-
-  function submit() {
-    const key = apiInput.value.trim();
-    if (key) sessionStorage.setItem('anthropic_api_key', key);
-    cleanup();
-    onDone();
-  }
-
-  function skip() {
-    cleanup();
-    onDone();
-  }
-
-  function onKey(e) {
-    e.stopPropagation();
-    if (e.key === 'Enter') submit();
-    if (e.key === 'Escape') skip();
-  }
-
-  function cleanup() {
-    apiPrompt.classList.remove('visible');
-    apiInput.removeEventListener('keydown', onKey);
-  }
-
-  apiInput.addEventListener('keydown', onKey);
 }
 
 // ── Load CLI into visible state ──
