@@ -6,7 +6,10 @@
  *   Right side: Diamond buttons — Esc(Y) Home(X) Ctrl(B) Tab(A) + Enter(center)
  *
  * 50% opacity at rest, 100% on touch.
- * When the on-screen keyboard opens, morphs into a compact rail above it.
+ * Only the Ctrl button triggers the on-screen keyboard — it stays visually
+ * active (highlighted) and the pill morphs into a compact rail above the
+ * keyboard. When the keyboard closes, it morphs back to the full controller.
+ * All other buttons send their key sequence directly without opening keyboard.
  */
 
 const KEYS = {
@@ -131,9 +134,10 @@ export class DPad {
       this.hiddenInput.value = '';
     });
 
-    // Prevent keyboard from closing when tapping buttons
+    // Prevent keyboard from closing when tapping buttons while keyboard is up
     this.el.addEventListener('touchstart', (e) => {
-      if (e.target.closest('[data-key]')) e.preventDefault();
+      const keyEl = e.target.closest('[data-key]');
+      if (keyEl && this.keyboardOpen) e.preventDefault();
     }, { passive: false });
 
     // 50% → 100% opacity on touch
@@ -164,18 +168,23 @@ export class DPad {
     setTimeout(() => btn.classList.remove('pressed'), 120);
 
     if (def.modifier) {
+      // Ctrl toggle — this is the ONLY key that opens the on-screen keyboard.
+      // It stays visually active (discolored) and triggers the rail morph.
       this.ctrlActive = !this.ctrlActive;
       this._updateCtrl();
+      if (this.ctrlActive) {
+        this.hiddenInput.focus({ preventScroll: true });
+      } else {
+        this.hiddenInput.blur();
+      }
     } else {
       this._send(def.seq);
       if (this.ctrlActive) {
         this.ctrlActive = false;
         this._updateCtrl();
       }
+      // Non-ctrl keys do NOT open the keyboard
     }
-
-    // Trigger on-screen keyboard
-    this.hiddenInput.focus({ preventScroll: true });
   }
 
   _updateCtrl() {
