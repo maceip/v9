@@ -544,15 +544,15 @@
       #terminal-wrap.idle { transform: scale(0.42) translateY(8%); }
     }
 
-    /* ── Mobile D-Pad — pill-shaped game controller ── */
+    /* ── Mobile D-Pad — game controller overlay ── */
     #dpad {
       display: none;
       position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%) scale(0.85) translateY(20px);
+      bottom: 16px;
+      right: 8px;
       z-index: 200;
       opacity: 0;
+      transform: scale(0.85) translateY(20px);
       transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
       touch-action: none;
       -webkit-tap-highlight-color: transparent;
@@ -560,27 +560,17 @@
     }
     #dpad.visible {
       opacity: 0.5;
-      transform: translateX(-50%) scale(1) translateY(0);
+      transform: scale(1) translateY(0);
     }
     #dpad.visible.touching {
       opacity: 1;
     }
 
-    /* Pill body — the controller shape */
+    /* Pill body — no background, just positions the two halves */
     .dpad-pill {
       display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 12px 16px;
-      background: rgba(18,18,28,0.88);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 32px;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      box-shadow:
-        0 4px 20px rgba(0,0,0,0.5),
-        0 1px 3px rgba(0,0,0,0.3),
-        inset 0 1px 0 rgba(255,255,255,0.05);
+      align-items: flex-end;
+      gap: 8px;
       transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     #dpad.keyboard-open .dpad-pill {
@@ -588,19 +578,25 @@
       transform: scale(0.6) translateY(30px);
       pointer-events: none;
       position: absolute;
-      bottom: 0;
+      bottom: 0; right: 0;
     }
 
-    /* ── D-pad cross (left side) ── */
+    /* ── D-pad cross (left side, bottom-aligned) ── */
     .dpad-cross {
       position: relative;
-      width: 100px;
-      height: 100px;
+      width: 96px;
+      height: 96px;
       flex-shrink: 0;
+      background: rgba(18,18,28,0.85);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04);
     }
     .dpad-cross-btn {
       position: absolute;
-      width: 34px; height: 34px;
+      width: 32px; height: 32px;
       border: none;
       border-radius: 4px;
       background: rgba(60,60,80,0.9);
@@ -614,39 +610,35 @@
     }
     .dpad-cross-btn span { pointer-events: none; }
     .dpad-cross-btn.pressed {
-      transform: scale(0.9);
-      background: rgba(80,80,110,0.95);
+      background: rgba(100,100,140,0.95);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
     }
-    /* Cross layout */
-    .dpad-cross-up    { top: 0;  left: 50%; transform: translateX(-50%); border-radius: 6px 6px 2px 2px; }
-    .dpad-cross-down  { bottom: 0; left: 50%; transform: translateX(-50%); border-radius: 2px 2px 6px 6px; }
-    .dpad-cross-left  { left: 0; top: 50%; transform: translateY(-50%); border-radius: 6px 2px 2px 6px; }
-    .dpad-cross-right { right: 0; top: 50%; transform: translateY(-50%); border-radius: 2px 6px 6px 2px; }
-    .dpad-cross-up.pressed    { transform: translateX(-50%) scale(0.9); }
-    .dpad-cross-down.pressed  { transform: translateX(-50%) scale(0.9); }
-    .dpad-cross-left.pressed  { transform: translateY(-50%) scale(0.9); }
-    .dpad-cross-right.pressed { transform: translateY(-50%) scale(0.9); }
-
-    /* Center nub of cross */
+    .dpad-cross-up    { top: 4px;  left: 50%; transform: translateX(-50%); border-radius: 6px 6px 2px 2px; }
+    .dpad-cross-down  { bottom: 4px; left: 50%; transform: translateX(-50%); border-radius: 2px 2px 6px 6px; }
+    .dpad-cross-left  { left: 4px; top: 50%; transform: translateY(-50%); border-radius: 6px 2px 2px 6px; }
+    .dpad-cross-right { right: 4px; top: 50%; transform: translateY(-50%); border-radius: 2px 6px 6px 2px; }
+    .dpad-cross-up.pressed    { transform: translateX(-50%) scale(0.92); }
+    .dpad-cross-down.pressed  { transform: translateX(-50%) scale(0.92); }
+    .dpad-cross-left.pressed  { transform: translateY(-50%) scale(0.92); }
+    .dpad-cross-right.pressed { transform: translateY(-50%) scale(0.92); }
     .dpad-cross-nub {
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 18px; height: 18px;
+      width: 16px; height: 16px;
       border-radius: 50%;
       background: rgba(40,40,55,0.95);
       border: 1px solid rgba(255,255,255,0.06);
       box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
       pointer-events: none;
     }
-    /* Cross connecting arms background */
     .dpad-cross::before {
       content: '';
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 36px; height: 100%;
-      background: rgba(35,35,50,0.7);
+      width: 34px; height: calc(100% - 8px);
+      background: rgba(35,35,50,0.5);
       border-radius: 4px;
       z-index: -1;
     }
@@ -655,62 +647,67 @@
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 100%; height: 36px;
-      background: rgba(35,35,50,0.7);
+      width: calc(100% - 8px); height: 34px;
+      background: rgba(35,35,50,0.5);
       border-radius: 4px;
       z-index: -1;
     }
 
-    /* ── Diamond buttons (right side) ── */
-    .dpad-diamond {
-      position: relative;
-      width: 100px;
-      height: 100px;
+    /* ── Command buttons (right side, offset one d-pad higher) ── */
+    .dpad-cmds {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
       flex-shrink: 0;
+      margin-bottom: 100px; /* offset one d-pad height upward */
     }
-    .dpad-dia-btn {
-      position: absolute;
-      width: 32px; height: 32px;
+
+    .dpad-cmd-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 44px);
+      grid-template-rows: repeat(2, 36px);
+      gap: 4px;
+    }
+
+    .dpad-cmd-btn {
       border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 50%;
-      background: rgba(45,45,60,0.9);
-      color: rgba(220,220,230,0.75);
+      border-radius: 10px;
+      background: rgba(18,18,28,0.88);
+      color: rgba(220,220,230,0.7);
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 600;
       letter-spacing: 0.3px;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       user-select: none;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
       transition: transform 0.08s ease, background 0.08s ease;
     }
-    .dpad-dia-btn.pressed {
-      transform: scale(0.88);
-      background: rgba(70,70,95,0.95);
+    .dpad-cmd-btn.pressed {
+      transform: scale(0.9);
+      background: rgba(60,60,85,0.95);
     }
-    .dpad-dia-btn.active {
+    .dpad-cmd-btn.active {
       background: rgba(155,255,0,0.25);
       border-color: var(--accent);
       color: var(--accent);
     }
-    /* Diamond layout */
-    .dpad-dia-top    { top: 2px;  left: 50%; transform: translateX(-50%); }
-    .dpad-dia-bottom { bottom: 2px; left: 50%; transform: translateX(-50%); }
-    .dpad-dia-left   { left: 2px; top: 50%; transform: translateY(-50%); }
-    .dpad-dia-right  { right: 2px; top: 50%; transform: translateY(-50%); }
-    .dpad-dia-center { top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 28px; height: 28px;
-      background: rgba(155,255,0,0.12);
-      border-color: rgba(155,255,0,0.25);
+
+    /* Enter — 2x wide */
+    .dpad-enter {
+      width: 92px;
+      height: 36px;
+      font-size: 18px;
+      background: rgba(155,255,0,0.08);
+      border-color: rgba(155,255,0,0.2);
       color: var(--accent);
-      font-size: 14px;
     }
-    .dpad-dia-top.pressed    { transform: translateX(-50%) scale(0.88); }
-    .dpad-dia-bottom.pressed { transform: translateX(-50%) scale(0.88); }
-    .dpad-dia-left.pressed   { transform: translateY(-50%) scale(0.88); }
-    .dpad-dia-right.pressed  { transform: translateY(-50%) scale(0.88); }
-    .dpad-dia-center.pressed { transform: translate(-50%, -50%) scale(0.88); }
+    .dpad-enter.pressed {
+      background: rgba(155,255,0,0.2);
+    }
 
     /* ── Keyboard rail — compact horizontal strip ── */
     .dpad-rail {
@@ -735,8 +732,7 @@
     }
     #dpad.keyboard-open {
       bottom: calc(var(--kb-height) + 8px);
-      left: 50%;
-      transform: translateX(-50%);
+      right: 8px;
     }
 
     .dpad-rail-btn {

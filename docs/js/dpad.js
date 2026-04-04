@@ -1,9 +1,9 @@
 /**
  * Mobile D-Pad — pill-shaped game-controller overlay for terminal input.
  *
- * Modeled after a compact Bluetooth gamepad:
- *   Left side:  D-pad cross (Up/Down/Left/Right)
- *   Right side: Diamond buttons — Esc(Y) Home(X) Ctrl(B) Tab(A) + Enter(center)
+ * Layout: D-pad cross on the right, command buttons (Esc, Home, Ctrl, Tab)
+ * offset one d-pad height higher on the far right. Enter is 2x wide below
+ * the command buttons.
  *
  * 50% opacity at rest, 100% on touch.
  * Only the Ctrl button triggers the on-screen keyboard — it stays visually
@@ -43,7 +43,7 @@ export class DPad {
     const pill = document.createElement('div');
     pill.className = 'dpad-pill';
 
-    // Left half: D-pad cross
+    // Left side: D-pad cross
     const cross = document.createElement('div');
     cross.className = 'dpad-cross';
     for (const dir of ['up', 'down', 'left', 'right']) {
@@ -53,31 +53,35 @@ export class DPad {
       btn.innerHTML = `<span>${KEYS[dir].label}</span>`;
       cross.appendChild(btn);
     }
-    // Center nub
     const nub = document.createElement('div');
     nub.className = 'dpad-cross-nub';
     cross.appendChild(nub);
     pill.appendChild(cross);
 
-    // Right half: Diamond buttons
-    const diamond = document.createElement('div');
-    diamond.className = 'dpad-diamond';
-    // Y=Esc(top), X=Home(left), B=Ctrl(right), A=Tab(bottom), center=Enter
-    const slots = [
-      { key: 'esc',   cls: 'dpad-dia-top' },
-      { key: 'home',  cls: 'dpad-dia-left' },
-      { key: 'enter', cls: 'dpad-dia-center' },
-      { key: 'ctrl',  cls: 'dpad-dia-right' },
-      { key: 'tab',   cls: 'dpad-dia-bottom' },
-    ];
-    for (const s of slots) {
+    // Right side: Command buttons — offset upward by one d-pad height
+    const cmds = document.createElement('div');
+    cmds.className = 'dpad-cmds';
+
+    // 2x2 grid: Esc Home / Ctrl Tab
+    const grid = document.createElement('div');
+    grid.className = 'dpad-cmd-grid';
+    for (const k of ['esc', 'home', 'ctrl', 'tab']) {
       const btn = document.createElement('button');
-      btn.dataset.key = s.key;
-      btn.className = `dpad-dia-btn ${s.cls}`;
-      btn.textContent = KEYS[s.key].label;
-      diamond.appendChild(btn);
+      btn.dataset.key = k;
+      btn.className = 'dpad-cmd-btn';
+      btn.textContent = KEYS[k].label;
+      grid.appendChild(btn);
     }
-    pill.appendChild(diamond);
+    cmds.appendChild(grid);
+
+    // Enter — 2x wide below the grid
+    const enterBtn = document.createElement('button');
+    enterBtn.dataset.key = 'enter';
+    enterBtn.className = 'dpad-cmd-btn dpad-enter';
+    enterBtn.textContent = KEYS.enter.label;
+    cmds.appendChild(enterBtn);
+
+    pill.appendChild(cmds);
     this.el.appendChild(pill);
 
     // ── Keyboard rail (compact strip) ──
@@ -147,7 +151,6 @@ export class DPad {
     }, { passive: true });
     const endTouch = () => {
       this._touching = false;
-      // Delay so the press feedback is visible
       setTimeout(() => {
         if (!this._touching) this.el.classList.remove('touching');
       }, 300);
@@ -160,16 +163,15 @@ export class DPad {
     const def = KEYS[key];
     if (!def) return;
 
-    // Haptic
-    if (navigator.vibrate) navigator.vibrate(8);
+    // Haptic feedback — 25ms pulse, strong enough to feel on Android
+    try { navigator.vibrate(25); } catch {}
 
     // Press animation
     btn.classList.add('pressed');
     setTimeout(() => btn.classList.remove('pressed'), 120);
 
     if (def.modifier) {
-      // Ctrl toggle — this is the ONLY key that opens the on-screen keyboard.
-      // It stays visually active (discolored) and triggers the rail morph.
+      // Ctrl toggle — the ONLY key that opens the on-screen keyboard.
       this.ctrlActive = !this.ctrlActive;
       this._updateCtrl();
       if (this.ctrlActive) {
@@ -183,7 +185,6 @@ export class DPad {
         this.ctrlActive = false;
         this._updateCtrl();
       }
-      // Non-ctrl keys do NOT open the keyboard
     }
   }
 
@@ -209,7 +210,9 @@ export class DPad {
       debounce = setTimeout(() => {
         const heightDiff = window.innerHeight - vv.height;
         const wasOpen = this.keyboardOpen;
-        this.keyboardOpen = heightDiff > 100;
+        // Only consider keyboard open if Ctrl was activated AND viewport
+        // shrank significantly (>200px rules out nav bar / URL bar changes)
+        this.keyboardOpen = this.ctrlActive && heightDiff > 200;
 
         if (this.keyboardOpen !== wasOpen) {
           this.el.classList.toggle('keyboard-open', this.keyboardOpen);
@@ -217,7 +220,7 @@ export class DPad {
             this.el.style.setProperty('--kb-height', `${heightDiff}px`);
           }
         }
-      }, 60);
+      }, 80);
     });
   }
 
