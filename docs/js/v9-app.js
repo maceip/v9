@@ -322,13 +322,17 @@ window.addEventListener('message', (e) => {
   }
 });
 
-// ── Resize handler ──
-window.addEventListener('resize', () => {
+// ── Resize / orientation change handler ──
+function handleViewportChange() {
   if (fluid && fluid.active) fluid.resize();
-  // Refit terminal on orientation change / resize
   if (state === 'RUNNING') {
     try { cliFrame.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
   }
+}
+window.addEventListener('resize', handleViewportChange);
+window.addEventListener('orientationchange', () => {
+  // orientationchange fires before resize on some Android devices
+  setTimeout(handleViewportChange, 200);
 });
 
 // ── Tactical HUD ──

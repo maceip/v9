@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>v9</title>
   <meta name="description" content="v9 — Node.js in the browser (EdgeJS + napi-bridge). Landing page loads Claude Code in a sandboxed terminal iframe after CI builds wasm and bundle.">
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
@@ -30,7 +30,7 @@
 
   <!-- Critical inline CSS — page renders instantly -->
   <style>
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     /* Kill all scrollbars */
     ::-webkit-scrollbar { display: none; }
@@ -266,6 +266,7 @@
       cursor: pointer;
       transform-origin: center center;
       transition: none; /* JS handles animation */
+      touch-action: manipulation;
     }
     #terminal-wrap.zoomed { cursor: default; }
 
@@ -489,6 +490,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       pointer-events: auto;
       cursor: pointer;
+      touch-action: manipulation;
       flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
       font-family: 'Goldman', sans-serif;
@@ -519,8 +521,8 @@
       .frame-joint { width: 4px; height: 4px; }
       .bg-icon { width: 20px; height: 20px; }
       #dismissed-tray { height: 56px; }
-      .dismissed-tile { width: 48px; height: 36px; font-size: 8px; }
-      #boot-text { font-size: 11px; }
+      .dismissed-tile { width: 48px; height: 36px; font-size: 10px; }
+      #boot-text { font-size: 12px; }
     }
 
     /* ── Responsive: Pixel 9 Pro Fold expanded / tablet (381px–899px) ── */
@@ -548,14 +550,13 @@
     #dpad {
       display: none;
       position: fixed;
-      bottom: 16px;
-      right: 8px;
+      bottom: max(16px, env(safe-area-inset-bottom, 0px));
+      right: max(8px, env(safe-area-inset-right, 0px));
       z-index: 200;
       opacity: 0;
       transform: scale(0.85) translateY(20px);
       transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
       touch-action: none;
-      -webkit-tap-highlight-color: transparent;
       --kb-height: 0px;
     }
     #dpad.visible {
@@ -566,7 +567,6 @@
       opacity: 1;
     }
 
-    /* Pill body — no background, just positions the two halves */
     .dpad-pill {
       display: flex;
       align-items: flex-end;
@@ -581,30 +581,31 @@
       bottom: 0; right: 0;
     }
 
-    /* ── D-pad cross (left side, bottom-aligned) ── */
+    /* ── D-pad cross ── */
     .dpad-cross {
       position: relative;
-      width: 96px;
-      height: 96px;
+      width: 110px;
+      height: 110px;
       flex-shrink: 0;
       background: rgba(18,18,28,0.85);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 20px;
+      border-radius: 22px;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       box-shadow: 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04);
     }
     .dpad-cross-btn {
       position: absolute;
-      width: 32px; height: 32px;
+      width: 38px; height: 38px;
       border: none;
       border-radius: 4px;
       background: rgba(60,60,80,0.9);
       color: rgba(220,220,230,0.85);
-      font-size: 12px;
+      font-size: 14px;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       user-select: none;
+      touch-action: manipulation;
       box-shadow: 0 2px 4px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
       transition: transform 0.08s ease, background 0.08s ease;
     }
@@ -625,7 +626,7 @@
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 16px; height: 16px;
+      width: 18px; height: 18px;
       border-radius: 50%;
       background: rgba(40,40,55,0.95);
       border: 1px solid rgba(255,255,255,0.06);
@@ -637,7 +638,7 @@
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: 34px; height: calc(100% - 8px);
+      width: 40px; height: calc(100% - 8px);
       background: rgba(35,35,50,0.5);
       border-radius: 4px;
       z-index: -1;
@@ -647,7 +648,7 @@
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: calc(100% - 8px); height: 34px;
+      width: calc(100% - 8px); height: 40px;
       background: rgba(35,35,50,0.5);
       border-radius: 4px;
       z-index: -1;
@@ -659,13 +660,13 @@
       flex-direction: column;
       gap: 4px;
       flex-shrink: 0;
-      margin-bottom: 100px; /* offset one d-pad height upward */
+      margin-bottom: 114px; /* offset one d-pad height upward */
     }
 
     .dpad-cmd-grid {
       display: grid;
-      grid-template-columns: repeat(2, 44px);
-      grid-template-rows: repeat(2, 36px);
+      grid-template-columns: repeat(2, 48px);
+      grid-template-rows: repeat(2, 44px);
       gap: 4px;
     }
 
@@ -675,12 +676,13 @@
       background: rgba(18,18,28,0.88);
       color: rgba(220,220,230,0.7);
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: 0.3px;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       user-select: none;
+      touch-action: manipulation;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       box-shadow: 0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
@@ -696,10 +698,10 @@
       color: var(--accent);
     }
 
-    /* Enter — 2x wide */
+    /* Enter — 2x wide, 44px tall */
     .dpad-enter {
-      width: 92px;
-      height: 36px;
+      width: 100px;
+      height: 44px;
       font-size: 18px;
       background: rgba(155,255,0,0.08);
       border-color: rgba(155,255,0,0.2);
@@ -709,12 +711,12 @@
       background: rgba(155,255,0,0.2);
     }
 
-    /* ── Keyboard rail — compact horizontal strip ── */
+    /* ── Keyboard rail ── */
     .dpad-rail {
       display: none;
       flex-direction: row;
       gap: 4px;
-      padding: 4px 8px;
+      padding: 6px 8px;
       background: rgba(15,15,25,0.92);
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 14px;
@@ -731,13 +733,13 @@
       transform: translateY(0);
     }
     #dpad.keyboard-open {
-      bottom: calc(var(--kb-height) + 8px);
-      right: 8px;
+      bottom: calc(var(--kb-height) + max(8px, env(safe-area-inset-bottom, 0px)));
+      right: max(8px, env(safe-area-inset-right, 0px));
     }
 
     .dpad-rail-btn {
-      height: 30px;
-      padding: 0 8px;
+      height: 36px;
+      padding: 0 10px;
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 8px;
       background: rgba(25,25,40,0.9);
@@ -748,8 +750,9 @@
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       user-select: none;
+      touch-action: manipulation;
       transition: transform 0.08s ease, background 0.08s ease;
-      min-width: 26px;
+      min-width: 36px;
     }
     .dpad-rail-btn.pressed {
       transform: scale(0.9);
@@ -761,7 +764,6 @@
       color: var(--accent);
     }
 
-    /* Hidden keyboard trigger input */
     .dpad-keyboard-input {
       position: absolute;
       left: -9999px; top: -9999px;
@@ -769,7 +771,6 @@
       width: 1px; height: 1px;
     }
 
-    /* Only show on mobile/tablet */
     @media (min-width: 900px) {
       #dpad { display: none !important; }
     }
