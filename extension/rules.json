@@ -9,8 +9,8 @@
       }
     },
     "condition": {
-      "regexFilter": "http://localhost:\\d+/callback\\?(.*)",
-      "resourceTypes": ["main_frame"]
+      "regexFilter": "^http://localhost:\\d+/callback\\?(.*)",
+      "resourceTypes": ["main_frame", "sub_frame"]
     }
   }
 ]
