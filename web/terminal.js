@@ -448,6 +448,114 @@ async function boot() {
     syncProcessTerminalSize(processBridge, cols, rows);
   });
 
+  // ── Mobile copy/paste convenience buttons ──
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  if (isMobile) {
+    let pasteShown = false;
+
+    // Paste button — top center, hidden until first URL detected
+    const pasteBtn = document.createElement('button');
+    pasteBtn.textContent = 'Paste';
+    pasteBtn.className = 'v9-paste-btn';
+    pasteBtn.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:100;display:none;padding:4px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:rgba(20,20,35,0.9);color:rgba(220,220,230,0.8);font:500 11px "IBM Plex Mono",monospace;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;opacity:0.6;transition:opacity 0.2s ease';
+    pasteBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); pasteBtn.style.opacity = '1'; }, { passive: false });
+    pasteBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      pasteBtn.style.opacity = '0.6';
+      navigator.clipboard.readText().then(text => {
+        if (!text) return;
+        if (runtime && typeof runtime.pushStdin === 'function') runtime.pushStdin(text);
+        else if (typeof globalThis._stdinPush === 'function') globalThis._stdinPush(text);
+        else term.paste(text);
+      }).catch(() => {});
+    }, { passive: false });
+    container.appendChild(pasteBtn);
+
+    function showPaste() {
+      if (pasteShown) return;
+      pasteShown = true;
+      pasteBtn.style.display = 'block';
+    }
+
+    // Copy button — floats near detected URLs
+    let copyOverlay = null;
+    let copyTimeout = null;
+
+    function showCopyButton(text, row) {
+      if (copyOverlay) copyOverlay.remove();
+      clearTimeout(copyTimeout);
+
+      copyOverlay = document.createElement('button');
+      copyOverlay.textContent = 'Copy';
+      copyOverlay.style.cssText = 'position:absolute;right:8px;z-index:100;padding:3px 10px;border:1px solid rgba(155,255,0,0.3);border-radius:6px;background:rgba(20,20,35,0.92);color:var(--accent,#9bff00);font:600 10px "IBM Plex Mono",monospace;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0.85;transition:opacity 0.15s ease,transform 0.15s ease;transform:scale(0.9);pointer-events:auto';
+
+      // Position near the URL row
+      const cellHeight = term._core?._renderService?.dimensions?.css?.cell?.height || 18;
+      const topPx = Math.max(0, (row - (term.buffer.active.viewportY || 0)) * cellHeight);
+      copyOverlay.style.top = topPx + 'px';
+
+      requestAnimationFrame(() => { copyOverlay.style.transform = 'scale(1)'; });
+
+      copyOverlay.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+      copyOverlay.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(text).then(() => {
+          copyOverlay.textContent = 'Copied!';
+          setTimeout(() => { if (copyOverlay) { copyOverlay.style.opacity = '0'; setTimeout(() => copyOverlay?.remove(), 200); } }, 800);
+        }).catch(() => {});
+      }, { passive: false });
+
+      container.appendChild(copyOverlay);
+      showPaste();
+
+      // Auto-hide after 8s
+      copyTimeout = setTimeout(() => {
+        if (copyOverlay) {
+          copyOverlay.style.opacity = '0';
+          setTimeout(() => copyOverlay?.remove(), 200);
+          copyOverlay = null;
+        }
+      }, 8000);
+    }
+
+    // URL detection — scan terminal buffer after writes
+    const URL_RE = /https?:\/\/[^\s\x1b\]"'`<>){}\u0000-\u001f]{6,}/g;
+    let lastDetectedUrl = '';
+    let scanScheduled = false;
+
+    const origWrite = globalThis._xtermWrite;
+    globalThis._xtermWrite = (data) => {
+      origWrite(data);
+      if (!scanScheduled) {
+        scanScheduled = true;
+        setTimeout(() => {
+          scanScheduled = false;
+          scanForUrls();
+        }, 250);
+      }
+    };
+
+    function scanForUrls() {
+      const buf = term.buffer.active;
+      // Scan last 8 visible rows for URLs
+      const startRow = Math.max(0, buf.length - 8);
+      for (let r = buf.length - 1; r >= startRow; r--) {
+        const line = buf.getLine(r);
+        if (!line) continue;
+        const text = line.translateToString(true);
+        const matches = [...text.matchAll(URL_RE)];
+        if (matches.length > 0) {
+          const url = matches[matches.length - 1][0];
+          if (url !== lastDetectedUrl) {
+            lastDetectedUrl = url;
+            showCopyButton(url, r);
+          }
+          return;
+        }
+      }
+    }
+  }
+
   globalThis.__edgeTerm = term;
   globalThis.__edgeRuntime = runtime;
 
