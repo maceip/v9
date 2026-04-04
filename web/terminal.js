@@ -457,7 +457,7 @@ async function boot() {
     const pasteBtn = document.createElement('button');
     pasteBtn.textContent = 'Paste';
     pasteBtn.className = 'v9-paste-btn';
-    pasteBtn.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:100;display:none;padding:4px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:rgba(20,20,35,0.9);color:rgba(220,220,230,0.8);font:500 11px "IBM Plex Mono",monospace;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;opacity:0.6;transition:opacity 0.2s ease';
+    pasteBtn.style.cssText = 'position:fixed;top:max(6px, env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:250;display:none;padding:6px 16px;min-height:36px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:rgba(20,20,35,0.9);color:rgba(220,220,230,0.8);font:500 12px "IBM Plex Mono",monospace;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;touch-action:manipulation;opacity:0.6;transition:opacity 0.2s ease';
     pasteBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); pasteBtn.style.opacity = '1'; }, { passive: false });
     pasteBtn.addEventListener('touchend', (e) => {
       e.preventDefault();

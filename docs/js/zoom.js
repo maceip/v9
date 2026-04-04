@@ -12,6 +12,9 @@ function getIdleParams() {
   return { scale: 0.42, y: 8 };
 }
 
+// Respect prefers-reduced-motion
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
 // Easing functions
 function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 function easeInOutCubic(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
@@ -22,8 +25,8 @@ export class ZoomController {
     this.onComplete = opts.onComplete || (() => {});
     this.onProgress = opts.onProgress || (() => {});
 
-    this.zoomInDuration = 260;  // ms — fast pop open
-    this.zoomOutDuration = 300; // ms — smooth close
+    this.zoomInDuration = prefersReducedMotion.matches ? 1 : 260;
+    this.zoomOutDuration = prefersReducedMotion.matches ? 1 : 300;
 
     this._shrink = 0;
     const idle = getIdleParams();
