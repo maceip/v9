@@ -190,6 +190,13 @@ async function loadCLI() {
   cliLoaded = true;
   cliFrame.classList.add('visible');
   bootText.style.display = 'none';
+
+  // Tell the terminal to refit now that it's visible at full size
+  try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  // And again after a short delay to catch any layout settling
+  setTimeout(() => {
+    try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  }, 200);
 }
 
 function siteRootPrefix() {

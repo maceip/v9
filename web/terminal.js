@@ -441,6 +441,23 @@ async function boot() {
     }
   });
 
+  // Refit when the iframe becomes visible (parent zoom completes)
+  // and periodically check if container size changed
+  if (fitAddon) {
+    // IntersectionObserver catches visibility changes
+    new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) fitAddon.fit();
+    }, { threshold: 0.1 }).observe(container);
+
+    // ResizeObserver catches container size changes
+    new ResizeObserver(() => fitAddon.fit()).observe(container);
+
+    // Also listen for parent telling us to refit
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'v9:refit') fitAddon.fit();
+    });
+  }
+
   term.onResize(({ cols, rows }) => {
     if (runtime && typeof runtime.setTerminalSize === 'function') {
       runtime.setTerminalSize(cols, rows);
