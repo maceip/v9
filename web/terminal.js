@@ -327,8 +327,22 @@ async function boot() {
 
   const container = document.getElementById('terminal');
   term.open(container);
+
+  // Debounced fit to avoid thrashing
+  let fitTimer = null;
+  function debouncedFit() {
+    if (fitTimer) return;
+    fitTimer = setTimeout(() => {
+      fitTimer = null;
+      if (fitAddon) fitAddon.fit();
+    }, 50);
+  }
+
   if (fitAddon) {
     fitAddon.fit();
+    // Refit after layout settles
+    setTimeout(() => fitAddon.fit(), 100);
+    setTimeout(() => fitAddon.fit(), 500);
   }
 
   let pendingTerminalWrite = '';
@@ -435,26 +449,17 @@ async function boot() {
     }
   });
 
-  window.addEventListener('resize', () => {
-    if (fitAddon) {
-      fitAddon.fit();
-    }
-  });
+  window.addEventListener('resize', debouncedFit);
 
-  // Refit when the iframe becomes visible (parent zoom completes)
-  // and periodically check if container size changed
   if (fitAddon) {
-    // IntersectionObserver catches visibility changes
-    new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) fitAddon.fit();
-    }, { threshold: 0.1 }).observe(container);
+    new ResizeObserver(debouncedFit).observe(container);
 
-    // ResizeObserver catches container size changes
-    new ResizeObserver(() => fitAddon.fit()).observe(container);
-
-    // Also listen for parent telling us to refit
     window.addEventListener('message', (e) => {
-      if (e.data?.type === 'v9:refit') fitAddon.fit();
+      if (e.data?.type === 'v9:refit') {
+        // Immediate + delayed to catch layout settling
+        fitAddon.fit();
+        setTimeout(() => fitAddon.fit(), 150);
+      }
     });
   }
 
