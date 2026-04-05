@@ -451,17 +451,44 @@ async function boot() {
   // ── Mobile copy/paste convenience buttons ──
   const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   if (isMobile) {
-    let pasteShown = false;
+    // ── Mobile action bar — Copy URL / Open / Paste ──
+    // Shows when a URL is detected in terminal output (especially OAuth URLs).
+    // URLs in xterm.js wrap across lines and can't be selected on mobile.
+    const actionBar = document.createElement('div');
+    actionBar.style.cssText = 'position:fixed;top:max(4px, env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:250;display:none;flex-direction:row;gap:6px;padding:4px 6px;background:rgba(12,12,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:10px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 4px 16px rgba(0,0,0,0.5)';
 
-    // Paste button — top center, hidden until first URL detected
-    const pasteBtn = document.createElement('button');
-    pasteBtn.textContent = 'Paste';
-    pasteBtn.className = 'v9-paste-btn';
-    pasteBtn.style.cssText = 'position:fixed;top:max(6px, env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:250;display:none;padding:6px 16px;min-height:36px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;background:rgba(20,20,35,0.9);color:rgba(220,220,230,0.8);font:500 12px "IBM Plex Mono",monospace;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;touch-action:manipulation;opacity:0.6;transition:opacity 0.2s ease';
-    pasteBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); pasteBtn.style.opacity = '1'; }, { passive: false });
+    function makeBarBtn(label, accent) {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      const color = accent ? 'color:#9bff00;border-color:rgba(155,255,0,0.3)' : 'color:rgba(220,220,230,0.8);border-color:rgba(255,255,255,0.12)';
+      btn.style.cssText = `padding:6px 14px;min-height:36px;border:1px solid;border-radius:8px;background:rgba(25,25,40,0.9);font:600 12px "IBM Plex Mono",monospace;cursor:pointer;touch-action:manipulation;${color};transition:transform 0.08s ease,opacity 0.15s ease`;
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); btn.style.transform = 'scale(0.93)'; }, { passive: false });
+      btn.addEventListener('touchend', (e) => { e.preventDefault(); btn.style.transform = ''; }, { passive: false });
+      return btn;
+    }
+
+    const copyUrlBtn = makeBarBtn('Copy URL', true);
+    const openUrlBtn = makeBarBtn('Open', true);
+    const pasteBtn = makeBarBtn('Paste', false);
+
+    let detectedUrl = '';
+
+    copyUrlBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (!detectedUrl) return;
+      navigator.clipboard.writeText(detectedUrl).then(() => {
+        copyUrlBtn.textContent = 'Copied!';
+        setTimeout(() => { copyUrlBtn.textContent = 'Copy URL'; }, 1200);
+      }).catch(() => {});
+    }, { passive: false });
+
+    openUrlBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (detectedUrl) window.open(detectedUrl, '_blank', 'noopener');
+    }, { passive: false });
+
     pasteBtn.addEventListener('touchend', (e) => {
       e.preventDefault();
-      pasteBtn.style.opacity = '0.6';
       navigator.clipboard.readText().then(text => {
         if (!text) return;
         if (runtime && typeof runtime.pushStdin === 'function') runtime.pushStdin(text);
@@ -469,57 +496,20 @@ async function boot() {
         else term.paste(text);
       }).catch(() => {});
     }, { passive: false });
-    container.appendChild(pasteBtn);
 
-    function showPaste() {
-      if (pasteShown) return;
-      pasteShown = true;
-      pasteBtn.style.display = 'block';
+    actionBar.appendChild(copyUrlBtn);
+    actionBar.appendChild(openUrlBtn);
+    actionBar.appendChild(pasteBtn);
+    container.appendChild(actionBar);
+
+    function showActionBar(url) {
+      detectedUrl = url;
+      actionBar.style.display = 'flex';
     }
 
-    // Copy button — floats near detected URLs
-    let copyOverlay = null;
-    let copyTimeout = null;
-
-    function showCopyButton(text, row) {
-      if (copyOverlay) copyOverlay.remove();
-      clearTimeout(copyTimeout);
-
-      copyOverlay = document.createElement('button');
-      copyOverlay.textContent = 'Copy';
-      copyOverlay.style.cssText = 'position:absolute;right:8px;z-index:100;padding:3px 10px;border:1px solid rgba(155,255,0,0.3);border-radius:6px;background:rgba(20,20,35,0.92);color:var(--accent,#9bff00);font:600 10px "IBM Plex Mono",monospace;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0.85;transition:opacity 0.15s ease,transform 0.15s ease;transform:scale(0.9);pointer-events:auto';
-
-      // Position near the URL row
-      const cellHeight = term._core?._renderService?.dimensions?.css?.cell?.height || 18;
-      const topPx = Math.max(0, (row - (term.buffer.active.viewportY || 0)) * cellHeight);
-      copyOverlay.style.top = topPx + 'px';
-
-      requestAnimationFrame(() => { copyOverlay.style.transform = 'scale(1)'; });
-
-      copyOverlay.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
-      copyOverlay.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        navigator.clipboard.writeText(text).then(() => {
-          copyOverlay.textContent = 'Copied!';
-          setTimeout(() => { if (copyOverlay) { copyOverlay.style.opacity = '0'; setTimeout(() => copyOverlay?.remove(), 200); } }, 800);
-        }).catch(() => {});
-      }, { passive: false });
-
-      container.appendChild(copyOverlay);
-      showPaste();
-
-      // Auto-hide after 8s
-      copyTimeout = setTimeout(() => {
-        if (copyOverlay) {
-          copyOverlay.style.opacity = '0';
-          setTimeout(() => copyOverlay?.remove(), 200);
-          copyOverlay = null;
-        }
-      }, 8000);
-    }
-
-    // URL detection — scan terminal buffer after writes
-    const URL_RE = /https?:\/\/[^\s\x1b\]"'`<>){}\u0000-\u001f]{6,}/g;
+    // URL detection — concatenate wrapped lines to catch multi-line URLs
+    const URL_START = /https?:\/\//;
+    const URL_CHAR = /[^\s\x00-\x1f"'`<>(){}[\]]/;
     let lastDetectedUrl = '';
     let scanScheduled = false;
 
@@ -531,29 +521,47 @@ async function boot() {
         setTimeout(() => {
           scanScheduled = false;
           scanForUrls();
-        }, 250);
+        }, 300);
       }
     };
 
     function scanForUrls() {
       const buf = term.buffer.active;
-      // Scan last 8 visible rows for URLs
-      const startRow = Math.max(0, buf.length - 8);
-      for (let r = buf.length - 1; r >= startRow; r--) {
+      // Build a text block from the last 20 rows, joining wrapped lines
+      const scanRows = Math.min(20, buf.length);
+      const startRow = buf.length - scanRows;
+      let block = '';
+      for (let r = startRow; r < buf.length; r++) {
         const line = buf.getLine(r);
         if (!line) continue;
         const text = line.translateToString(true);
-        const matches = [...text.matchAll(URL_RE)];
-        if (matches.length > 0) {
-          const url = matches[matches.length - 1][0];
-          if (url !== lastDetectedUrl) {
-            lastDetectedUrl = url;
-            showCopyButton(url, r);
-          }
-          return;
+        // If line is wrapped (isWrapped), don't add separator
+        const isWrapped = line.isWrapped;
+        if (isWrapped) {
+          block += text.trimEnd();
+        } else {
+          block += '\n' + text;
+        }
+      }
+
+      // Find all URLs in the concatenated block
+      const urlRe = /https?:\/\/[^\s"'`<>(){}\[\]\x00-\x1f]{8,}/g;
+      const matches = [...block.matchAll(urlRe)];
+      if (matches.length > 0) {
+        const url = matches[matches.length - 1][0];
+        if (url !== lastDetectedUrl) {
+          lastDetectedUrl = url;
+          showActionBar(url);
         }
       }
     }
+
+    // Always show paste after terminal has content
+    setTimeout(() => {
+      if (buf => buf && buf.length > 2) {
+        actionBar.style.display = 'flex';
+      }
+    }, 2000);
   }
 
   globalThis.__edgeTerm = term;
