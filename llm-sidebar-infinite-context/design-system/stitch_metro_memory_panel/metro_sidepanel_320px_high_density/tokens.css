@@ -1,73 +1,75 @@
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- * Metro Side-Panel Design Tokens — 320px high-density
- * stitch_metro_memory_panel v1
+ * MEMORY_OS Design Tokens — 320px high-density metro sidepanel
+ * stitch_metro_memory_panel v2
+ * Derived from: Kinetic Memorandum / Memory_OS Architecture screens
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 :root {
   /* ── Dimensions ── */
   --mp-panel-width: 320px;
-  --mp-header-height: 40px;
-  --mp-section-gap: 1px;
-  --mp-cell-pad-x: 12px;
-  --mp-cell-pad-y: 8px;
-  --mp-row-height: 28px;
-  --mp-icon-size: 14px;
-  --mp-badge-height: 18px;
+  --mp-header-height: 36px;
+  --mp-card-height: 64px;
+  --mp-card-gap: 2px;
+  --mp-cell-pad-x: 10px;
+  --mp-cell-pad-y: 6px;
+  --mp-footer-height: 36px;
 
   /* ── Typography (high-density monospace) ── */
-  --mp-font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-  --mp-font-size-xs: 10px;
-  --mp-font-size-sm: 11px;
-  --mp-font-size-base: 12px;
-  --mp-font-size-lg: 13px;
-  --mp-font-weight-normal: 400;
-  --mp-font-weight-medium: 500;
-  --mp-font-weight-bold: 600;
-  --mp-line-height: 1.4;
+  --mp-font: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  --mp-fs-2xs: 8px;
+  --mp-fs-xs: 9px;
+  --mp-fs-sm: 10px;
+  --mp-fs-base: 11px;
+  --mp-fs-lg: 13px;
+  --mp-fs-xl: 18px;
+  --mp-fs-2xl: 22px;
+  --mp-fw-normal: 400;
+  --mp-fw-bold: 700;
+  --mp-fw-black: 900;
+  --mp-ls: 0.08em;
+  --mp-ls-wide: 0.12em;
 
-  /* ── Palette: Midnight (default) ── */
-  --mp-bg-root: #13141a;
-  --mp-bg-surface: #1a1b26;
-  --mp-bg-elevated: #1f2029;
-  --mp-bg-hover: #252633;
-  --mp-bg-active: #2d2e3f;
-  --mp-bg-badge: #2a2b3d;
+  /* ── Base palette (near-black) ── */
+  --mp-black: #0a0a0f;
+  --mp-bg: #0d0d14;
+  --mp-bg-raised: #12121c;
+  --mp-bg-surface: #181824;
+  --mp-bg-hover: #1e1e2e;
+  --mp-border: #1c1c2e;
+  --mp-border-light: #2a2a40;
 
-  --mp-border: #2e2f42;
-  --mp-border-subtle: #232436;
-  --mp-border-focus: #565880;
+  /* ── Text ── */
+  --mp-text: #e0e0ec;
+  --mp-text-dim: #6e6e8a;
+  --mp-text-muted: #44445a;
 
-  --mp-text-primary: #c0caf5;
-  --mp-text-secondary: #787c9e;
-  --mp-text-muted: #545672;
-  --mp-text-inverse: #13141a;
+  /* ── Module colors (from Memory_OS Architecture) ── */
+  --mp-mod-short-term: #3b82f6;     /* blue */
+  --mp-mod-long-term: #f59e0b;      /* amber/orange */
+  --mp-mod-retriever: #06b6d4;      /* cyan/teal */
+  --mp-mod-consolidator: #ef4444;   /* red */
+  --mp-mod-forgetting: #8b5cf6;     /* purple */
+  --mp-mod-assembler: #22c55e;      /* green */
+  --mp-mod-system: #6b7280;         /* gray */
 
-  /* ── Semantic colors ── */
-  --mp-accent: #7aa2f7;
-  --mp-accent-hover: #89b4fa;
-  --mp-success: #9ece6a;
-  --mp-warning: #e0af68;
-  --mp-error: #f7768e;
-  --mp-info: #7dcfff;
+  /* ── Semantic ── */
+  --mp-active: #22c55e;
+  --mp-optimal: #22c55e;
+  --mp-warning: #f59e0b;
+  --mp-error: #ef4444;
+  --mp-info: #06b6d4;
 
-  /* ── Status dot ── */
-  --mp-dot-active: #9ece6a;
-  --mp-dot-idle: #e0af68;
-  --mp-dot-error: #f7768e;
-  --mp-dot-offline: #545672;
+  /* ── Badge ── */
+  --mp-badge-active-bg: #16a34a;
+  --mp-badge-active-text: #fff;
+  --mp-badge-optimal-bg: #22c55e;
 
   /* ── Transitions ── */
-  --mp-transition-fast: 100ms ease;
-  --mp-transition-base: 150ms ease;
+  --mp-t-fast: 80ms ease;
+  --mp-t-base: 150ms ease;
 
   /* ── Scrollbar ── */
-  --mp-scrollbar-width: 4px;
-  --mp-scrollbar-track: transparent;
-  --mp-scrollbar-thumb: #2e2f42;
-  --mp-scrollbar-thumb-hover: #3d3f57;
-
-  /* ── Z-index ── */
-  --mp-z-panel: 100;
-  --mp-z-header: 110;
-  --mp-z-overlay: 120;
+  --mp-sb-width: 3px;
+  --mp-sb-thumb: #2a2a40;
+  --mp-sb-thumb-hover: #3a3a55;
 }

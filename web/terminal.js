@@ -101,28 +101,36 @@ async function boot() {
   // Wire global process.stdout to xterm BEFORE loading any CLI
   globalThis._xtermWrite = (data) => term.write(data);
 
-  // ── Initialize side-panel ──────────────────────────────────────────
+  // ── Initialize MEMORY_OS side-panel ─────────────────────────────────
   const sidepanelContainer = document.getElementById('sidepanel');
   const panel = SidePanel.create(sidepanelContainer);
   panel.setStatus('idle');
-  panel.setMaxTokens(200_000);
-  panel.setMemory([
-    { label: 'Model', value: 'claude-opus-4-6' },
-    { label: 'Runtime', value: 'EdgeJS/Wasm' },
-    { label: 'Proxy', value: 'cors.stare.network' },
-  ]);
+
+  // Initialize module cards with defaults
+  panel.setTokens(0, 200_000);
+  panel.updateModule('long-term', { value: '—', suffix: 'RECALL' });
+  panel.updateModule('retriever', { value: '—', suffix: 'LATENCY' });
+  panel.updateModule('consolidator', { value: '0', suffix: 'STACKS' });
+  panel.updateModule('forgetting', { value: '0', suffix: 'PURGED' });
+  panel.updateModule('assembler', { value: '0', suffix: 'ERROR_LOGS' });
+  panel.updateModule('system', { value: 'INIT', suffix: '' });
 
   // Expose panel globally for runtime hooks
   globalThis.__sidePanel = panel;
 
-  // Hook stdout to track activity in the side-panel
+  // Track tokens from user input
+  let _tokenCount = 0;
+  const _maxTokens = 200_000;
+
+  // Hook stdout to track activity in the access logs
   const _origXtermWrite = globalThis._xtermWrite;
   globalThis._xtermWrite = (data) => {
     _origXtermWrite(data);
-    // Track API calls as activity
     const str = typeof data === 'string' ? data : '';
-    if (str.includes('tool_use') || str.includes('tool_result')) {
-      panel.pushActivity({ type: 'tool', msg: str.slice(0, 120) });
+    if (str.includes('tool_use')) {
+      panel.pushLog({ type: 'tool', msg: str.slice(0, 100).replace(/[\r\n]/g, ' '), tag: 'TOOL' });
+    } else if (str.includes('tool_result')) {
+      panel.pushLog({ type: 'success', msg: 'TOOL_RESULT received', tag: 'RESULT' });
     }
   };
 
@@ -175,10 +183,11 @@ async function boot() {
       const sdkBundle = await import('../dist/anthropic-sdk-bundle.js');
       runtime._registerBuiltinOverride('@anthropic-ai/sdk', sdkBundle);
       runtime._registerBuiltinOverride('@anthropic-ai/sdk/index', sdkBundle);
-      panel.pushActivity({ type: 'success', msg: 'Anthropic SDK registered' });
+      panel.pushLog({ type: 'success', msg: 'Anthropic SDK registered', tag: 'SDK' });
+      panel.updateModule('assembler', { value: '0', suffix: 'ERROR_LOGS', badge: null });
     } catch (err) {
       term.writeln('\x1b[33m[sdk] Bundle not found. Run: sh scripts/bundle-sdk.sh\x1b[0m');
-      panel.pushActivity({ type: 'info', msg: 'SDK bundle not found' });
+      panel.pushLog({ type: 'info', msg: 'SDK bundle not found' });
     }
 
     // ── Load Claude Code bundle if provided ──────────────────────────
@@ -207,7 +216,8 @@ async function boot() {
     term.writeln('\x1b[90mTerminal UI loaded — runtime will connect when Wasm is built.\x1b[0m');
     runtime = null;
     panel.setStatus('error');
-    panel.pushActivity({ type: 'error', msg: 'Runtime not available: ' + _safe(err.message) });
+    panel.updateModule('system', { value: 'ERROR', suffix: '', active: false });
+    panel.pushLog({ type: 'error', msg: 'Runtime: ' + _safe(err.message), tag: 'FAIL' });
   }
 
   // ── Keyboard input → process.stdin ─────────────────────────────────
@@ -222,10 +232,13 @@ async function boot() {
     if (runtime && typeof runtime.pushStdin === 'function') {
       runtime.pushStdin(data);
     }
-    // Track user input for side-panel context (on Enter)
+    // Track user input tokens in MEMORY_OS panel (on Enter)
     if (data === '\r' || data === '\n') {
       if (_inputBuffer.trim()) {
-        panel.pushContext({ role: 'user', text: _inputBuffer.trim(), tokens: Math.ceil(_inputBuffer.trim().length / 4) });
+        const inputTokens = Math.ceil(_inputBuffer.trim().length / 4);
+        _tokenCount += inputTokens;
+        panel.setTokens(_tokenCount, _maxTokens);
+        panel.pushLog({ type: 'info', msg: _inputBuffer.trim().slice(0, 80), tag: 'INPUT' });
       }
       _inputBuffer = '';
     } else if (data === '\x7f') {
@@ -256,15 +269,17 @@ async function boot() {
     term.writeln('');
     term.writeln('\x1b[32m✓ Runtime initialized\x1b[0m');
     panel.setStatus('active');
-    panel.pushActivity({ type: 'success', msg: 'Runtime initialized' });
+    panel.updateModule('system', { value: 'ONLINE', suffix: '', badge: 'ACTIVE', active: true });
+    panel.pushLog({ type: 'success', msg: 'Runtime initialized', tag: 'BOOT' });
 
     if (apiKey) {
       term.writeln('\x1b[32m✓ API key configured\x1b[0m');
-      panel.pushActivity({ type: 'success', msg: 'API key configured' });
+      panel.pushLog({ type: 'secure', msg: 'AUTH_SUCCESS :: API_KEY', tag: 'SECURE' });
+      panel.updateModule('retriever', { value: 'READY', suffix: '' });
     } else {
       term.writeln('\x1b[33m⚠ No API key\x1b[0m');
       panel.setStatus('idle');
-      panel.pushActivity({ type: 'info', msg: 'No API key — set via sessionStorage' });
+      panel.pushLog({ type: 'info', msg: 'No API key — set via sessionStorage' });
     }
 
     if (config.proxyUrl) {
