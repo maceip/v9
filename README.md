@@ -112,13 +112,13 @@ npm run test:nodejs-in-tab-contract
 
 | Artifact | How produced | Role |
 |----------|------------|------|
-| `edgejs.wasm`, `edgejs.js`, `build/edge` | `npm run build` (wraps `make fetch configure build`) | Wasm runtime + loader stub; details in `docs/BUILD_TOOLCHAIN.md` |
-| `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS (`esbuild`) |
-| `in-tab-api-contract.js` | `npm run build:in-tab-api-contract` (**Bun**) | Contract suite as ESM bundle (optional) |
-| `app-bundle.js` | Your esbuild/webpack step | Example default for `?bundle=` |
-| `anthropic-sdk-bundle.js` | `scripts/bundle-sdk.sh` (optional) | Overrides `@anthropic-ai/sdk` in the tab |
+| `edgejs.wasm`, `edgejs.js` | **Vendored** (or `npm run build` / `npm run vendor:wasm`) | Wasm runtime — the product. Details in `docs/BUILD_TOOLCHAIN.md` |
+| `build/edge` | `npm run build` | CommonJS loader stub (core devs only) |
+| `<name>-bundle.js` | `v9 build` | Your app bundled for the browser |
+| `claude-code-cli.js` | `npm run bundle:claude-code` | Reference app (Anthropic CLI) |
+| `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS |
 
-`.gitignore` excludes `dist/`; reproduce artifacts with the commands above.
+`dist/edgejs.{js,wasm}` are tracked in git. Other `dist/` contents are gitignored.
 
 ## npm scripts (high level)
 
@@ -148,7 +148,7 @@ The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/
 
 The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<repo-prefix>dist/claude-code-cli.js&autorun=1`** so the iframe runtime matches localhost, with **`bundle=`** as an absolute path from the site root (see `siteRootPrefix()` in `docs/js/v9-app.js`).
 
-**Limitation:** `github.io` static hosting does **not** let you set **`Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`** headers. The **`node scripts/dev-server.mjs`** path sends those for **`SharedArrayBuffer`** / full Wasm threading semantics; on Pages, behavior may differ from local dev. For a public demo with the same headers as the dev server, front the site with a host that injects those headers (e.g. Cloudflare **`_headers`**) or keep the canonical wasm validation on CI + local dev.
+**Limitation:** `github.io` static hosting does **not** let you set **`Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`** headers. The local dev server (`v9 run` / `v9 build`) sends those for **`SharedArrayBuffer`** / full Wasm threading semantics; on Pages, behavior may differ. For a public demo with the same headers, front the site with a host that injects those headers (e.g. Cloudflare **`_headers`**) or keep the canonical wasm validation on CI + local dev.
 
 Generated trees **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`**, and **`docs/.nojekyll`** are produced by the steps above (under **`docs/`** only what’s needed for deploy); **`docs/web/`** etc. remain gitignored per **`.gitignore`**. Local dry-run after a wasm build:
 
