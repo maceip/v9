@@ -53,9 +53,13 @@ Pick **by where your failing I/O lives** (JS `net` vs Wasm POSIX), not by assumi
 
 1. **HTTP(S) as `fetch`** — `napi-bridge/http.js`, `https`, and the `undici` stub call **`browserHttpFetch()`** from `napi-bridge/transport-policy.mjs`. Optional **same-origin fetch proxy** via **`NODEJS_IN_TAB_FETCH_PROXY`** when CORS or related browser policy blocks direct calls.
 
-2. **Raw TCP / `tls.connect` / `net.connect`** — Not implemented inside core `napi-bridge` without an embedder hook (no bundled Wisp client: upstream **`@mercuryworkshop/wisp-js`** is **AGPL-3.0**). Optional paths:
-   - Set **`globalThis.__NODE_TAB_WISP_TCP_CONNECT`** to an embedder-provided function that returns a Node-like duplex stream.
-   - Or set **`NODEJS_WISP_WS_URL`** to document intent; **`net.connect` / `tls.connect`** then throw a **clear error** until a client is registered.
+2. **Raw TCP / `tls.connect` / `net.connect`** — Two paths:
+
+   **a) gvisor-tap-vsock (recommended):** Set **`NODEJS_GVISOR_WS_URL`** to point at a locally-running **gvisor-tap-vsock** binary with `-listen-ws`. The runtime connects via WebSocket and implements a lightweight userspace TCP/IP stack (Ethernet/ARP/IPv4/TCP) over the QEMU netdev protocol. Supports both **outbound `net.connect()`** and **inbound `server.listen()`** (with `-p host:guest` port forwarding on the binary). DNS resolves via **DNS-over-HTTPS** (Cloudflare). See `napi-bridge/gvisor-net.js`.
+
+   Example: `./c2w-net -listen-ws -p 3000:3000 :8765` then set `NODEJS_GVISOR_WS_URL=ws://localhost:8765`.
+
+   **b) Wisp (optional, AGPL):** Set **`globalThis.__NODE_TAB_WISP_TCP_CONNECT`** to an embedder-provided function that returns a Node-like duplex stream. Or set **`NODEJS_WISP_WS_URL`** to document intent; **`net.connect` / `tls.connect`** then throw a **clear error** until a client is registered. Upstream **`@mercuryworkshop/wisp-js`** is **AGPL-3.0** and not bundled.
 
 ## Anthropic browser traffic (`web/node-polyfills.js`)
 
@@ -87,6 +91,7 @@ For redirects that must be **world-reachable** (some IdPs require a public HTTPS
 |----------|--------|
 | **`NODEJS_IN_TAB_FETCH_PROXY`** | If set (URL), HTTP(S) from the tab uses a **POST JSON proxy** instead of calling `fetch()` on the target URL. Payload: `{ url, init: { method, headers, body64?, duplex? } }`. Response JSON: `{ ok: true, status, statusText, headers, body64? }`. Use for **same-origin** relays when **CORS** (or COOP / related constraints) blocks direct calls. |
 | **`NODEJS_HTTP_TRANSPORT`** | `fetch` \| `auto`. In a **real Node** host only: `fetch` forces `fetch()` for outbound HTTP (no CONNECT proxy). In-tab, transport is always fetch-policy–based. |
+| **`NODEJS_GVISOR_WS_URL`** | WebSocket URL of a locally-running **gvisor-tap-vsock** binary (e.g. `ws://localhost:8765`). When set, `net.connect`, `tls.connect`, `net.createServer`, and `http.createServer().listen()` route through a userspace TCP/IP stack over the virtual network. The binary must be started with `-listen-ws` and optional `-p host:guest` for port forwarding. |
 | **`NODEJS_WISP_WS_URL`** | Reserved: indicates a **Wisp** (or compatible) WebSocket URL is expected for raw sockets; without **`__NODE_TAB_WISP_TCP_CONNECT`**, connect calls fail fast with this doc referenced. |
 
 ## Detection rules
