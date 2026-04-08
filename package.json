@@ -65,6 +65,7 @@
     "lint": "node scripts/lint-repo.mjs",
     "size": "node scripts/artifact-sizes.mjs",
     "clean": "make clean",
+    "vendor:wasm": "node scripts/vendor-wasm.mjs",
     "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
     "pages:prepare": "node scripts/prepare-github-pages.mjs",
     "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"

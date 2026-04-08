@@ -17,7 +17,7 @@ npm link          # makes the “v9” command available globally
 v9 run ./my-app-bundle.js
 ```
 
-That's it. v9 starts a local server, pops a Chromium tab with an xterm.js terminal, and runs your bundle with full Node.js polyfills (fs, path, http, crypto, streams, etc.).
+That's it. v9 starts a local server, pops a Chromium tab with an xterm.js terminal, and runs your bundle inside the EdgeJS WebAssembly runtime with full Node.js APIs (fs, path, http, crypto, streams, child_process, etc.).
 
 ### “I have a Node.js project and want to see if v9 can host it”
 
@@ -26,7 +26,7 @@ cd my-project/     # has a package.json
 v9 build
 ```
 
-v9 reads your `package.json`, finds the entry point, bundles it with esbuild (tree-shaken, minified, Node built-ins swapped for browser polyfills), opens a browser, **and** writes the optimized artifact to `.v9-build/` in your project directory.
+v9 reads your `package.json`, finds the entry point, bundles it with esbuild (tree-shaken, minified, Node built-ins resolved at runtime by the Wasm engine), opens a browser, **and** writes the optimized artifact to `.v9-build/` in your project directory.
 
 Need to specify the entry explicitly?
 
@@ -38,24 +38,43 @@ v9 build --entry src/cli.js
 
 1. Finds your entry (`main` / `module` / `bin` from package.json, or `--entry`)
 2. Bundles with esbuild: `platform: neutral`, `format: esm`, `target: es2022`
-3. Marks all Node built-ins as **external** (provided at runtime by napi-bridge)
+3. Marks all Node built-ins as **external** (provided at runtime by the EdgeJS wasm engine + napi-bridge)
 4. Tree-shakes and minifies; strips problematic native-only packages
 5. Writes `.v9-build/<name>-bundle.js` (your portable artifact)
 6. Starts the dev server and opens the browser
 
-### Prerequisites
+---
 
-**Wasm runtime** — the CLI warns you if missing. Either build it or fetch pre-built:
+## Two dev stories
+
+### Embedding devs (using v9 to run apps)
+
+The wasm runtime (`dist/edgejs.js` + `dist/edgejs.wasm`) is **vendored** — it ships with the repo. `npm install && npm link` is all you need.
+
+If the wasm is missing (fresh clone before CI runs, etc.):
 
 ```bash
-# Option A: Build from source (requires Emscripten 3.1.64)
-npm run build
+npm run vendor:wasm    # downloads pre-built from latest CI (requires gh CLI)
+```
 
-# Option B: Fetch from S3 (if configured)
-npm run fetch:wasm-assets
+### Core devs (working on v9 itself)
+
+Build the wasm runtime from source. Requires [Emscripten](https://emscripten.org/) 3.1.64+.
+
+```bash
+source “$EMSDK/emsdk_env.sh”
+npm run build          # wraps: make fetch && make configure && make build
+```
+
+After building, commit the wasm for embedding devs:
+
+```bash
+git add dist/edgejs.js dist/edgejs.wasm
 ```
 
 See [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) for the full Emscripten setup. **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain.
+
+---
 
 ### Advanced: dev server only
 
@@ -66,7 +85,7 @@ node scripts/dev-server.mjs
 
 ### Claude Code CLI in the tab (reference app)
 
-A **reference-app** stress case on the same stack. Assumes EdgeJS artifacts exist.
+A **reference-app** stress case on the same stack.
 
 ```bash
 # 1. Set API key (DevTools console):

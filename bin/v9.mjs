@@ -282,6 +282,19 @@ async function cmdBuild() {
 // ── Dev server + browser launcher ───────────────────────────────────
 
 async function startServerAndOpen(bundlePath) {
+  // Wasm runtime is required — fail early with clear guidance
+  const edgeJsPath = join(V9_ROOT, 'dist', 'edgejs.js');
+  const edgeWasmPath = join(V9_ROOT, 'dist', 'edgejs.wasm');
+  if (!existsSync(edgeJsPath) || !existsSync(edgeWasmPath)) {
+    die(
+      'EdgeJS wasm runtime not found (dist/edgejs.js + dist/edgejs.wasm).\n\n' +
+      '  To get the pre-built wasm (requires gh CLI):\n' +
+      '    npm run vendor:wasm\n\n' +
+      '  To build from source (requires Emscripten):\n' +
+      '    npm run build'
+    );
+  }
+
   const url = `http://localhost:8080/web/index.html?bundle=${bundlePath}&autorun=1`;
 
   info('Starting dev server (file server :8080 + CORS proxy :8081)...');

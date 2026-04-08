@@ -1,8 +1,14 @@
-# Build output
+# Build output (intermediate)
 build/
-dist/
 edgejs-src/
 .node-wasix32/
+
+# dist/ is ignored EXCEPT the vendored wasm runtime.
+# Core devs: `npm run build` produces these.
+# Embedding devs: `npm run vendor:wasm` fetches pre-built artifacts.
+dist/*
+!dist/edgejs.js
+!dist/edgejs.wasm
 
 # Dependencies
 node_modules/
