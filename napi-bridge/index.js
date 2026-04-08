@@ -3262,11 +3262,11 @@ export async function initEdgeJS(options = {}) {
         EdgeJSModule = loaded;
       }
     } catch (_) {
-      // Module not found — will fall through to bridge-only mode.
+      // Module not found — will throw below.
     }
   }
 
-  // ── Shared imports (used by both bridge-only and Wasm paths) ───────
+  // ── Shared imports ─────────────────────────────────────────────────
   const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
   const { createFilesystem } = await import('./memfs.js');
   const { createFsModule, setActiveFsModule } = await import('./fs.js');
@@ -3756,10 +3756,22 @@ export async function initEdgeJS(options = {}) {
   const _runtimeShell = { _registerBuiltinOverride, _memfsRequire };
   _autoRegister(_runtimeShell, { fs: _sharedBridgeFs });
 
-  // ── Bridge-only mode ────────────────────────────────────────────────
-  // When no Wasm module is available, return a lightweight runtime backed
-  // entirely by our JS bridge modules (MEMFS fs, shell shims, etc.).
+  // ── Wasm runtime is required (unless explicitly opted out) ─────────
+  // The EdgeJS wasm module IS the product. Default: fail loudly so tests
+  // and dev workflows never silently degrade to stub-only polyfills.
+  // Pass { allowBridgeOnly: true } to initEdgeJS() to explicitly opt in
+  // to the JS-only fallback (not recommended; test coverage will be wrong).
   if (typeof EdgeJSModule !== 'function') {
+    if (!options.allowBridgeOnly) {
+      const tried = [options.moduleUrl || './edgejs.js'];
+      if (isNode) tried.push(options.modulePath || '../build/edge');
+      throw new Error(
+        `EdgeJS wasm runtime not found (tried: ${tried.join(', ')}).\n` +
+        `  Core devs:     npm run build   (requires Emscripten toolchain)\n` +
+        `  Embedding devs: npm run vendor:wasm   (downloads pre-built artifacts)`
+      );
+    }
+    // Explicit opt-in: return JS-only runtime without wasm.
     return {
       _registerBuiltinOverride,
       _getBuiltinOverride(name) { return _builtinOverrides.get(name); },
@@ -3771,7 +3783,6 @@ export async function initEdgeJS(options = {}) {
       },
 
       runFile(path) {
-        // M7: Log errors to stderr instead of swallowing silently
         try {
           _memfsRequire(String(path), _sharedProcessBridge.cwd());
           return 0;
@@ -3793,9 +3804,7 @@ export async function initEdgeJS(options = {}) {
         const cwd = opts.cwd ?? '/workspace';
         try {
           _sharedBridgeFs.mkdirSync(cwd, { recursive: true });
-        } catch {
-          /* exists */
-        }
+        } catch { /* exists */ }
         _sharedProcessBridge.chdir(cwd);
         const argv0 = opts.argv0 ?? 'node';
         const rest = Array.isArray(opts.argv) ? opts.argv.map(String) : [];
@@ -3809,11 +3818,7 @@ export async function initEdgeJS(options = {}) {
           _memfsRequire(String(entry), _sharedProcessBridge.cwd());
           return { status: 0, stdout: [], stderr: [] };
         } catch (err) {
-          try {
-            _sharedProcessBridge.stderr.write(`${err.stack || err.message}\n`);
-          } catch {
-            /* ignore */
-          }
+          try { _sharedProcessBridge.stderr.write(`${err.stack || err.message}\n`); } catch {}
           return { status: 1, stdout: [], stderr: [err.stack || err.message] };
         }
       },
@@ -3830,26 +3835,11 @@ export async function initEdgeJS(options = {}) {
       fs: _sharedBridgeFs,
       require: _memfsRequire,
       module: null,
-
-      // ── Sync/replication plane ─────────────────────────────────────
-      // Exposed separately from fs API for external sync engines.
-
-      /** Capture filesystem metadata snapshot (COW-friendly: hashes, not byte clones). */
       fsSnapshot() { return _sharedMemfs.snapshot(); },
-
-      /** Capture full snapshot with byte content (for initial sync/restore). */
       fsSnapshotFull() { return _sharedMemfs.snapshotFull(); },
-
-      /** Get journal entries since seq. Returns { gap, entries, gapFrom?, gapTo? }. */
       fsJournalSince(seq) { return _sharedMemfs.getJournalSince(seq); },
-
-      /** Subscribe to filesystem mutations. Returns unsubscribe function. */
       fsWatch(callback) { return _sharedMemfs.onMutation(callback); },
-
-      /** Begin a transactional batch of mutations. Returns txid. */
       fsBeginTx() { return _sharedMemfs.beginTx(); },
-
-      /** Commit the current transaction. */
       fsCommitTx() { return _sharedMemfs.commitTx(); },
 
       pushStdin(data) {

@@ -360,6 +360,27 @@ async function boot() {
     });
   };
 
+  // Redirect console.log/error/warn to xterm so app output is visible
+  // in the terminal, not just browser devtools.
+  const _nativeLog = console.log.bind(console);
+  const _nativeError = console.error.bind(console);
+  const _nativeWarn = console.warn.bind(console);
+  console.log = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(text);
+    _nativeLog(...args);
+  };
+  console.error = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(`\x1b[31m${text}\x1b[0m`);
+    _nativeError(...args);
+  };
+  console.warn = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(`\x1b[33m${text}\x1b[0m`);
+    _nativeWarn(...args);
+  };
+
   const config = getConfig();
   let runtime = null;
   let processBridge = null;
@@ -419,8 +440,8 @@ async function boot() {
       await controller.start();
     }
   } catch (err) {
-    term.writeln(`\x1b[33m[edgejs] Runtime not available: ${_safe(err.message)}\x1b[0m`);
-    term.writeln('\x1b[90mTerminal UI loaded - runtime will connect when Wasm is built.\x1b[0m');
+    _nativeError('[edgejs] Boot error:', err);
+    term.writeln(`\x1b[31m${_safe(err.message)}\x1b[0m`);
   }
 
   // Allow Ctrl+C to copy when there's a selection, Ctrl+V to paste
