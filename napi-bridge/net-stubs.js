@@ -11,6 +11,7 @@
 import { EventEmitter } from './eventemitter.js';
 import { getRawSocketTransportMode } from './transport-policy.mjs';
 import { isGvisorAvailable, GvisorSocket, GvisorServer, getGvisorStack } from './gvisor-net.js';
+import { createTlsConnection } from './wolfssl-tls.js';
 
 function notAvailable(mod, method) {
   return function () {
@@ -403,12 +404,19 @@ export const net = {
 export const tls = {
   connect(...args) {
     if (isGvisorAvailable()) {
-      // Raw TCP via gvisor — TLS termination happens at the remote or must be
-      // layered on top (e.g. via forge). For many use cases the gvisor binary's
-      // NAT already reaches TLS endpoints; browser fetch handles HTTPS natively.
-      const sock = new Socket();
-      sock.connect(...args);
-      return sock;
+      // Parse tls.connect(port, host, opts, cb) / tls.connect(opts, cb)
+      let opts = {}, cb;
+      if (typeof args[0] === 'object') {
+        opts = args[0]; cb = args[1];
+      } else {
+        opts.port = args[0];
+        if (typeof args[1] === 'string') { opts.host = args[1]; cb = args[2]; }
+        else { cb = args[1]; }
+        if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== cb) {
+          Object.assign(opts, args[args.length - 1]);
+        }
+      }
+      return createTlsConnection(opts, typeof cb === 'function' ? cb : undefined);
     }
     _rawSocketUnavailable('tls.connect');
   },
