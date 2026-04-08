@@ -91,6 +91,41 @@ async function main() {
       fail++;
     }
 
+    // ── Test 3: Outbound http.request with forbidden headers ──────
+    console.log('5. Waiting for outbound http.request header test...');
+    try {
+      await page.waitForFunction(
+        () => document.getElementById('log')?.textContent?.includes('[outbound-done]'),
+        { timeout: 15000 },
+      );
+      const outLog = await page.evaluate(() => document.getElementById('log')?.textContent || '');
+      const hostMatch = outLog.match(/\[outbound\] host=(.+)/);
+      const uaMatch = outLog.match(/\[outbound\] user-agent=(.+)/);
+      const cookieMatch = outLog.match(/\[outbound\] cookie=(.+)/);
+      const customMatch = outLog.match(/\[outbound\] x-custom=(.+)/);
+
+      const hostOk = hostMatch && hostMatch[1].trim() === 'custom-host.example.com';
+      const uaOk = uaMatch && uaMatch[1].trim() === 'v9-net-test/1.0';
+      const cookieOk = cookieMatch && cookieMatch[1].trim() === 'session=abc123';
+      const customOk = customMatch && customMatch[1].trim() === 'preserved';
+
+      console.log('   Host:', hostMatch?.[1]?.trim(), hostOk ? '✓' : '✗');
+      console.log('   User-Agent:', uaMatch?.[1]?.trim(), uaOk ? '✓' : '✗');
+      console.log('   Cookie:', cookieMatch?.[1]?.trim(), cookieOk ? '✓' : '✗');
+      console.log('   X-Custom:', customMatch?.[1]?.trim(), customOk ? '✓' : '✗');
+
+      if (hostOk && uaOk && cookieOk && customOk) {
+        console.log('   ✓ Forbidden headers PASS — all survived gvisor TCP path');
+        pass++;
+      } else {
+        console.log('   ✗ Forbidden headers FAIL — some headers stripped');
+        fail++;
+      }
+    } catch (err) {
+      console.log('   ✗ Forbidden headers FAIL —', err.message?.split('\n')[0]);
+      fail++;
+    }
+
     // ── Check browser received the requests ───────────────────────
     await page.waitForTimeout(1000);
     const finalLog = await page.evaluate(() => document.getElementById('log')?.textContent || '');
