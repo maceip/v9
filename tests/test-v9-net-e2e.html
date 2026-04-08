@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>v9-net E2E test</title>
+<script type="importmap">
+{
+  "imports": {
+    "http": "/napi-bridge/http-exports.js",  "node:http": "/napi-bridge/http-exports.js",
+    "net": "/napi-bridge/net-exports.js",    "node:net": "/napi-bridge/net-exports.js",
+    "tls": "/napi-bridge/tls-exports.js",    "node:tls": "/napi-bridge/tls-exports.js",
+    "dns": "/napi-bridge/dns-exports.js",    "node:dns": "/napi-bridge/dns-exports.js",
+    "events": "/napi-bridge/events-exports.js", "node:events": "/napi-bridge/events-exports.js",
+    "stream": "/napi-bridge/stream-exports.js", "node:stream": "/napi-bridge/stream-exports.js",
+    "buffer": "/napi-bridge/buffer-exports.js", "node:buffer": "/napi-bridge/buffer-exports.js",
+    "url": "/napi-bridge/url-exports.js",    "node:url": "/napi-bridge/url-exports.js",
+    "util": "/napi-bridge/util-exports.js",  "node:util": "/napi-bridge/util-exports.js",
+    "querystring": "/napi-bridge/querystring-exports.js",
+    "crypto": "/napi-bridge/crypto-exports.js", "node:crypto": "/napi-bridge/crypto-exports.js",
+    "process": "/napi-bridge/process-exports.js", "node:process": "/napi-bridge/process-exports.js",
+    "assert": "/napi-bridge/assert-exports.js",
+    "fs": "/napi-bridge/fs-exports.js",      "node:fs": "/napi-bridge/fs-exports.js",
+    "path": "/napi-bridge/path-exports.js",  "node:path": "/napi-bridge/path-exports.js",
+    "os": "/napi-bridge/os-exports.js",      "node:os": "/napi-bridge/os-exports.js",
+    "string_decoder": "/napi-bridge/string_decoder-exports.js",
+    "undici": "/napi-bridge/undici-stub.js",
+    "zlib": "/napi-bridge/zlib-exports.js"
+  }
+}
+</script>
+<script>
+  // Minimal process polyfill (subset of web/node-polyfills.js)
+  if (!globalThis.process) globalThis.process = { env: {}, versions: {}, platform: 'browser', argv: [] };
+  if (!globalThis.process.env) globalThis.process.env = {};
+  if (!globalThis.global) globalThis.global = globalThis;
+</script>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+const log = document.getElementById('log');
+function emit(msg) {
+  log.textContent += msg + '\n';
+  console.log(msg);
+}
+
+// Set gvisor WS URL from query param (default ws://localhost:8765)
+const params = new URLSearchParams(location.search);
+const wsUrl = params.get('ws') || 'ws://localhost:8765';
+globalThis.process.env.NODEJS_GVISOR_WS_URL = wsUrl;
+emit(`[setup] NODEJS_GVISOR_WS_URL = ${wsUrl}`);
+
+try {
+  const http = await import('http');
+  emit('[import] http module loaded');
+
+  const net = await import('net');
+  emit('[import] net module loaded');
+
+  // Test 1: http.createServer + listen
+  const srv = http.createServer((req, res) => {
+    emit(`[server] ${req.method} ${req.url}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, from: 'v9-in-browser', url: req.url }));
+  });
+
+  const port = parseInt(params.get('port') || '3000', 10);
+  srv.listen(port, () => {
+    emit(`[server] listening on port ${port}`);
+    emit('[ready]'); // Signal to Playwright that the server is up
+  });
+
+  // Test 2: net.createServer (raw TCP echo)
+  const tcpPort = parseInt(params.get('tcpPort') || '3001', 10);
+  const tcpSrv = net.createServer((socket) => {
+    emit(`[tcp] connection from ${socket.remoteAddress}:${socket.remotePort}`);
+    socket.on('data', (data) => {
+      const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+      emit(`[tcp] received: ${text.trim()}`);
+      socket.write(`echo: ${text}`);
+    });
+    socket.on('end', () => emit('[tcp] client disconnected'));
+  });
+  tcpSrv.listen(tcpPort, () => {
+    emit(`[tcp] echo server listening on port ${tcpPort}`);
+  });
+
+} catch (err) {
+  emit(`[error] ${err.message}`);
+  emit(`[error] ${err.stack}`);
+}
+</script>
+</body></html>
