@@ -11,12 +11,10 @@
  *   v9 build
  *   v9 build --entry src/index.js
  */
-import { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync, statSync } from 'node:fs';
 import { resolve, basename, dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, spawn, fork } from 'node:child_process';
-import { createServer } from 'node:http';
-import { createReadStream, statSync } from 'node:fs';
+import { execSync, fork } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -284,19 +282,6 @@ async function cmdBuild() {
 // ── Dev server + browser launcher ───────────────────────────────────
 
 async function startServerAndOpen(bundlePath) {
-  // Check that wasm artifacts exist
-  const edgeJsPath = join(V9_ROOT, 'dist', 'edgejs.js');
-  const edgeWasmPath = join(V9_ROOT, 'dist', 'edgejs.wasm');
-  if (!existsSync(edgeJsPath) || !existsSync(edgeWasmPath)) {
-    console.log('');
-    console.log(`\x1b[33mv9:\x1b[0m Wasm runtime not found (dist/edgejs.js + dist/edgejs.wasm).`);
-    console.log(`    Build it:  cd ${V9_ROOT} && npm run build`);
-    console.log(`    Or fetch:  npm run fetch:wasm-assets`);
-    console.log('');
-    console.log('    Starting server anyway — the terminal UI will show a fallback message.');
-    console.log('');
-  }
-
   const url = `http://localhost:8080/web/index.html?bundle=${bundlePath}&autorun=1`;
 
   info('Starting dev server (file server :8080 + CORS proxy :8081)...');
@@ -311,11 +296,11 @@ async function startServerAndOpen(bundlePath) {
   let opened = false;
   const onData = (data) => {
     const text = data.toString();
-    process.stdout.write(text);
+    // Suppress dev-server's default chatter; only show v9 CLI output
     if (!opened && text.includes('File server')) {
       opened = true;
       setTimeout(() => {
-        success(`Opening browser...`);
+        success(`Serving at http://localhost:8080`);
         console.log(`  ${url}\n`);
         openBrowser(url);
       }, 300);
@@ -323,7 +308,7 @@ async function startServerAndOpen(bundlePath) {
   };
 
   devServer.stdout?.on('data', onData);
-  devServer.stderr?.on('data', (d) => process.stderr.write(d));
+  devServer.stderr?.on('data', () => { /* suppress dev-server noise */ });
 
   // Handle clean shutdown
   const cleanup = () => {
