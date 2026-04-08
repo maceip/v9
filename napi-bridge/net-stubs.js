@@ -10,6 +10,7 @@
 
 import { EventEmitter } from './eventemitter.js';
 import { getRawSocketTransportMode } from './transport-policy.mjs';
+import { isGvisorAvailable, GvisorSocket, GvisorServer, getGvisorStack } from './gvisor-net.js';
 
 function notAvailable(mod, method) {
   return function () {
@@ -19,6 +20,10 @@ function notAvailable(mod, method) {
 
 function _rawSocketUnavailable(modDotMethod) {
   const mode = getRawSocketTransportMode();
+  if (mode === 'gvisor') {
+    // Should not reach here — gvisor path handled before this is called.
+    throw new Error(`${modDotMethod}: gvisor transport failed to initialize. Check NODEJS_GVISOR_WS_URL.`);
+  }
   if (mode === 'embedder') {
     throw new Error(
       `${modDotMethod}: provide tcp via globalThis.__NODE_TAB_WISP_TCP_CONNECT (see docs/TRANSPORT.md).`,
@@ -30,7 +35,8 @@ function _rawSocketUnavailable(modDotMethod) {
         'Register globalThis.__NODE_TAB_WISP_TCP_CONNECT or clear NODEJS_WISP_WS_URL. See docs/TRANSPORT.md.',
     );
   }
-  throw new Error(`${modDotMethod} is not available in the browser environment`);
+  throw new Error(`${modDotMethod} is not available in the browser environment. ` +
+    'Set NODEJS_GVISOR_WS_URL to a local gvisor-tap-vsock binary. See docs/TRANSPORT.md.');
 }
 
 function _invalidIp(address) {
@@ -274,36 +280,85 @@ let _defaultAutoSelectFamilyAttemptTimeout = 250;
 // ─── net ────────────────────────────────────────────────────────────
 
 class Socket extends EventEmitter {
-  constructor() {
+  constructor(opts) {
     super();
     this.writable = false;
     this.readable = false;
+    this._gvs = null; // GvisorSocket delegate
+    if (isGvisorAvailable()) {
+      this._gvs = new GvisorSocket(null);
+      // Proxy events from the gvisor socket
+      for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout']) {
+        this._gvs.on(ev, (...args) => this.emit(ev, ...args));
+      }
+      this.writable = true;
+      this.readable = true;
+    }
   }
-  connect() { throw new Error('net.Socket.connect() is not available in the browser environment'); }
-  write() { throw new Error('net.Socket.write() is not available in the browser environment'); }
-  end() { return this; }
-  destroy() { return this; }
-  setEncoding() { return this; }
+  get remoteAddress() { return this._gvs?.remoteAddress; }
+  get remotePort() { return this._gvs?.remotePort; }
+  get localAddress() { return this._gvs?.localAddress; }
+  get localPort() { return this._gvs?.localPort; }
+  get connecting() { return this._gvs?.connecting ?? false; }
+  connect(...args) {
+    if (this._gvs) return this._gvs.connect(...args);
+    throw new Error('net.Socket.connect() is not available in the browser environment');
+  }
+  write(...args) {
+    if (this._gvs) return this._gvs.write(...args);
+    throw new Error('net.Socket.write() is not available in the browser environment');
+  }
+  end(...args) { if (this._gvs) { this._gvs.end(...args); return this; } return this; }
+  destroy(...args) { if (this._gvs) { this._gvs.destroy(...args); return this; } return this; }
+  setEncoding(enc) { this._gvs?.setEncoding(enc); return this; }
   setKeepAlive() { return this; }
   setNoDelay() { return this; }
-  setTimeout() { return this; }
+  setTimeout(ms, cb) { this._gvs?.setTimeout(ms, cb); return this; }
   ref() { return this; }
   unref() { return this; }
+  pause() { this._gvs?.pause(); return this; }
+  resume() { this._gvs?.resume(); return this; }
+  address() { return this._gvs?.address() ?? null; }
 }
 
 class Server extends EventEmitter {
-  constructor() { super(); }
-  listen() { throw new Error('net.Server.listen() is not available in the browser environment'); }
-  close() { return this; }
-  address() { return null; }
+  constructor(opts, handler) {
+    super();
+    if (typeof opts === 'function') { handler = opts; opts = {}; }
+    this._gvs = null;
+    if (isGvisorAvailable()) {
+      this._gvs = new GvisorServer(handler);
+      for (const ev of ['listening', 'connection', 'close', 'error']) {
+        this._gvs.on(ev, (...args) => this.emit(ev, ...args));
+      }
+    } else if (handler) {
+      this.on('connection', handler);
+    }
+  }
+  listen(...args) {
+    if (this._gvs) return this._gvs.listen(...args);
+    throw new Error('net.Server.listen() is not available in the browser environment');
+  }
+  close(cb) { if (this._gvs) { this._gvs.close(cb); return this; } return this; }
+  address() { return this._gvs?.address() ?? null; }
+  ref() { return this; }
+  unref() { return this; }
 }
 
 export const net = {
   createConnection(...args) {
     return net.connect(...args);
   },
-  createServer: notAvailable('net', 'createServer'),
-  connect(..._args) {
+  createServer(...args) {
+    if (isGvisorAvailable()) return new Server(...args);
+    _rawSocketUnavailable('net.createServer');
+  },
+  connect(...args) {
+    if (isGvisorAvailable()) {
+      const sock = new Socket();
+      sock.connect(...args);
+      return sock;
+    }
     _rawSocketUnavailable('net.connect');
   },
   Socket,
@@ -331,10 +386,21 @@ export const net = {
 // ─── tls ────────────────────────────────────────────────────────────
 
 export const tls = {
-  connect(..._args) {
+  connect(...args) {
+    if (isGvisorAvailable()) {
+      // Raw TCP via gvisor — TLS termination happens at the remote or must be
+      // layered on top (e.g. via forge). For many use cases the gvisor binary's
+      // NAT already reaches TLS endpoints; browser fetch handles HTTPS natively.
+      const sock = new Socket();
+      sock.connect(...args);
+      return sock;
+    }
     _rawSocketUnavailable('tls.connect');
   },
-  createServer: notAvailable('tls', 'createServer'),
+  createServer(...args) {
+    if (isGvisorAvailable()) return new Server(...args);
+    notAvailable('tls', 'createServer')();
+  },
   createSecureContext(opts) { return { context: {}, ca: opts?.ca || [], cert: opts?.cert || null, key: opts?.key || null }; },
   getCiphers() { return ['TLS_AES_256_GCM_SHA384']; },
   TLSSocket: Socket,
@@ -348,16 +414,35 @@ export const tls = {
 
 // ─── dns ────────────────────────────────────────────────────────────
 
+// DNS — use DoH (DNS-over-HTTPS) when gvisor is available, stub otherwise.
+import { resolveDns } from './gvisor-net.js';
+
+function _dnsLookup(hostname, options, cb) {
+  if (typeof options === 'function') { cb = options; options = {}; }
+  if (!isGvisorAvailable()) return notAvailable('dns', 'lookup')();
+  resolveDns(hostname).then(ip => {
+    if (cb) cb(null, ip, 4);
+  }).catch(err => { if (cb) cb(err); });
+}
+
+function _dnsResolve4(hostname, options, cb) {
+  if (typeof options === 'function') { cb = options; options = {}; }
+  if (!isGvisorAvailable()) return notAvailable('dns', 'resolve4')();
+  resolveDns(hostname).then(ip => {
+    if (cb) cb(null, [ip]);
+  }).catch(err => { if (cb) cb(err); });
+}
+
 export const dns = {
-  lookup: notAvailable('dns', 'lookup'),
-  resolve: notAvailable('dns', 'resolve'),
-  resolve4: notAvailable('dns', 'resolve4'),
+  lookup: _dnsLookup,
+  resolve: _dnsLookup,
+  resolve4: _dnsResolve4,
   resolve6: notAvailable('dns', 'resolve6'),
   reverse: notAvailable('dns', 'reverse'),
   promises: {
-    lookup: notAvailable('dns.promises', 'lookup'),
-    resolve: notAvailable('dns.promises', 'resolve'),
-    resolve4: notAvailable('dns.promises', 'resolve4'),
+    lookup(hostname) { return resolveDns(hostname).then(ip => ({ address: ip, family: 4 })); },
+    resolve(hostname) { return resolveDns(hostname).then(ip => [ip]); },
+    resolve4(hostname) { return resolveDns(hostname).then(ip => [ip]); },
     resolve6: notAvailable('dns.promises', 'resolve6'),
   },
 };
