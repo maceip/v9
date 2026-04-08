@@ -5,6 +5,9 @@
   "description": "EdgeJS browser runtime — Node.js in WebAssembly via Emscripten",
   "type": "module",
   "main": "napi-bridge/index.js",
+  "bin": {
+    "v9": "./bin/v9.mjs"
+  },
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",

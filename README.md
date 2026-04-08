@@ -8,39 +8,76 @@ Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-i
 
 ```bash
 npm install
-# Build EdgeJS wasm/js (Emscripten 3.1.64 + make) — see docs/BUILD_TOOLCHAIN.md
-# npm run build
-
-# Dev server (static + optional API proxy):
-node scripts/dev-server.mjs
+npm link          # makes the “v9” command available globally
 ```
 
-### Claude Code CLI in the tab (same runtime as Pages)
+### “I have a bundled JS file and want to run it in the browser”
 
-This path is a **reference-app** stress case on the same stack as any other `?bundle=` entry ([`docs/NODEJS_IN_TAB_ROADMAP.md`](docs/NODEJS_IN_TAB_ROADMAP.md)). It assumes **EdgeJS artifacts exist** (`dist/edgejs.js`, `dist/edgejs.wasm`) from [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) — same prerequisite as un-commenting `npm run build` in Quick start (or using CI / S3 artifacts).
+```bash
+v9 run ./my-app-bundle.js
+```
 
-1. Put an API key where the terminal expects it, e.g. in DevTools: `sessionStorage.setItem('anthropic_api_key', 'sk-ant-…')` then reload.
-2. Build the vendor bundle (requires `@anthropic-ai/claude-code` in devDependencies):
+That's it. v9 starts a local server, pops a Chromium tab with an xterm.js terminal, and runs your bundle with full Node.js polyfills (fs, path, http, crypto, streams, etc.).
 
-   ```bash
-   npm run bundle:claude-code
-   ```
+### “I have a Node.js project and want to see if v9 can host it”
 
-3. With **both** file server **:8080** and CORS proxy **:8081** running (`node scripts/dev-server.mjs`), open:
+```bash
+cd my-project/     # has a package.json
+v9 build
+```
 
-   `http://localhost:8080/web/index.html?bundle=/dist/claude-code-cli.js&autorun=1`
+v9 reads your `package.json`, finds the entry point, bundles it with esbuild (tree-shaken, minified, Node built-ins swapped for browser polyfills), opens a browser, **and** writes the optimized artifact to `.v9-build/` in your project directory.
 
-   Outbound calls to `api.anthropic.com` / `platform.claude.com` are rewritten to `localhost:8081` by `web/node-polyfills.js`; keep the dev server running so that proxy stays up.
+Need to specify the entry explicitly?
 
-**Contributors:** If you edit `tests/conformance/in-tab-api-contract-suite.mjs`, refresh the Wasm copy of the suite before the unified gate: `npm run build:in-tab-api-contract:wasm`, then `npm run test:nodejs-in-tab-contract` ([`docs/NODEJS_IN_TAB_ROADMAP.md`](docs/NODEJS_IN_TAB_ROADMAP.md) — one spec, browser + Wasm).
+```bash
+v9 build --entry src/cli.js
+```
 
-**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **“Wasm runtime rebuild”** for artifacts only.
+### What `build` does under the hood
 
-Open the URL printed by the dev server (default terminal UI):
+1. Finds your entry (`main` / `module` / `bin` from package.json, or `--entry`)
+2. Bundles with esbuild: `platform: neutral`, `format: esm`, `target: es2022`
+3. Marks all Node built-ins as **external** (provided at runtime by napi-bridge)
+4. Tree-shakes and minifies; strips problematic native-only packages
+5. Writes `.v9-build/<name>-bundle.js` (your portable artifact)
+6. Starts the dev server and opens the browser
 
-`http://localhost:8080/web/index.html?bundle=/dist/app-bundle.js`
+### Prerequisites
 
-`bundle=` should point at a **pre-bundled** ESM/CJS app you place under `dist/` (or serve elsewhere). There is no magic npm-on-MEMFS yet; see the roadmap.
+**Wasm runtime** — the CLI warns you if missing. Either build it or fetch pre-built:
+
+```bash
+# Option A: Build from source (requires Emscripten 3.1.64)
+npm run build
+
+# Option B: Fetch from S3 (if configured)
+npm run fetch:wasm-assets
+```
+
+See [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) for the full Emscripten setup. **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain.
+
+### Advanced: dev server only
+
+```bash
+node scripts/dev-server.mjs
+# Opens http://localhost:8080/ — pass ?bundle=/dist/your-file.js&autorun=1
+```
+
+### Claude Code CLI in the tab (reference app)
+
+A **reference-app** stress case on the same stack. Assumes EdgeJS artifacts exist.
+
+```bash
+# 1. Set API key (DevTools console):
+#    sessionStorage.setItem('anthropic_api_key', 'sk-ant-…')
+# 2. Bundle the vendor CLI:
+npm run bundle:claude-code
+# 3. Run it:
+v9 run dist/claude-code-cli.js
+```
+
+**Contributors:** If you edit `tests/conformance/in-tab-api-contract-suite.mjs`, refresh the Wasm copy: `npm run build:in-tab-api-contract:wasm`, then `npm run test:nodejs-in-tab-contract`.
 
 ## Validation
 
