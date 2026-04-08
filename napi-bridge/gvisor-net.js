@@ -14,6 +14,7 @@
  */
 
 import { EventEmitter } from './eventemitter.js';
+import { Duplex } from './streams.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -624,23 +625,61 @@ class TcpConn {
 
 // ─── GvisorSocket ───────────────────────────────────────────────────
 
-export class GvisorSocket extends EventEmitter {
-  constructor(conn) {
-    super();
+export class GvisorSocket extends Duplex {
+  constructor(conn, opts) {
+    super({ ...(opts || {}), allowHalfOpen: opts?.allowHalfOpen ?? false });
     this._conn = conn;
-    this._encoding = null;
     this._destroyed = false;
-    this.readable = true;
-    this.writable = true;
     this.connecting = true;
+    this.pending = true;
+    this.bytesRead = 0;
+    this.bytesWritten = 0;
+    this.allowHalfOpen = opts?.allowHalfOpen ?? false;
+    this._timeoutMs = 0;
+    this._timeoutTimer = null;
+    this._eofPushed = false;
     if (conn) conn._socket = this;
   }
 
+  // ─── POSIX-style socket properties ──────────────────────────────
   get remoteAddress() { return this._conn?._rIp; }
   get remotePort() { return this._conn?._rPort; }
+  get remoteFamily() { return 'IPv4'; }
   get localAddress() { return a2ip(VM_IP); }
   get localPort() { return this._conn?._lPort; }
+  get readyState() {
+    if (this.connecting) return 'opening';
+    if (this.readable && this.writable) return 'open';
+    if (this.readable && !this.writable) return 'readOnly';
+    if (!this.readable && this.writable) return 'writeOnly';
+    return 'closed';
+  }
 
+  // ─── Duplex _read / _write (stream backpressure) ───────────────
+  _read(_size) {
+    // Data is pushed in via _onData; nothing to pull
+  }
+
+  _write(chunk, encoding, callback) {
+    if (this._destroyed || !this._conn) { callback(new Error('Socket closed')); return; }
+    if (typeof chunk === 'string') chunk = new TextEncoder().encode(chunk);
+    else if (!(chunk instanceof Uint8Array)) chunk = new Uint8Array(chunk.buffer || chunk);
+    try {
+      this._conn.write(chunk);
+      this.bytesWritten += chunk.length;
+      this._resetTimeout();
+      callback();
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  _final(callback) {
+    this._conn?.close();
+    callback();
+  }
+
+  // ─── connect ────────────────────────────────────────────────────
   connect(portOrOpts, hostOrCb, cb) {
     let port, host, callback;
     if (typeof portOrOpts === 'object') {
@@ -659,7 +698,6 @@ export class GvisorSocket extends EventEmitter {
     resolveP.then(resolved => {
       const stack = getGvisorStack();
       const lPort = stack._allocPort();
-      // Remap localhost → NAT loopback (192.168.127.254 → host 127.0.0.1)
       const rIp = (isLocalhost || resolved === '127.0.0.1' || resolved === '::1')
         ? '192.168.127.254' : resolved;
       this._conn = new TcpConn(stack, lPort, rIp, port);
@@ -669,6 +707,7 @@ export class GvisorSocket extends EventEmitter {
       stack._whenReady(() => this._conn._sendSyn());
     }).catch(err => {
       this.connecting = false;
+      this.pending = false;
       this._destroyed = true;
       queueMicrotask(() => {
         if (this.listenerCount('error') > 0) this.emit('error', err);
@@ -678,39 +717,13 @@ export class GvisorSocket extends EventEmitter {
     return this;
   }
 
-  write(data, encoding, cb) {
-    if (typeof encoding === 'function') { cb = encoding; encoding = null; }
-    if (this._destroyed || !this.writable) return false;
-    if (typeof data === 'string') data = new TextEncoder().encode(data);
-    else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
-    else if (!(data instanceof Uint8Array)) data = new Uint8Array(data.buffer || data);
-    try {
-      this._conn.write(data);
-      if (cb) queueMicrotask(cb);
-      queueMicrotask(() => this.emit('drain'));
-      return true;
-    } catch (err) {
-      if (this.listenerCount('error') > 0) this.emit('error', err);
-      return false;
-    }
-  }
-
-  end(data, encoding, cb) {
-    if (typeof data === 'function') { cb = data; data = null; }
-    if (typeof encoding === 'function') { cb = encoding; encoding = null; }
-    if (data) this.write(data, encoding);
-    this.writable = false;
-    this._conn?.close();
-    if (cb) this.once('close', cb);
-    return this;
-  }
-
+  // ─── destroy ────────────────────────────────────────────────────
   destroy(err) {
     if (this._destroyed) return this;
     this._destroyed = true;
-    this.readable = false;
-    this.writable = false;
     this.connecting = false;
+    this.pending = false;
+    this._clearTimeout();
     this._conn?.destroy();
     queueMicrotask(() => {
       if (err && this.listenerCount('error') > 0) this.emit('error', err);
@@ -719,39 +732,57 @@ export class GvisorSocket extends EventEmitter {
     return this;
   }
 
-  setEncoding(enc) { this._encoding = enc; return this; }
+  // ─── Socket options (stubs + timeout) ───────────────────────────
+  setEncoding(enc) { super.setEncoding(enc); return this; }
   setKeepAlive() { return this; }
   setNoDelay() { return this; }
-  setTimeout(ms, cb) { if (cb) this.once('timeout', cb); return this; }
+  setTimeout(ms, cb) {
+    if (cb) this.once('timeout', cb);
+    this._timeoutMs = ms || 0;
+    this._resetTimeout();
+    return this;
+  }
+  _resetTimeout() {
+    this._clearTimeout();
+    if (this._timeoutMs > 0) {
+      this._timeoutTimer = setTimeout(() => this.emit('timeout'), this._timeoutMs);
+    }
+  }
+  _clearTimeout() {
+    if (this._timeoutTimer) { clearTimeout(this._timeoutTimer); this._timeoutTimer = null; }
+  }
   ref() { return this; }
   unref() { return this; }
-  pause() { return this; }
-  resume() { return this; }
   address() { return { address: this.localAddress, port: this.localPort, family: 'IPv4' }; }
 
+  // ─── Internal callbacks from TcpConn ────────────────────────────
   _onConnect() {
     this.connecting = false;
+    this.pending = false;
     queueMicrotask(() => {
       this.emit('connect');
       this.emit('ready');
     });
   }
   _onData(data) {
-    const d = this._encoding ? new TextDecoder(this._encoding).decode(data) : data;
-    queueMicrotask(() => this.emit('data', d));
+    if (this._eofPushed) return; // Ignore data after EOF
+    this.bytesRead += data.length;
+    this._resetTimeout();
+    this.push(data); // Duplex.push — feeds the Readable side
   }
   _onEnd() {
-    this.readable = false;
-    queueMicrotask(() => {
-      this.emit('end');
-      if (!this.writable) this.emit('close', false);
-    });
+    if (this._eofPushed) return;
+    this._eofPushed = true;
+    this.push(null); // EOF on Readable side
+    if (!this.allowHalfOpen) {
+      this._conn?.close();
+    }
   }
   _onError(err) {
-    this.readable = false;
-    this.writable = false;
     this._destroyed = true;
     this.connecting = false;
+    this.pending = false;
+    this._clearTimeout();
     queueMicrotask(() => {
       if (this.listenerCount('error') > 0) this.emit('error', err);
       this.emit('close', true);

@@ -284,22 +284,32 @@ class Socket extends EventEmitter {
     super();
     this.writable = false;
     this.readable = false;
-    this._gvs = null; // GvisorSocket delegate
+    this._gvs = null; // GvisorSocket delegate (Duplex stream)
     if (isGvisorAvailable()) {
-      this._gvs = new GvisorSocket(null);
-      // Proxy events from the gvisor socket
-      for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout']) {
+      this._gvs = new GvisorSocket(null, opts);
+      for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout',
+                         'finish', 'pipe', 'unpipe', 'readable']) {
         this._gvs.on(ev, (...args) => this.emit(ev, ...args));
       }
       this.writable = true;
       this.readable = true;
     }
   }
+  // ─── POSIX socket properties ────────────────────────────────────
   get remoteAddress() { return this._gvs?.remoteAddress; }
   get remotePort() { return this._gvs?.remotePort; }
+  get remoteFamily() { return this._gvs?.remoteFamily ?? 'IPv4'; }
   get localAddress() { return this._gvs?.localAddress; }
   get localPort() { return this._gvs?.localPort; }
   get connecting() { return this._gvs?.connecting ?? false; }
+  get pending() { return this._gvs?.pending ?? true; }
+  get readyState() { return this._gvs?.readyState ?? 'closed'; }
+  get bytesRead() { return this._gvs?.bytesRead ?? 0; }
+  get bytesWritten() { return this._gvs?.bytesWritten ?? 0; }
+  get allowHalfOpen() { return this._gvs?.allowHalfOpen ?? false; }
+  set allowHalfOpen(v) { if (this._gvs) this._gvs.allowHalfOpen = v; }
+
+  // ─── Duplex stream methods (delegate to GvisorSocket) ───────────
   connect(...args) {
     if (this._gvs) return this._gvs.connect(...args);
     throw new Error('net.Socket.connect() is not available in the browser environment');
@@ -310,6 +320,11 @@ class Socket extends EventEmitter {
   }
   end(...args) { if (this._gvs) { this._gvs.end(...args); return this; } return this; }
   destroy(...args) { if (this._gvs) { this._gvs.destroy(...args); return this; } return this; }
+  pipe(dest, opts) { if (this._gvs) return this._gvs.pipe(dest, opts); return dest; }
+  unpipe(dest) { if (this._gvs) this._gvs.unpipe(dest); return this; }
+  read(size) { return this._gvs?.read(size) ?? null; }
+  cork() { this._gvs?.cork(); }
+  uncork() { this._gvs?.uncork(); }
   setEncoding(enc) { this._gvs?.setEncoding(enc); return this; }
   setKeepAlive() { return this; }
   setNoDelay() { return this; }
