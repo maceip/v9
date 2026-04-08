@@ -16,7 +16,7 @@
     if (!/^\/v9(\/|$)/.test(path)) return;
     var q = new URLSearchParams(loc.search || '').get('proxy');
     if (q) return;
-    // Cloudflare Worker hostname — must match your `wrangler deploy --name …` subdomain.
-    G.__V9_PAGES_ANTHROPIC_PROXY__ = 'https://v9-anthropic-cors.maceip.workers.dev';
+    // Dedicated fetch-proxy service (systemd, auto-restarts on reboot).
+    G.__V9_PAGES_ANTHROPIC_PROXY__ = 'https://www.stare.network';
   } catch (_) { /* ignore */ }
 })();

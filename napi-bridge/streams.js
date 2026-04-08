@@ -10,6 +10,15 @@
 
 import { EventEmitter } from './eventemitter.js';
 
+/** Browser-safe byte length for strings (no Buffer dependency). */
+function _byteLength(str) {
+  if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') {
+    return Buffer.byteLength(str, 'utf8');
+  }
+  // TextEncoder.encode().length is exact for UTF-8
+  return new TextEncoder().encode(str).length;
+}
+
 // ─── Deque — O(1) push/shift replacement for hot-path buffers ───────
 // Array.shift() is O(n); this ring buffer gives O(1) amortized for
 // the push/shift pattern used by both Readable and Writable buffers.
@@ -99,8 +108,7 @@ export class Readable extends EventEmitter {
     // Strings pass through as-is — do NOT convert to Uint8Array.
     // Only measure byte length for buffer-management purposes.
     const chunkLen = state.objectMode ? 1
-      : (typeof chunk === 'string' ? Buffer.byteLength(chunk, state.encoding || 'utf8')
-      : chunk.length);
+      : (typeof chunk === 'string' ? _byteLength(chunk) : chunk.length);
     state.buffer.push(chunk);
     state.length += chunkLen;
 
@@ -461,8 +469,7 @@ export class Writable extends EventEmitter {
 
     // Strings pass through as-is — _write receives them with the encoding arg.
     const chunkLen = state.objectMode ? 1
-      : (typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding)
-      : (chunk ? chunk.length : 0));
+      : (typeof chunk === 'string' ? _byteLength(chunk) : (chunk ? chunk.length : 0));
 
     if (state.corked || state.writing) {
       // Queue the write

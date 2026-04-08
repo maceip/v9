@@ -2,14 +2,8 @@
 /**
  * GitHub Pages / demo deploy: pre-bundle the vendor CLI into one ESM file.
  *
- * Why this exists:
- * - The in-tab runtime has no full npm graph in MEMFS; the **reference-app** path is to
- *   **esbuild** the CLI entry once, mark Node built-ins as **external**, and satisfy them via
- *   the same **import map** as `web/index.html` (`napi-bridge/*` shims).
- * - **Local dev** usually runs the same artifact: `dist/claude-code-cli.js` next to `edgejs.*`
- *   (see README “Claude Code CLI in the tab”).
- * - **General apps** use the same idea with their own `--entry` / `bundle=` URL; this script is
- *   only the maintained recipe for the Anthropic CLI used on the public Pages demo.
+ * This is the Pages-specific bundling recipe for the Anthropic CLI reference app.
+ * For general app bundling, use `v9 build` instead.
  *
  * Run **after** `scripts/prepare-github-pages.mjs` in CI so `docs/dist/` already contains
  * `edgejs.{js,wasm}` and the CLI file lands alongside them.

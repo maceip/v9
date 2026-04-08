@@ -5,6 +5,9 @@
   "description": "EdgeJS browser runtime — Node.js in WebAssembly via Emscripten",
   "type": "module",
   "main": "napi-bridge/index.js",
+  "bin": {
+    "v9": "./bin/v9.mjs"
+  },
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",
@@ -47,6 +50,8 @@
     "test:memfs-node-modules": "node tests/test-memfs-node-modules-seed.mjs",
     "test:memfs-exports": "node tests/test-package-exports-resolve.mjs",
     "test:memfs-esm-entry": "node tests/test-memfs-esm-entry.mjs",
+    "test:memfs-esm-tla": "node tests/test-memfs-esm-tla.mjs",
+    "test:memfs-dynamic-import-cycle": "node tests/test-memfs-dynamic-import-cycle.mjs",
     "test:native-addon-reject": "node tests/test-native-addon-reject.mjs",
     "test:run-node-entry": "node tests/test-run-node-entry-argv.mjs",
     "test:memfs-reference-app": "node tests/test-memfs-reference-app.mjs",
@@ -54,12 +59,13 @@
     "test:memfs-import-meta-dynamic": "node tests/test-memfs-import-meta-and-dynamic.mjs",
     "test:memfs-node-test": "node tests/test-memfs-node-test-in-tab.mjs",
     "test:bundle-app-graph": "node tests/test-bundle-app-graph.mjs",
-    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
+    "test:integration": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs && node scripts/run-with-env.mjs EDGEJS_STRICT_IMPORTS=1 tests/test-wasm-load.mjs && node tests/test-memfs-node-modules-seed.mjs && node tests/test-package-exports-resolve.mjs && node tests/test-memfs-esm-entry.mjs && node tests/test-memfs-esm-tla.mjs && node tests/test-memfs-import-meta-and-dynamic.mjs && node tests/test-memfs-dynamic-import-cycle.mjs && node tests/test-memfs-node-test-in-tab.mjs && node tests/test-native-addon-reject.mjs && node tests/test-run-node-entry-argv.mjs && node tests/test-memfs-reference-app.mjs && node tests/test-memfs-multi-package-app.mjs && node tests/test-bundle-app-graph.mjs && node tests/test-node-test-runner.mjs && npm run test:nodejs-in-tab-contract && node tests/test-runtime-stability.mjs && node tests/test-browser-smoke.mjs",
     "build": "bash build-emscripten.sh",
     "build:debug": "bash build-emscripten.sh --debug",
     "lint": "node scripts/lint-repo.mjs",
     "size": "node scripts/artifact-sizes.mjs",
     "clean": "make clean",
+    "vendor:wasm": "node scripts/vendor-wasm.mjs",
     "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
     "pages:prepare": "node scripts/prepare-github-pages.mjs",
     "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"

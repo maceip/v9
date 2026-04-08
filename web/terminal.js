@@ -327,8 +327,22 @@ async function boot() {
 
   const container = document.getElementById('terminal');
   term.open(container);
+
+  // Debounced fit to avoid thrashing
+  let fitTimer = null;
+  function debouncedFit() {
+    if (fitTimer) return;
+    fitTimer = setTimeout(() => {
+      fitTimer = null;
+      if (fitAddon) fitAddon.fit();
+    }, 50);
+  }
+
   if (fitAddon) {
     fitAddon.fit();
+    // Refit after layout settles
+    setTimeout(() => fitAddon.fit(), 100);
+    setTimeout(() => fitAddon.fit(), 500);
   }
 
   let pendingTerminalWrite = '';
@@ -344,6 +358,27 @@ async function boot() {
       pendingTerminalWrite = '';
       term.write(chunk);
     });
+  };
+
+  // Redirect console.log/error/warn to xterm so app output is visible
+  // in the terminal, not just browser devtools.
+  const _nativeLog = console.log.bind(console);
+  const _nativeError = console.error.bind(console);
+  const _nativeWarn = console.warn.bind(console);
+  console.log = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(text);
+    _nativeLog(...args);
+  };
+  console.error = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(`\x1b[31m${text}\x1b[0m`);
+    _nativeError(...args);
+  };
+  console.warn = (...args) => {
+    const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a) ?? String(a)).join(' ') + '\r\n';
+    if (globalThis._xtermWrite) globalThis._xtermWrite(`\x1b[33m${text}\x1b[0m`);
+    _nativeWarn(...args);
   };
 
   const config = getConfig();
@@ -405,8 +440,8 @@ async function boot() {
       await controller.start();
     }
   } catch (err) {
-    term.writeln(`\x1b[33m[edgejs] Runtime not available: ${_safe(err.message)}\x1b[0m`);
-    term.writeln('\x1b[90mTerminal UI loaded - runtime will connect when Wasm is built.\x1b[0m');
+    _nativeError('[edgejs] Boot error:', err);
+    term.writeln(`\x1b[31m${_safe(err.message)}\x1b[0m`);
   }
 
   // Allow Ctrl+C to copy when there's a selection, Ctrl+V to paste
@@ -435,11 +470,19 @@ async function boot() {
     }
   });
 
-  window.addEventListener('resize', () => {
-    if (fitAddon) {
-      fitAddon.fit();
-    }
-  });
+  window.addEventListener('resize', debouncedFit);
+
+  if (fitAddon) {
+    new ResizeObserver(debouncedFit).observe(container);
+
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'v9:refit') {
+        // Immediate + delayed to catch layout settling
+        fitAddon.fit();
+        setTimeout(() => fitAddon.fit(), 150);
+      }
+    });
+  }
 
   term.onResize(({ cols, rows }) => {
     if (runtime && typeof runtime.setTerminalSize === 'function') {
@@ -447,6 +490,122 @@ async function boot() {
     }
     syncProcessTerminalSize(processBridge, cols, rows);
   });
+
+  // ── Mobile copy/paste convenience buttons ──
+  const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  if (isMobile) {
+    // ── Mobile action bar — Copy URL / Open / Paste ──
+    // Shows when a URL is detected in terminal output (especially OAuth URLs).
+    // URLs in xterm.js wrap across lines and can't be selected on mobile.
+    const actionBar = document.createElement('div');
+    actionBar.style.cssText = 'position:fixed;top:max(4px, env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:250;display:none;flex-direction:row;gap:6px;padding:4px 6px;background:rgba(12,12,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:10px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+
+    function makeBarBtn(label, accent) {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      const color = accent ? 'color:#9bff00;border-color:rgba(155,255,0,0.3)' : 'color:rgba(220,220,230,0.8);border-color:rgba(255,255,255,0.12)';
+      btn.style.cssText = `padding:6px 14px;min-height:36px;border:1px solid;border-radius:8px;background:rgba(25,25,40,0.9);font:600 12px "IBM Plex Mono",monospace;cursor:pointer;touch-action:manipulation;${color};transition:transform 0.08s ease,opacity 0.15s ease`;
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); btn.style.transform = 'scale(0.93)'; }, { passive: false });
+      btn.addEventListener('touchend', (e) => { e.preventDefault(); btn.style.transform = ''; }, { passive: false });
+      return btn;
+    }
+
+    const copyUrlBtn = makeBarBtn('Copy URL', true);
+    const openUrlBtn = makeBarBtn('Open', true);
+    const pasteBtn = makeBarBtn('Paste', false);
+
+    let detectedUrl = '';
+
+    copyUrlBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (!detectedUrl) return;
+      navigator.clipboard.writeText(detectedUrl).then(() => {
+        copyUrlBtn.textContent = 'Copied!';
+        setTimeout(() => { copyUrlBtn.textContent = 'Copy URL'; }, 1200);
+      }).catch(() => {});
+    }, { passive: false });
+
+    openUrlBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (detectedUrl) window.open(detectedUrl, '_blank', 'noopener');
+    }, { passive: false });
+
+    pasteBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      navigator.clipboard.readText().then(text => {
+        if (!text) return;
+        if (runtime && typeof runtime.pushStdin === 'function') runtime.pushStdin(text);
+        else if (typeof globalThis._stdinPush === 'function') globalThis._stdinPush(text);
+        else term.paste(text);
+      }).catch(() => {});
+    }, { passive: false });
+
+    actionBar.appendChild(copyUrlBtn);
+    actionBar.appendChild(openUrlBtn);
+    actionBar.appendChild(pasteBtn);
+    container.appendChild(actionBar);
+
+    function showActionBar(url) {
+      detectedUrl = url;
+      actionBar.style.display = 'flex';
+    }
+
+    // URL detection — concatenate wrapped lines to catch multi-line URLs
+    const URL_START = /https?:\/\//;
+    const URL_CHAR = /[^\s\x00-\x1f"'`<>(){}[\]]/;
+    let lastDetectedUrl = '';
+    let scanScheduled = false;
+
+    const origWrite = globalThis._xtermWrite;
+    globalThis._xtermWrite = (data) => {
+      origWrite(data);
+      if (!scanScheduled) {
+        scanScheduled = true;
+        setTimeout(() => {
+          scanScheduled = false;
+          scanForUrls();
+        }, 300);
+      }
+    };
+
+    function scanForUrls() {
+      const buf = term.buffer.active;
+      // Build a text block from the last 20 rows, joining wrapped lines
+      const scanRows = Math.min(20, buf.length);
+      const startRow = buf.length - scanRows;
+      let block = '';
+      for (let r = startRow; r < buf.length; r++) {
+        const line = buf.getLine(r);
+        if (!line) continue;
+        const text = line.translateToString(true);
+        // If line is wrapped (isWrapped), don't add separator
+        const isWrapped = line.isWrapped;
+        if (isWrapped) {
+          block += text.trimEnd();
+        } else {
+          block += '\n' + text;
+        }
+      }
+
+      // Find all URLs in the concatenated block
+      const urlRe = /https?:\/\/[^\s"'`<>(){}\[\]\x00-\x1f]{8,}/g;
+      const matches = [...block.matchAll(urlRe)];
+      if (matches.length > 0) {
+        const url = matches[matches.length - 1][0];
+        if (url !== lastDetectedUrl) {
+          lastDetectedUrl = url;
+          showActionBar(url);
+        }
+      }
+    }
+
+    // Always show paste after terminal has content
+    setTimeout(() => {
+      if (buf => buf && buf.length > 2) {
+        actionBar.style.display = 'flex';
+      }
+    }, 2000);
+  }
 
   globalThis.__edgeTerm = term;
   globalThis.__edgeRuntime = runtime;
@@ -465,7 +624,6 @@ async function boot() {
       const t = e.data.theme;
       if (t && term.options) {
         term.options.theme = t;
-        // Also update body bg so the terminal container matches
         document.body.style.background = t.background || '';
       }
     }
@@ -481,7 +639,77 @@ async function boot() {
         }
       }
     }
+    // Re-fit terminal to container (called by parent after zoom completes)
+    if (e.data.type === 'v9:refit') {
+      if (fitAddon) {
+        fitAddon.fit();
+        if (runtime && typeof runtime.setTerminalSize === 'function') {
+          runtime.setTerminalSize(term.cols, term.rows);
+        }
+        syncProcessTerminalSize(processBridge, term.cols, term.rows);
+      }
+    }
+    // D-pad key input from parent
+    if (e.data.type === 'v9:key-input') {
+      const seq = e.data.seq;
+      if (seq && runtime && typeof runtime.pushStdin === 'function') {
+        runtime.pushStdin(seq);
+      } else if (seq && typeof globalThis._stdinPush === 'function') {
+        globalThis._stdinPush(seq);
+      }
+    }
   });
+
+  // ── Swipe-to-dismiss detection (forward to parent since iframe captures touch) ──
+  let _swipeTouch = null;
+  document.addEventListener('touchstart', (e) => {
+    if (!e.touches[0]) return;
+    const t = e.touches[0];
+    _swipeTouch = { sx: t.clientX, sy: t.clientY, decided: false, startTime: Date.now() };
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!_swipeTouch || _swipeTouch.decided) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dy = t.clientY - _swipeTouch.sy;
+    const dx = t.clientX - _swipeTouch.sx;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 15) {
+      _swipeTouch.decided = true;
+      // Downward swipe with vertical dominance
+      if (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+        _swipeTouch.swiping = true;
+      }
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    if (!_swipeTouch) return;
+    if (_swipeTouch.swiping) {
+      const elapsed = Date.now() - _swipeTouch.startTime;
+      // Only dismiss for deliberate swipes (fast flick or long drag)
+      if (elapsed < 500) {
+        try {
+          window.parent.postMessage({ type: 'v9:swipe-dismiss' }, '*');
+        } catch { /* sandboxed */ }
+      }
+    }
+    _swipeTouch = null;
+  }, { passive: true });
+
+  // ── Refit on iframe visibility changes ──
+  if (fitAddon) {
+    // Initial delayed refit to catch late layout
+    setTimeout(() => {
+      fitAddon.fit();
+      if (runtime && typeof runtime.setTerminalSize === 'function') {
+        runtime.setTerminalSize(term.cols, term.rows);
+      }
+      syncProcessTerminalSize(processBridge, term.cols, term.rows);
+    }, 300);
+  }
 }
 
 function _safe(str) {

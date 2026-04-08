@@ -1,6 +1,10 @@
 # Rebuilding the Wasm runtime and toolchain
 
-This repo does **not** commit `dist/edgejs.{js,wasm}` or `build/edge`. Everyone—**CI, a Linux VM (e.g. Cory on EC2), or a Windows dev machine**—recreates artifacts the same way: **Emscripten + Make + pinned patch**.
+**Embedding devs:** `dist/edgejs.{js,wasm}` are **vendored** in the repo. You don't need this page — just `npm install && npm link && v9 run <bundle.js>`.
+
+**Core devs rebuilding the wasm runtime:** this page is for you. The wasm is produced by **Emscripten + Make + pinned patch**, then committed so embedding devs get it from git.
+
+Quick path without Emscripten: **`npm run vendor:wasm`** downloads pre-built artifacts from the latest CI run (requires `gh` CLI).
 
 **Do not stop at the build** on Cory: the target is **CI parity**—install Chromium, set **`CHROME_BIN`**, run **`npm ci`**, then **`npm run test:nodejs-in-tab-contract`** and optionally **`make test-integration`** (see [Run tests on Cory / EC2](#run-tests-on-cory--ec2-parity-with-ci)).
 
@@ -54,13 +58,17 @@ EC2 (Cory) stays always-on; **your laptop can go offline** and still get the sam
 
 Tests that launch **Chromium** are not fully configured in the slim image; run **`npm ci`** and contract tests **on the host** with your normal `CHROME_BIN`, or extend the Dockerfile with `chromium-browser` + deps.
 
-### Optional: S3 / shared artifacts (no compile)
+### Without Emscripten: download pre-built artifacts
 
-To **sync** pre-built `dist/` + `build/edge*` from **S3** (or adapt the script): set **`WASM_ASSETS_S3_URI`** and run:
+**Preferred:** download from CI (requires `gh` CLI authenticated):
 
-`node scripts/fetch-wasm-assets.mjs`
+```bash
+npm run vendor:wasm
+```
 
-Lay out the bucket prefix like the CI artifact tree (`dist/edgejs.wasm`, `dist/edgejs.js`, `build/edge`, `build/edge.js`).
+**S3 alternative** (if configured): set **`WASM_ASSETS_S3_URI`** and run `node scripts/fetch-wasm-assets.mjs`.
+
+After either method, commit for embedding devs: `git add dist/edgejs.js dist/edgejs.wasm`.
 
 ## Run tests on Cory / EC2 (parity with CI)
 

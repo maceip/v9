@@ -167,6 +167,17 @@
       // Example: route vendor APIs through local dev proxy when needed
       ANTHROPIC_BASE_URL: 'http://localhost:8081',
     };
+    // Enable HTTP relay on GitHub Pages — tunnels real TCP listeners
+    // through a WebSocket so localhost:<port> actually works in-tab.
+    try {
+      const host = globalThis.location?.hostname || '';
+      if (host.endsWith('.github.io') || _env.NODEJS_IN_TAB_HTTP_RELAY) {
+        _env.NODEJS_IN_TAB_HTTP_RELAY = '1';
+        if (!_env.NODEJS_IN_TAB_HTTP_RELAY_WS) {
+          _env.NODEJS_IN_TAB_HTTP_RELAY_WS = 'wss://relay.stare.network/__in-tab-http-ws';
+        }
+      }
+    } catch { /* ignore */ }
     const _cwd = '/';
     // Minimal EventEmitter for signal handling (signal-exit library needs this)
     const _listeners = {};
@@ -553,6 +564,10 @@
           headers: { ...filterBrowserRequestHeaders(init?.headers || {}), 'X-Proxy-Host': origHost },
         };
 
+        // redirect_uri stays as localhost in both auth request and token
+        // exchange — no rewrite needed since the auth proxy intercepts
+        // the localhost redirect server-side.
+
         if (typeof input === 'string') {
           return _origFetch.call(globalThis, url, proxyInit);
         }
@@ -583,13 +598,22 @@
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
       if (typeof url === 'string' && (url.includes('api.anthropic.com') || url.includes('platform.claude.com'))) {
         const target = new URL(url);
+        const origHost = target.hostname;
         const proxy = new URL(_proxyUrl);
         target.hostname = proxy.hostname;
         target.port = proxy.port;
         target.protocol = proxy.protocol;
         url = target.toString();
+        this.__proxyHost = origHost;
       }
       return _origXHROpen.call(this, method, url, ...rest);
+    };
+    const _origXHRSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function(body) {
+      if (this.__proxyHost) {
+        _origXHRSetRequestHeader.call(this, 'X-Proxy-Host', this.__proxyHost);
+      }
+      return _origXHRSend.call(this, body);
     };
     const _origXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
     XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
@@ -668,6 +692,10 @@
   }
 
   function maybeRewriteOAuthUrl(url) {
+    // Don't rewrite redirect_uri (server only accepts localhost).
+    // Store callback info in sessionStorage so oauth-bridge.html can
+    // deliver the auth code when the V9 OAuth Bridge extension
+    // redirects the failed localhost callback to the bridge page.
     try {
       const parsed = new URL(url);
       const redirectUri = parsed.searchParams.get('redirect_uri');
@@ -677,19 +705,17 @@
       if (!isLoopback) return url;
       const port = local.port || '80';
       if (!getBrowserLocalServerRegistry()[port]) return url;
-      const bridgeUrl = buildOAuthBridgeUrl(local.toString());
-      if (!bridgeUrl) return url;
-      parsed.searchParams.set('redirect_uri', bridgeUrl);
-      return parsed.toString();
-    } catch {
-      return url;
-    }
+      localStorage.setItem('__v9_oauth_callback', JSON.stringify({
+        origin: globalThis.location?.origin,
+        port,
+        path: local.pathname || '/callback',
+      }));
+    } catch { /* ignore */ }
+    return url;
   }
 
   if (!globalThis.__browserRuntimeOAuthBridgeInstalled) {
-    globalThis.addEventListener('message', (event) => {
-      if (event.origin !== globalThis.location?.origin) return;
-      const data = event.data;
+    function _handleOAuthCallback(data) {
       if (!data || data.type !== 'edge-oauth-callback') return;
       const port = String(data.port || '');
       if (!port) return;
@@ -698,9 +724,19 @@
       if (!server) return;
       const target = new URL(`http://localhost:${port}${data.path || '/callback'}`);
       if (data.search) target.search = data.search.startsWith('?') ? data.search : `?${data.search}`;
-      try { event.source?.close?.(); } catch {}
       server._handleRedirect?.(target.toString());
+    }
+    // Primary: postMessage from popup with window.opener intact
+    globalThis.addEventListener('message', (event) => {
+      if (event.origin !== globalThis.location?.origin) return;
+      _handleOAuthCallback(event.data);
+      try { event.source?.close?.(); } catch {}
     });
+    // Fallback: BroadcastChannel for when COOP severs window.opener
+    try {
+      const bc = new BroadcastChannel('v9-oauth-bridge');
+      bc.onmessage = (event) => _handleOAuthCallback(event.data);
+    } catch { /* BroadcastChannel not supported */ }
     globalThis.__browserRuntimeOAuthBridgeInstalled = true;
   }
 

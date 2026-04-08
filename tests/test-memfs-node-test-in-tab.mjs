@@ -18,11 +18,28 @@ fs.mkdirSync(root, { recursive: true });
 const main = posix.join(root, 'tests.mjs');
 fs.writeFileSync(
   main,
-  `import { test } from 'node:test';
+  `import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-test('in-tab sanity', async () => {
-  assert.equal(2 + 2, 4);
+await describe('suite', () => {
+  let hooks = '';
+  before(() => { hooks += 'B'; });
+  after(() => { hooks += 'A'; });
+  beforeEach(() => { hooks += 'b'; });
+  afterEach(() => { hooks += 'a'; });
+
+  test('in-tab sanity', async () => {
+    assert.equal(2 + 2, 4);
+  });
+  test('hook trace', () => {
+    assert.ok(true);
+    console.log('hooks', hooks);
+  });
+  describe('nested', () => {
+    test('nested case', () => {
+      assert.ok(true);
+    });
+  });
 });
 console.log('node-test-stub-ran');
 `,
@@ -33,6 +50,9 @@ if (st !== 0) fail(`runFileAsync ${st}: ${stdout.join('\n')}`);
 const out = stdout.join('\n');
 if (!out.includes('node-test-stub-ran')) {
   fail(`expected completion log: ${JSON.stringify(out)}`);
+}
+if (!out.includes('hooks Bbab')) {
+  fail(`expected hook trace Bbab (log runs before second afterEach), got: ${JSON.stringify(out)}`);
 }
 
 console.log('=== MEMFS node:test minimal stub === ok');

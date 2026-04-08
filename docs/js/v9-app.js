@@ -18,6 +18,7 @@ import { initIcons } from './icons.js';
 import { SwipeDismiss, swipeParams } from './swipe.js';
 import { TacticalHUD } from './hud.js';
 import { initThemeSwitcher } from './theme.js';
+import { DPad } from './dpad.js';
 
 // ── State ──
 let state = 'IDLE';
@@ -90,17 +91,24 @@ function resizeGlass() { if (glass) glass.resize(); }
 window.addEventListener('resize', resizeGlass);
 new ResizeObserver(resizeGlass).observe(termScreen);
 
+// ── Mobile D-Pad ──
+const dpad = new DPad(cliFrame);
+
 // ── Zoom controller ──
 const zoom = new ZoomController(termWrap, {
   onComplete: (direction) => {
     if (direction === 'in' && state === 'ZOOMING') {
       state = 'RUNNING';
       if (glass) { glass.fog = 0; glass.glassBlur = 0; glass.stop(); }
-      // If CLI not loaded yet, load it now
       if (!cliLoaded) loadCLI();
+      // Tell iframe to re-fit terminal to actual container size
+      try { cliFrame.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+      // Show d-pad on mobile
+      if (window.innerWidth < 900) dpad.show();
     } else if (direction === 'out') {
       state = 'IDLE';
       termWrap.classList.add('idle');
+      dpad.hide();
     }
   },
   onProgress: (p, direction) => {
@@ -129,22 +137,30 @@ initIcons();
 setProgress(100);
 
 // ── Click/tap to zoom in ──
-termWrap.addEventListener('click', handleActivate, true);
-termWrap.addEventListener('touchend', handleActivate, true);
+// Use touchend on mobile to avoid the 300ms click delay; prevent double-fire.
+let _activatedByTouch = false;
+termWrap.addEventListener('touchend', (e) => {
+  _activatedByTouch = true;
+  handleActivate(e);
+  // Reset flag after click would have fired
+  setTimeout(() => { _activatedByTouch = false; }, 400);
+}, true);
+termWrap.addEventListener('click', (e) => {
+  if (_activatedByTouch) return; // Already handled by touchend
+  handleActivate(e);
+}, true);
 
 function handleActivate(e) {
   if (state !== 'IDLE') return;
   e.preventDefault();
   e.stopPropagation();
+
   state = 'ZOOMING';
   termWrap.classList.remove('idle');
   termWrap.classList.add('zoomed');
 
-  // Start loading CLI on first click only
   if (!cliLoaded && !cliFrame.src) {
-    resolveWebURL().then(url => {
-      if (url) cliFrame.src = url;
-    });
+    resolveWebURL().then(url => { if (url) cliFrame.src = url; });
   }
 
   zoom.zoomIn();
@@ -174,6 +190,13 @@ async function loadCLI() {
   cliLoaded = true;
   cliFrame.classList.add('visible');
   bootText.style.display = 'none';
+
+  // Tell the terminal to refit now that it's visible at full size
+  try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  // And again after a short delay to catch any layout settling
+  setTimeout(() => {
+    try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  }, 200);
 }
 
 function siteRootPrefix() {
@@ -297,8 +320,28 @@ function addDismissedTile() {
   });
 }
 
-// ── Resize handler ──
-window.addEventListener('resize', () => { if (fluid && fluid.active) fluid.resize(); });
+// ── Swipe-dismiss from iframe (touch events can't cross iframe boundary) ──
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'v9:swipe-dismiss') {
+    if (state === 'RUNNING' || state === 'UNAVAILABLE') {
+      addDismissedTile();
+      resetToIdle();
+    }
+  }
+});
+
+// ── Resize / orientation change handler ──
+function handleViewportChange() {
+  if (fluid && fluid.active) fluid.resize();
+  if (state === 'RUNNING') {
+    try { cliFrame.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  }
+}
+window.addEventListener('resize', handleViewportChange);
+window.addEventListener('orientationchange', () => {
+  // orientationchange fires before resize on some Android devices
+  setTimeout(handleViewportChange, 200);
+});
 
 // ── Tactical HUD ──
 const hud = new TacticalHUD();

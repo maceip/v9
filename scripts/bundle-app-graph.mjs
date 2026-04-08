@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Pre-bundle an app entry with esbuild (escape hatch when interpretive resolution is not enough).
+ * Low-level CJS bundler for MEMFS (used by tests and internal tooling).
+ *
+ * For app bundling, prefer `v9 build` which produces optimized ESM bundles
+ * with Node built-ins externalized for the browser runtime.
  *
  * Usage:
  *   node scripts/bundle-app-graph.mjs --entry ./myapp/index.js --outfile ./dist/app-bundle.cjs
- *
- * The output is CommonJS by default so load it via MEMFS require() / runFileAsync.
  */
 import { parseArgs } from 'node:util';
 import { resolve } from 'node:path';

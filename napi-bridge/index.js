@@ -3262,11 +3262,11 @@ export async function initEdgeJS(options = {}) {
         EdgeJSModule = loaded;
       }
     } catch (_) {
-      // Module not found — will fall through to bridge-only mode.
+      // Module not found — will throw below.
     }
   }
 
-  // ── Shared imports (used by both bridge-only and Wasm paths) ───────
+  // ── Shared imports ─────────────────────────────────────────────────
   const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
   const { createFilesystem } = await import('./memfs.js');
   const { createFsModule, setActiveFsModule } = await import('./fs.js');
@@ -3353,7 +3353,16 @@ export async function initEdgeJS(options = {}) {
   const {
     parsePackageSpecifier,
     resolvePackageExportsMappingFromPkg,
+    resolvePackageImportsFromPkg,
   } = await import('./package-resolve.js');
+
+  function _sourceHasTopLevelAwait(source) {
+    const s = source.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/(^|[;{])\s*await\s+/.test(s)) return true;
+    // `const x = await …` at module top level (esbuild cannot emit CJS for this)
+    if (/\b(const|let|var)\b[^;=\n]*=\s*await\s+/.test(s)) return true;
+    return false;
+  }
 
   function _packageJsonTypeModuleForPath(absFile) {
     let dir = absFile.includes('/') ? absFile.substring(0, absFile.lastIndexOf('/')) || '/' : '/';
@@ -3399,6 +3408,17 @@ export async function initEdgeJS(options = {}) {
   const _dynamicImportPromises = new Map();
   const _dynamicImportLoading = new Set();
   let _pendingImportsForRun = null;
+  /** 'require' | 'import' — affects package exports/imports condition matching */
+  let _memfsResolutionMode = 'require';
+
+  function _memfsPackageConditions() {
+    const nodeEnv = String(_sharedProcessBridge.env?.NODE_ENV ?? 'production').toLowerCase();
+    const envCond = nodeEnv === 'development' ? 'development' : 'production';
+    // Match Node: CJS and ESM each get one loader condition, not both at once.
+    return _memfsResolutionMode === 'import'
+      ? ['node', envCond, 'import', 'default']
+      : ['node', envCond, 'require', 'default'];
+  }
 
   async function _memfsDynamicImport(specifier) {
     const traceWork = (async () => {
@@ -3409,7 +3429,14 @@ export async function initEdgeJS(options = {}) {
         ? _esmImportDirStack[_esmImportDirStack.length - 1]
         : _sharedProcessBridge.cwd();
 
-      const resolved = _resolveModule(specifier, baseDir);
+      const prevMode = _memfsResolutionMode;
+      _memfsResolutionMode = 'import';
+      let resolved;
+      try {
+        resolved = _resolveModule(specifier, baseDir);
+      } finally {
+        _memfsResolutionMode = prevMode;
+      }
       if (!resolved) {
         const err = new Error(`Cannot find module '${specifier}'`);
         err.code = 'ERR_MODULE_NOT_FOUND';
@@ -3433,11 +3460,6 @@ export async function initEdgeJS(options = {}) {
         if (abs.endsWith('.json')) {
           return { default: JSON.parse(_sharedBridgeFs.readFileSync(abs, 'utf8')) };
         }
-        if (_dynamicImportLoading.has(abs)) {
-          const err = new Error(`Unsupported circular dynamic import while loading '${abs}'`);
-          err.code = 'ERR_UNSUPPORTED_NODE_MODULES_TYPE';
-          throw err;
-        }
         _dynamicImportLoading.add(abs);
         const zDir = abs.includes('/') ? abs.substring(0, abs.lastIndexOf('/')) || '/' : '/';
         _esmImportDirStack.push(zDir);
@@ -3446,6 +3468,23 @@ export async function initEdgeJS(options = {}) {
           if (zSrc.startsWith('#!')) zSrc = zSrc.substring(zSrc.indexOf('\n') + 1);
 
           if (_needsEsmTranspile(abs, zSrc)) {
+            if (_sourceHasTopLevelAwait(zSrc)) {
+              const { bundleMemfsScriptToEsmDataUrl } = await import('./memfs-esbuild-bundler.mjs');
+              const prevBundleMode = _memfsResolutionMode;
+              _memfsResolutionMode = 'import';
+              try {
+                const dataUrl = await bundleMemfsScriptToEsmDataUrl({
+                  absPath: abs,
+                  source: zSrc,
+                  importMetaUrlLiteral: JSON.stringify(_memfsFileUrl(abs)),
+                  readFileSync: (p, enc) => _sharedBridgeFs.readFileSync(p, enc),
+                  resolveModule: (spec, from) => _resolveModule(spec, from),
+                });
+                return await import(/* webpackIgnore: true */ dataUrl);
+              } finally {
+                _memfsResolutionMode = prevBundleMode;
+              }
+            }
             const esbuild = await import('esbuild');
             zSrc = esbuild.transformSync(zSrc, {
               loader: 'js',
@@ -3495,11 +3534,45 @@ export async function initEdgeJS(options = {}) {
     }
   }
 
+  function _resolvePackageImportsSpecifier(specifier, fromDir) {
+    let dir = fromDir.replace(/\/$/, '') || '/';
+    const seen = new Set();
+    const conds = _memfsPackageConditions();
+    while (dir.length > 0 && !seen.has(dir)) {
+      seen.add(dir);
+      const pjPath = _normPath(dir === '/' ? '/package.json' : `${dir}/package.json`);
+      try {
+        const pkg = JSON.parse(_sharedBridgeFs.readFileSync(pjPath, 'utf8'));
+        const mapped = resolvePackageImportsFromPkg(pkg, specifier, conds);
+        if (mapped) {
+          const m = String(mapped);
+          if (m.startsWith('node:')) {
+            const id = m.slice(5);
+            const b = _builtinOverrides.get(id) || _builtinOverrides.get(m);
+            return b ? { type: 'builtin', exports: b } : null;
+          }
+          const pkgRoot = dir;
+          const absMapped = m.startsWith('/')
+            ? _normPath(m)
+            : _normPath(_resolvePath(m, pkgRoot));
+          const fileHit = _tryResolveFile(absMapped);
+          if (fileHit) return fileHit;
+        }
+      } catch {
+        /* no package.json or parse error */
+      }
+      if (dir === '/' || dir === '') break;
+      const idx = dir.lastIndexOf('/');
+      dir = idx <= 0 ? '/' : dir.substring(0, idx);
+    }
+    return null;
+  }
+
   function _resolveNodeModuleBare(name, fromDir) {
     const parsed = parsePackageSpecifier(name);
     if (!parsed) return null;
     const { packageName, subpath } = parsed;
-    const conditions = ['node', 'require', 'default'];
+    const conditions = _memfsPackageConditions();
 
     let dir = fromDir;
     while (dir.length > 0) {
@@ -3553,6 +3626,9 @@ export async function initEdgeJS(options = {}) {
   }
 
   function _resolveModule(name, fromDir) {
+    if (typeof name === 'string' && name.startsWith('#')) {
+      return _resolvePackageImportsSpecifier(name, fromDir);
+    }
     const builtin = _builtinOverrides.get(name);
     if (builtin) return { type: 'builtin', exports: builtin };
     if (name.startsWith('node:')) {
@@ -3598,7 +3674,14 @@ export async function initEdgeJS(options = {}) {
 
   function _memfsRequire(name, fromDir) {
     fromDir = fromDir || _sharedProcessBridge.cwd();
-    const resolved = _resolveModule(name, fromDir);
+    const prevMode = _memfsResolutionMode;
+    _memfsResolutionMode = 'require';
+    let resolved;
+    try {
+      resolved = _resolveModule(name, fromDir);
+    } finally {
+      _memfsResolutionMode = prevMode;
+    }
     if (!resolved) {
       console.warn(`[require] Cannot find module '${name}' from '${fromDir}'`);
       throw new Error(`Cannot find module '${name}' from '${fromDir}'`);
@@ -3673,10 +3756,22 @@ export async function initEdgeJS(options = {}) {
   const _runtimeShell = { _registerBuiltinOverride, _memfsRequire };
   _autoRegister(_runtimeShell, { fs: _sharedBridgeFs });
 
-  // ── Bridge-only mode ────────────────────────────────────────────────
-  // When no Wasm module is available, return a lightweight runtime backed
-  // entirely by our JS bridge modules (MEMFS fs, shell shims, etc.).
+  // ── Wasm runtime is required (unless explicitly opted out) ─────────
+  // The EdgeJS wasm module IS the product. Default: fail loudly so tests
+  // and dev workflows never silently degrade to stub-only polyfills.
+  // Pass { allowBridgeOnly: true } to initEdgeJS() to explicitly opt in
+  // to the JS-only fallback (not recommended; test coverage will be wrong).
   if (typeof EdgeJSModule !== 'function') {
+    if (!options.allowBridgeOnly) {
+      const tried = [options.moduleUrl || './edgejs.js'];
+      if (isNode) tried.push(options.modulePath || '../build/edge');
+      throw new Error(
+        `EdgeJS wasm runtime not found (tried: ${tried.join(', ')}).\n` +
+        `  Core devs:     npm run build   (requires Emscripten toolchain)\n` +
+        `  Embedding devs: npm run vendor:wasm   (downloads pre-built artifacts)`
+      );
+    }
+    // Explicit opt-in: return JS-only runtime without wasm.
     return {
       _registerBuiltinOverride,
       _getBuiltinOverride(name) { return _builtinOverrides.get(name); },
@@ -3688,7 +3783,6 @@ export async function initEdgeJS(options = {}) {
       },
 
       runFile(path) {
-        // M7: Log errors to stderr instead of swallowing silently
         try {
           _memfsRequire(String(path), _sharedProcessBridge.cwd());
           return 0;
@@ -3710,9 +3804,7 @@ export async function initEdgeJS(options = {}) {
         const cwd = opts.cwd ?? '/workspace';
         try {
           _sharedBridgeFs.mkdirSync(cwd, { recursive: true });
-        } catch {
-          /* exists */
-        }
+        } catch { /* exists */ }
         _sharedProcessBridge.chdir(cwd);
         const argv0 = opts.argv0 ?? 'node';
         const rest = Array.isArray(opts.argv) ? opts.argv.map(String) : [];
@@ -3726,11 +3818,7 @@ export async function initEdgeJS(options = {}) {
           _memfsRequire(String(entry), _sharedProcessBridge.cwd());
           return { status: 0, stdout: [], stderr: [] };
         } catch (err) {
-          try {
-            _sharedProcessBridge.stderr.write(`${err.stack || err.message}\n`);
-          } catch {
-            /* ignore */
-          }
+          try { _sharedProcessBridge.stderr.write(`${err.stack || err.message}\n`); } catch {}
           return { status: 1, stdout: [], stderr: [err.stack || err.message] };
         }
       },
@@ -3747,26 +3835,11 @@ export async function initEdgeJS(options = {}) {
       fs: _sharedBridgeFs,
       require: _memfsRequire,
       module: null,
-
-      // ── Sync/replication plane ─────────────────────────────────────
-      // Exposed separately from fs API for external sync engines.
-
-      /** Capture filesystem metadata snapshot (COW-friendly: hashes, not byte clones). */
       fsSnapshot() { return _sharedMemfs.snapshot(); },
-
-      /** Capture full snapshot with byte content (for initial sync/restore). */
       fsSnapshotFull() { return _sharedMemfs.snapshotFull(); },
-
-      /** Get journal entries since seq. Returns { gap, entries, gapFrom?, gapTo? }. */
       fsJournalSince(seq) { return _sharedMemfs.getJournalSince(seq); },
-
-      /** Subscribe to filesystem mutations. Returns unsubscribe function. */
       fsWatch(callback) { return _sharedMemfs.onMutation(callback); },
-
-      /** Begin a transactional batch of mutations. Returns txid. */
       fsBeginTx() { return _sharedMemfs.beginTx(); },
-
-      /** Commit the current transaction. */
       fsCommitTx() { return _sharedMemfs.commitTx(); },
 
       pushStdin(data) {
@@ -4195,7 +4268,131 @@ export async function initEdgeJS(options = {}) {
       source = source.substring(source.indexOf('\n') + 1);
     }
 
+    const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
+    const bridgeConsole = {
+      log: (...args) => {
+        const line = args.map(String).join(' ');
+        stdoutLines.push(line);
+        if (options.onStdout) options.onStdout(line);
+      },
+      error: (...args) => {
+        const line = args.map(String).join(' ');
+        stderrLines.push(line);
+        if (options.onStderr) options.onStderr(line);
+      },
+      warn: (...args) => {
+        const line = args.map(String).join(' ');
+        stderrLines.push(line);
+        if (options.onStderr) options.onStderr(line);
+      },
+      info: (...args) => {
+        const line = args.map(String).join(' ');
+        stdoutLines.push(line);
+        if (options.onStdout) options.onStdout(line);
+      },
+      debug: () => {},
+      trace: () => {},
+      dir: (...args) => {
+        const line = args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+        stdoutLines.push(line);
+        if (options.onStdout) options.onStdout(line);
+      },
+    };
+    const bridgeProcess = {
+      argv: Array.isArray(_sharedProcessBridge.argv) && _sharedProcessBridge.argv.length
+        ? [..._sharedProcessBridge.argv]
+        : ['node', scriptPath],
+      env: (() => {
+        const base = {
+          HOME: '/home/user',
+          PATH: '/usr/bin:/bin',
+          NODE_ENV: 'production',
+        };
+        const be = _sharedProcessBridge.env;
+        if (be && typeof be === 'object') {
+          for (const k of Object.keys(be)) {
+            try {
+              base[k] = be[k];
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        return { ...base, ...(options.env || {}) };
+      })(),
+      cwd: () => _sharedMemfs.cwd?.() || '/',
+      exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
+      stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
+      stderr: { write: (data) => { const s = String(data); stderrLines.push(s); if (options.onStderr) options.onStderr(s); } },
+      platform: 'linux',
+      arch: 'wasm32',
+      version: 'v22.0.0',
+      versions: { node: 'v22.0.0', v8: '12.0.0' },
+      hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
+      nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
+      on: () => ({ on: () => ({}) }),
+      removeListener: () => {},
+    };
+    const bridgeBuffer = globalThis.Buffer || { from: (x) => new Uint8Array(typeof x === 'string' ? new TextEncoder().encode(x) : x) };
+
+    const prevGConsole = globalThis.console;
+    const prevGProcess = globalThis.process;
+    const prevGBuffer = globalThis.Buffer;
+    globalThis.console = bridgeConsole;
+    globalThis.process = bridgeProcess;
+    globalThis.Buffer = bridgeBuffer;
+    try {
     const importMetaUrl = _memfsFileUrl(scriptPath);
+    if (_needsEsmTranspile(scriptPath, source) && _sourceHasTopLevelAwait(source)) {
+      try {
+        const { bundleMemfsScriptToEsmDataUrl } = await import('./memfs-esbuild-bundler.mjs');
+        const prevBundleMode = _memfsResolutionMode;
+        _memfsResolutionMode = 'import';
+        let dataUrl;
+        try {
+          dataUrl = await bundleMemfsScriptToEsmDataUrl({
+            absPath: scriptPath,
+            source,
+            importMetaUrlLiteral: JSON.stringify(importMetaUrl),
+            readFileSync: (p, enc) => _sharedBridgeFs.readFileSync(p, enc),
+            resolveModule: (spec, from) => _resolveModule(spec, from),
+          });
+        } finally {
+          _memfsResolutionMode = prevBundleMode;
+        }
+        _esmImportDirStack.length = 0;
+        _esmImportDirStack.push(dirname);
+        _pendingImportsForRun = new Set();
+        const prevDi = globalThis.__memfsDynamicImport;
+        globalThis.__memfsDynamicImport = _memfsDynamicImport;
+        try {
+          await import(/* webpackIgnore: true */ dataUrl);
+          for (;;) {
+            if (!_pendingImportsForRun || _pendingImportsForRun.size === 0) break;
+            await Promise.all([..._pendingImportsForRun]);
+          }
+          return { status: 0, stdout: stdoutLines, stderr: stderrLines };
+        } catch (err) {
+          if (err.exitCode !== undefined) {
+            return { status: err.exitCode, stdout: stdoutLines, stderr: stderrLines };
+          }
+          stderrLines.push(err.stack || err.message);
+          if (options.onStderr) options.onStderr(err.stack || err.message);
+          return { status: 1, stdout: stdoutLines, stderr: stderrLines };
+        } finally {
+          _pendingImportsForRun = null;
+          if (prevDi === undefined) delete globalThis.__memfsDynamicImport;
+          else globalThis.__memfsDynamicImport = prevDi;
+        }
+      } catch (err) {
+        return {
+          status: 1,
+          stdout: [],
+          stderr: [`ESM transpile failed for ${scriptPath}: ${err.message}`],
+        };
+      }
+    }
+
     if (_needsEsmTranspile(scriptPath, source)) {
       try {
         const esbuild = await import('esbuild');
@@ -4218,7 +4415,6 @@ export async function initEdgeJS(options = {}) {
       source = source.replace(/\bimport\s*\(/g, 'globalThis.__memfsDynamicImport(');
     }
 
-    const dirname = scriptPath.substring(0, scriptPath.lastIndexOf('/')) || '/';
     _esmImportDirStack.length = 0;
     _esmImportDirStack.push(dirname);
     _pendingImportsForRun = new Set();
@@ -4231,71 +4427,9 @@ export async function initEdgeJS(options = {}) {
       moduleObj.exports,
       scriptPath,
       dirname,
-      {
-        log: (...args) => {
-          const line = args.map(String).join(' ');
-          stdoutLines.push(line);
-          if (options.onStdout) options.onStdout(line);
-        },
-        error: (...args) => {
-          const line = args.map(String).join(' ');
-          stderrLines.push(line);
-          if (options.onStderr) options.onStderr(line);
-        },
-        warn: (...args) => {
-          const line = args.map(String).join(' ');
-          stderrLines.push(line);
-          if (options.onStderr) options.onStderr(line);
-        },
-        info: (...args) => {
-          const line = args.map(String).join(' ');
-          stdoutLines.push(line);
-          if (options.onStdout) options.onStdout(line);
-        },
-        debug: () => {},
-        trace: () => {},
-        dir: (...args) => {
-          const line = args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-          stdoutLines.push(line);
-          if (options.onStdout) options.onStdout(line);
-        },
-      },
-      {
-        argv: Array.isArray(_sharedProcessBridge.argv) && _sharedProcessBridge.argv.length
-          ? [..._sharedProcessBridge.argv]
-          : ['node', scriptPath],
-        env: (() => {
-          const base = {
-            HOME: '/home/user',
-            PATH: '/usr/bin:/bin',
-            NODE_ENV: 'production',
-          };
-          const be = _sharedProcessBridge.env;
-          if (be && typeof be === 'object') {
-            for (const k of Object.keys(be)) {
-              try {
-                base[k] = be[k];
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-          return { ...base, ...(options.env || {}) };
-        })(),
-        cwd: () => _sharedMemfs.cwd?.() || '/',
-        exit: (code) => { throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code }); },
-        stdout: { write: (data) => { const s = String(data); stdoutLines.push(s); if (options.onStdout) options.onStdout(s); } },
-        stderr: { write: (data) => { const s = String(data); stderrLines.push(s); if (options.onStderr) options.onStderr(s); } },
-        platform: 'linux',
-        arch: 'wasm32',
-        version: 'v22.0.0',
-        versions: { node: 'v22.0.0', v8: '12.0.0' },
-        hrtime: { bigint: () => BigInt(Math.round(performance.now() * 1e6)) },
-        nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),
-        on: () => ({ on: () => ({}) }),
-        removeListener: () => {},
-      },
-      globalThis.Buffer || { from: (x) => new Uint8Array(typeof x === 'string' ? new TextEncoder().encode(x) : x) },
+      bridgeConsole,
+      bridgeProcess,
+      bridgeBuffer,
       globalThis.setTimeout,
       globalThis.setInterval,
       globalThis.clearTimeout,
@@ -4329,17 +4463,36 @@ export async function initEdgeJS(options = {}) {
       if (prevDi === undefined) delete globalThis.__memfsDynamicImport;
       else globalThis.__memfsDynamicImport = prevDi;
     }
+    } finally {
+      globalThis.console = prevGConsole;
+      globalThis.process = prevGProcess;
+      if (prevGBuffer === undefined) delete globalThis.Buffer;
+      else globalThis.Buffer = prevGBuffer;
+    }
   }
 
   async function executeCliAsync(args) {
     const stdoutStart = stdoutBuffer.length;
     const stderrStart = stderrBuffer.length;
 
+    if (args.length >= 1 && args[0] !== '-p') {
+      const scriptPath = String(args[0]);
+      try {
+        let src = _sharedBridgeFs.readFileSync(scriptPath, 'utf8');
+        if (src.startsWith('#!')) src = src.substring(src.indexOf('\n') + 1);
+        if (_needsEsmTranspile(scriptPath, src) && _sourceHasTopLevelAwait(src)) {
+          _useJsBridge = true;
+        }
+      } catch {
+        /* missing file — fall through */
+      }
+    }
+
     if (!_useJsBridge) {
       try {
         const status = invokeMain(args);
         const stdout = stdoutBuffer.slice(stdoutStart);
-        const stderr = stdoutBuffer.slice(stderrStart);
+        const stderr = stderrBuffer.slice(stderrStart);
         if (status === 1 && stderr.some((s) => s.includes('Failed to initialize') || s.includes('Aborted'))) {
           _useJsBridge = true;
         } else {
@@ -4364,7 +4517,7 @@ export async function initEdgeJS(options = {}) {
       return result;
     }
     if (args.length >= 1) {
-      return await executeViaBridgeAsync(args[0]);
+      return await executeViaBridgeAsync(String(args[0]));
     }
 
     return { status: 1, stdout: [], stderr: ['No script specified'] };
