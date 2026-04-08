@@ -1,4 +1,4 @@
-module github.com/maceip/v9/cmd/gvisor-proxy
+module github.com/maceip/v9/cmd/v9-net
 
 go 1.22.0
 
