@@ -230,7 +230,12 @@ class NetworkStack {
     for (let i = 0; i < 16384; i++) {
       const p = this._nextPort++;
       if (this._nextPort > 65535) this._nextPort = 49152;
-      if (!this._conns.has(p) && !this._listeners.has(p)) return p;
+      if (this._listeners.has(p)) continue;
+      let used = false;
+      for (const k of this._conns.keys()) {
+        if (k.startsWith(p + ':')) { used = true; break; }
+      }
+      if (!used) return p;
     }
     throw new Error('No ephemeral ports');
   }
@@ -328,13 +333,16 @@ class NetworkStack {
     }
 
     // RST for unmatched
-    if (!(t.flags & RST)) this._sendRst(ip.src, t.sPort, t.dPort, t.seq, t.ack, t.flags);
+    if (!(t.flags & RST)) this._sendRst(ip.src, t.sPort, t.dPort, t.seq, t.ack, t.flags, t.payload.length);
   }
 
-  _sendRst(rIpArr, rPort, lPort, theirSeq, theirAck, theirFlags) {
+  _sendRst(rIpArr, rPort, lPort, theirSeq, theirAck, theirFlags, dataLen) {
     let seq, ackN, flags;
     if (theirFlags & ACK) { seq = theirAck; ackN = 0; flags = RST; }
-    else { seq = 0; ackN = (theirSeq + 1) >>> 0; flags = RST | ACK; }
+    else {
+      const segLen = (dataLen || 0) + ((theirFlags & SYN) ? 1 : 0) + ((theirFlags & FIN) ? 1 : 0);
+      seq = 0; ackN = (theirSeq + segLen) >>> 0; flags = RST | ACK;
+    }
     const seg = tcpSeg(lPort, rPort, seq, ackN, flags, 0, new Uint8Array(0));
     const cs = tcpCk(new Uint8Array(VM_IP), new Uint8Array(rIpArr), seg);
     seg[16] = (cs >>> 8) & 0xff; seg[17] = cs & 0xff;
@@ -427,23 +435,28 @@ class TcpConn {
         break;
 
       case S_FIN_WAIT1:
-        if (t.flags & ACK) {
-          this._sendUna = t.ack;
-          if (t.flags & FIN) {
-            this._recvNxt = (t.seq + 1) >>> 0;
-            this._state = S_TIME_WAIT;
-            this._txAck();
-            this._socket?._onEnd();
-            this._startTW();
-          } else {
-            this._state = S_FIN_WAIT2;
-            this._clearRtx();
-          }
-        }
+        if (t.flags & ACK) this._sendUna = t.ack;
         if (t.payload.length > 0 && t.seq === this._recvNxt) {
           this._recvNxt = (this._recvNxt + t.payload.length) >>> 0;
           this._socket?._onData(t.payload);
           this._txAck();
+        }
+        if ((t.flags & FIN) && (t.flags & ACK)) {
+          this._clearRtx();
+          this._recvNxt = (this._recvNxt + 1) >>> 0;
+          this._state = S_TIME_WAIT;
+          this._txAck();
+          this._socket?._onEnd();
+          this._startTW();
+        } else if (t.flags & FIN) {
+          // Simultaneous close
+          this._recvNxt = (this._recvNxt + 1) >>> 0;
+          this._state = S_CLOSING;
+          this._txAck();
+          this._socket?._onEnd();
+        } else if (t.flags & ACK) {
+          this._clearRtx();
+          this._state = S_FIN_WAIT2;
         }
         break;
 
@@ -466,8 +479,16 @@ class TcpConn {
         if (t.flags & ACK) this._sendUna = t.ack;
         break;
 
+      case S_CLOSING:
+        if (t.flags & ACK) {
+          this._clearRtx();
+          this._state = S_TIME_WAIT;
+          this._startTW();
+        }
+        break;
+
       case S_LAST_ACK:
-        if (t.flags & ACK) { this._state = S_CLOSED; this._cleanup(); }
+        if (t.flags & ACK) { this._clearRtx(); this._state = S_CLOSED; this._cleanup(); }
         break;
 
       case S_TIME_WAIT:
@@ -633,11 +654,13 @@ export class GvisorSocket extends EventEmitter {
     }
     if (callback) this.once('connect', callback);
 
-    resolveDns(host).then(resolved => {
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    const resolveP = isLocalhost ? Promise.resolve(host) : resolveDns(host);
+    resolveP.then(resolved => {
       const stack = getGvisorStack();
       const lPort = stack._allocPort();
       // Remap localhost → NAT loopback (192.168.127.254 → host 127.0.0.1)
-      const rIp = (resolved === '127.0.0.1' || resolved === '::1')
+      const rIp = (isLocalhost || resolved === '127.0.0.1' || resolved === '::1')
         ? '192.168.127.254' : resolved;
       this._conn = new TcpConn(stack, lPort, rIp, port);
       this._conn._socket = this;
@@ -645,23 +668,29 @@ export class GvisorSocket extends EventEmitter {
       stack._conns.set(key, this._conn);
       stack._whenReady(() => this._conn._sendSyn());
     }).catch(err => {
-      this.emit('error', err);
-      queueMicrotask(() => this.emit('close', true));
+      this.connecting = false;
+      this._destroyed = true;
+      queueMicrotask(() => {
+        if (this.listenerCount('error') > 0) this.emit('error', err);
+        this.emit('close', true);
+      });
     });
     return this;
   }
 
   write(data, encoding, cb) {
     if (typeof encoding === 'function') { cb = encoding; encoding = null; }
+    if (this._destroyed || !this.writable) return false;
     if (typeof data === 'string') data = new TextEncoder().encode(data);
     else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
     else if (!(data instanceof Uint8Array)) data = new Uint8Array(data.buffer || data);
     try {
       this._conn.write(data);
       if (cb) queueMicrotask(cb);
+      queueMicrotask(() => this.emit('drain'));
       return true;
     } catch (err) {
-      this.emit('error', err);
+      if (this.listenerCount('error') > 0) this.emit('error', err);
       return false;
     }
   }
@@ -681,9 +710,12 @@ export class GvisorSocket extends EventEmitter {
     this._destroyed = true;
     this.readable = false;
     this.writable = false;
+    this.connecting = false;
     this._conn?.destroy();
-    if (err) this.emit('error', err);
-    queueMicrotask(() => this.emit('close', !!err));
+    queueMicrotask(() => {
+      if (err && this.listenerCount('error') > 0) this.emit('error', err);
+      this.emit('close', !!err);
+    });
     return this;
   }
 
@@ -699,23 +731,31 @@ export class GvisorSocket extends EventEmitter {
 
   _onConnect() {
     this.connecting = false;
-    this.emit('connect');
-    this.emit('ready');
+    queueMicrotask(() => {
+      this.emit('connect');
+      this.emit('ready');
+    });
   }
   _onData(data) {
-    if (this._encoding) this.emit('data', new TextDecoder().decode(data));
-    else this.emit('data', data);
+    const d = this._encoding ? new TextDecoder(this._encoding).decode(data) : data;
+    queueMicrotask(() => this.emit('data', d));
   }
   _onEnd() {
     this.readable = false;
-    this.emit('end');
-    queueMicrotask(() => this.emit('close', false));
+    queueMicrotask(() => {
+      this.emit('end');
+      if (!this.writable) this.emit('close', false);
+    });
   }
   _onError(err) {
     this.readable = false;
     this.writable = false;
-    this.emit('error', err);
-    queueMicrotask(() => this.emit('close', true));
+    this._destroyed = true;
+    this.connecting = false;
+    queueMicrotask(() => {
+      if (this.listenerCount('error') > 0) this.emit('error', err);
+      this.emit('close', true);
+    });
   }
 }
 
