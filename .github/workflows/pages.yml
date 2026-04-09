@@ -70,11 +70,16 @@ jobs:
           make configure
           make build
 
-      - name: Verify wasm runtime
+      - name: Verify wasm runtime and strip shebang
         run: |
           set -e
           test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
           test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
+          # Emscripten emits #!/usr/bin/env node which breaks browser import()
+          if head -1 dist/edgejs.js | grep -q '^#!'; then
+            echo "Stripping shebang from dist/edgejs.js"
+            sed -i '1{/^#!/d}' dist/edgejs.js
+          fi
           echo "Wasm runtime verified"
           ls -la dist/edgejs.*
 

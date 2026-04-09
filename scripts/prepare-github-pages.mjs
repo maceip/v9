@@ -78,6 +78,18 @@ for (const f of ['edgejs.js', 'edgejs.wasm']) {
   copyFileSync(from, to);
 }
 
+// Strip shebang from edgejs.js — Emscripten sometimes emits #!/usr/bin/env node
+// which is invalid when the browser loads it via dynamic import().
+{
+  const edgeJsDest = join(docsDist, 'edgejs.js');
+  let src = readFileSync(edgeJsDest, 'utf8');
+  if (src.startsWith('#!')) {
+    src = src.replace(/^#![^\n]*\n?/, '');
+    writeFileSync(edgeJsDest, src, 'utf8');
+    console.log('Stripped shebang from docs/dist/edgejs.js');
+  }
+}
+
 // Optional: SDK bundle
 for (const f of ['anthropic-sdk-bundle.js']) {
   const from = join(srcDist, f);
