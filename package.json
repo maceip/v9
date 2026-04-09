@@ -55,6 +55,7 @@
     "test:native-addon-reject": "node tests/test-native-addon-reject.mjs",
     "test:run-node-entry": "node tests/test-run-node-entry-argv.mjs",
     "test:memfs-reference-app": "node tests/test-memfs-reference-app.mjs",
+    "test:memfs-multi-package-app": "node tests/test-memfs-multi-package-app.mjs",
     "test:node-test-runner": "node tests/test-node-test-runner.mjs",
     "test:memfs-import-meta-dynamic": "node tests/test-memfs-import-meta-and-dynamic.mjs",
     "test:memfs-node-test": "node tests/test-memfs-node-test-in-tab.mjs",
