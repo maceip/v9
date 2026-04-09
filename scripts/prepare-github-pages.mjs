@@ -65,7 +65,44 @@ for (const htmlPath of walkHtmlFiles(docsWeb)) {
   writeFileSync(htmlPath, html, 'utf8');
 }
 
+// Wasm runtime is required — fail if missing
 for (const f of ['edgejs.js', 'edgejs.wasm']) {
+  const from = join(srcDist, f);
+  const to = join(docsDist, f);
+  if (!existsSync(from)) {
+    console.error(`FATAL: ${from} not found. The wasm runtime is required for deployment.`);
+    console.error('  npm run vendor:wasm   (download from CI)');
+    console.error('  npm run build         (build from source)');
+    process.exit(1);
+  }
+  copyFileSync(from, to);
+}
+
+// Make edgejs.js browser-importable:
+// 1. Strip shebang (#!/usr/bin/env node) — invalid JS for import()
+// 2. Append ESM export — Emscripten outputs `var EdgeJSModule = (...)()` which is
+//    a script, not an ES module. Browser import() sees no exports without this.
+{
+  const edgeJsDest = join(docsDist, 'edgejs.js');
+  let src = readFileSync(edgeJsDest, 'utf8');
+  let changed = false;
+  if (src.startsWith('#!')) {
+    src = src.replace(/^#![^\n]*\n?/, '');
+    changed = true;
+    console.log('Stripped shebang from docs/dist/edgejs.js');
+  }
+  if (!src.includes('export default')) {
+    src += '\nexport default EdgeJSModule;\n';
+    changed = true;
+    console.log('Appended ESM export default to docs/dist/edgejs.js');
+  }
+  if (changed) {
+    writeFileSync(edgeJsDest, src, 'utf8');
+  }
+}
+
+// Optional: SDK bundle
+for (const f of ['anthropic-sdk-bundle.js']) {
   const from = join(srcDist, f);
   const to = join(docsDist, f);
   if (existsSync(from)) copyFileSync(from, to);

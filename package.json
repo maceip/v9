@@ -5,6 +5,9 @@
   "description": "EdgeJS browser runtime — Node.js in WebAssembly via Emscripten",
   "type": "module",
   "main": "napi-bridge/index.js",
+  "bin": {
+    "v9": "./bin/v9.mjs"
+  },
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",
@@ -62,6 +65,7 @@
     "lint": "node scripts/lint-repo.mjs",
     "size": "node scripts/artifact-sizes.mjs",
     "clean": "make clean",
+    "vendor:wasm": "node scripts/vendor-wasm.mjs",
     "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
     "pages:prepare": "node scripts/prepare-github-pages.mjs",
     "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"

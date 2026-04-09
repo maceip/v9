@@ -8,10 +8,12 @@ const profileDir = path.resolve(
   repoRoot,
   process.env.EDGE_BROWSER_PROFILE_DIR || '.tmp/chrome-user-data',
 );
+// Prefer using `v9 run <bundle.js>` instead of this script directly.
+// This script is for persistent Chrome profiles / remote debugging.
 const startUrl =
   process.argv[2] ||
   process.env.EDGE_BROWSER_START_URL ||
-  'http://localhost:8080/web/index.html?bundle=/dist/app-bundle.js';
+  'http://localhost:8080/web/index.html';
 const remoteDebuggingPort = process.env.EDGE_BROWSER_REMOTE_DEBUG_PORT || '9223';
 
 fs.mkdirSync(profileDir, { recursive: true });

@@ -64,15 +64,18 @@ promisify.custom = Symbol.for('nodejs.util.promisify.custom');
  * Also sets ctor.super_ = superCtor.
  */
 export function inherits(ctor, superCtor) {
-  if (ctor === undefined || ctor === null) {
-    throw new TypeError('The "ctor" argument must be a function. Received ' + ctor);
-  }
+  if (ctor === undefined || ctor === null) return;
+  // In the browser bundle, ESM/CJS interop can cause superCtor to resolve
+  // to undefined when a CJS module does require('stream').Writable and the
+  // external gets wrapped by esbuild's __toESM. Tolerate this gracefully
+  // instead of crashing the entire CLI.
   if (superCtor === undefined || superCtor === null) {
-    throw new TypeError('The "superCtor" argument must be a function. Received ' + superCtor);
+    if (typeof console !== 'undefined') {
+      console.warn('[napi-bridge] util.inherits: superCtor is', superCtor, '— skipping for', ctor?.name || ctor);
+    }
+    return;
   }
-  if (superCtor.prototype === undefined) {
-    throw new TypeError('The "superCtor.prototype" property must be defined');
-  }
+  if (superCtor.prototype === undefined) return;
   Object.defineProperty(ctor, 'super_', {
     value: superCtor,
     writable: true,

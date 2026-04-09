@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "V9 OAuth Bridge",
+  "version": "1.0.2",
+  "description": "Redirects OAuth localhost callbacks to the V9 OAuth bridge page",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "https://maceip.github.io/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [{
+      "id": "v9_oauth_rules",
+      "enabled": true,
+      "path": "rules.json"
+    }]
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
