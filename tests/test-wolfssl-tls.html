@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>wolfSSL TLS test</title>
+<script type="importmap">
+{
+  "imports": {
+    "http": "/napi-bridge/http-exports.js",  "node:http": "/napi-bridge/http-exports.js",
+    "net": "/napi-bridge/net-exports.js",    "node:net": "/napi-bridge/net-exports.js",
+    "tls": "/napi-bridge/tls-exports.js",    "node:tls": "/napi-bridge/tls-exports.js",
+    "dns": "/napi-bridge/dns-exports.js",    "node:dns": "/napi-bridge/dns-exports.js",
+    "events": "/napi-bridge/events-exports.js", "node:events": "/napi-bridge/events-exports.js",
+    "stream": "/napi-bridge/stream-exports.js", "node:stream": "/napi-bridge/stream-exports.js",
+    "buffer": "/napi-bridge/buffer-exports.js", "node:buffer": "/napi-bridge/buffer-exports.js",
+    "url": "/napi-bridge/url-exports.js",    "node:url": "/napi-bridge/url-exports.js",
+    "util": "/napi-bridge/util-exports.js",  "node:util": "/napi-bridge/util-exports.js",
+    "querystring": "/napi-bridge/querystring-exports.js",
+    "crypto": "/napi-bridge/crypto-exports.js", "node:crypto": "/napi-bridge/crypto-exports.js",
+    "process": "/napi-bridge/process-exports.js", "node:process": "/napi-bridge/process-exports.js",
+    "assert": "/napi-bridge/assert-exports.js",
+    "fs": "/napi-bridge/fs-exports.js",      "node:fs": "/napi-bridge/fs-exports.js",
+    "path": "/napi-bridge/path-exports.js",  "node:path": "/napi-bridge/path-exports.js",
+    "os": "/napi-bridge/os-exports.js",      "node:os": "/napi-bridge/os-exports.js",
+    "string_decoder": "/napi-bridge/string_decoder-exports.js",
+    "undici": "/napi-bridge/undici-stub.js",
+    "zlib": "/napi-bridge/zlib-exports.js"
+  }
+}
+</script>
+<script>
+  if (!globalThis.process) globalThis.process = { env: {}, versions: {}, platform: 'browser', argv: [] };
+  if (!globalThis.process.env) globalThis.process.env = {};
+  if (!globalThis.global) globalThis.global = globalThis;
+</script>
+</head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+const log = document.getElementById('log');
+function emit(msg) { log.textContent += msg + '\n'; console.log(msg); }
+
+const params = new URLSearchParams(location.search);
+globalThis.process.env.NODEJS_GVISOR_WS_URL = params.get('ws') || 'ws://localhost:8765';
+emit('[setup] gvisor WS = ' + globalThis.process.env.NODEJS_GVISOR_WS_URL);
+
+try {
+  const tls = await import('tls');
+  emit('[import] tls module loaded');
+
+  const host = params.get('host') || '192.168.127.254';
+  const port = parseInt(params.get('port') || '4434', 10);
+  emit(`[tls] connecting to ${host}:${port}...`);
+
+  const sock = tls.connect({ host, port, rejectUnauthorized: false }, () => {
+    emit('[tls] secureConnect fired — TLS handshake complete!');
+    sock.write('hello from browser TLS');
+  });
+
+  sock.on('secureConnect', () => {
+    emit('[tls] secureConnect event');
+  });
+
+  sock.on('data', (chunk) => {
+    const text = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+    emit('[tls] received: ' + text.trim());
+  });
+
+  sock.on('end', () => emit('[tls] connection ended'));
+  sock.on('close', () => emit('[tls] connection closed'));
+  sock.on('error', (err) => emit('[tls] ERROR: ' + err.message));
+
+  // Signal test completion after timeout
+  setTimeout(() => emit('[done]'), 10000);
+
+} catch (err) {
+  emit('[error] ' + err.message);
+  emit('[error] ' + err.stack);
+  emit('[done]');
+}
+</script>
+</body></html>
