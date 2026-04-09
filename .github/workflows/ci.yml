@@ -88,21 +88,53 @@ jobs:
           make test-integration
           make test-soak-quick
 
-  # Verify vendored wasm is present on main — catches pushes that
-  # forgot to commit the wasm after rebuilding.
+  # Verify vendored wasm is present on main — auto-vendors from
+  # integration tier artifacts if missing.
   wasm-vendored:
     name: Wasm vendored check
+    needs: integration
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Check vendored wasm
+        id: check
         run: |
-          set -e
+          if [ -f dist/edgejs.js ] && [ -f dist/edgejs.wasm ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "Vendored wasm present"
+            ls -la dist/edgejs.*
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Vendored wasm missing — will download from integration artifacts"
+          fi
+
+      - name: Download wasm from integration artifacts
+        if: steps.check.outputs.present == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: edgejs-wasm-*
+          path: /tmp/wasm-artifacts
+          merge-multiple: true
+
+      - name: Vendor wasm and commit
+        if: steps.check.outputs.present == 'false'
+        run: |
+          mkdir -p dist build
+          find /tmp/wasm-artifacts -name 'edgejs.js' -exec cp {} dist/ \;
+          find /tmp/wasm-artifacts -name 'edgejs.wasm' -exec cp {} dist/ \;
+          find /tmp/wasm-artifacts -name 'edge' -exec cp {} build/ \;
           if [ ! -f dist/edgejs.js ] || [ ! -f dist/edgejs.wasm ]; then
-            echo "::error::dist/edgejs.{js,wasm} not committed. The wasm runtime must be vendored on main."
-            echo "::error::Run: npm run vendor:wasm && git add dist/edgejs.js dist/edgejs.wasm && git commit"
+            echo "::error::Could not find wasm in integration artifacts"
             exit 1
           fi
-          echo "Vendored wasm present"
           ls -la dist/edgejs.*
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/edgejs.js dist/edgejs.wasm
+          git diff --cached --quiet && echo "No changes" || \
+            git commit -m "chore: auto-vendor wasm from CI [skip ci]" && \
+            git push
