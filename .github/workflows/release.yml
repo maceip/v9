@@ -114,9 +114,11 @@ jobs:
 
       - name: Pack v9 CLI
         run: |
-          npm pack --pack-destination=out/
+          mkdir -p out
+          TARBALL=$(npm pack --pack-destination=out/ 2>/dev/null | tail -1)
+          echo "Packed: $TARBALL"
           # Rename to predictable name
-          mv out/*.tgz out/v9-cli.tgz
+          mv "out/$TARBALL" out/v9-cli.tgz || mv out/*.tgz out/v9-cli.tgz
           ls -lh out/
 
       - uses: actions/upload-artifact@v4
