@@ -7,6 +7,17 @@ Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-i
 ## Quick start
 
 ```bash
+make setup                        # one-time: install Emscripten 4.0.23 + npm deps
+source ~/emsdk/emsdk_env.sh       # activate Emscripten in your shell
+make all                          # fetch → configure → build → test
+```
+
+See **[BUILDING.md](BUILDING.md)** for the full from-scratch walkthrough. For CI parity, Docker, Cory/EC2 runbook: **[`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md)**. Docker: [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml). GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
+
+Once built, start the dev server:
+
+```bash
+node scripts/dev-server.mjs
 npm install
 npm link          # makes the “v9” command available globally
 ```
@@ -83,7 +94,7 @@ node scripts/dev-server.mjs
 # Opens http://localhost:8080/ — pass ?bundle=/dist/your-file.js&autorun=1
 ```
 
-### Claude Code CLI in the tab (reference app)
+**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
 
 A **reference-app** stress case on the same stack.
 

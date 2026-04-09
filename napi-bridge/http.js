@@ -13,6 +13,7 @@
 import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable } from './streams.js';
 import { browserHttpFetch } from './transport-policy.mjs';
+import { isGvisorAvailable, GvisorSocket, GvisorServer as _GvisorTcpServer } from './gvisor-net.js';
 
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
@@ -651,6 +652,128 @@ class ClientRequest extends Writable {
     return headers;
   }
 
+  /** Build headers without stripping forbidden ones — for gvisor TCP path. */
+  _buildAllHeaders() {
+    const headers = {};
+    for (const [lk, val] of Object.entries(this._reqHeaders)) {
+      headers[this._headerNames[lk] || lk] = String(val);
+    }
+    return headers;
+  }
+
+  /**
+   * Send HTTP/1.1 request over gvisor raw TCP socket.
+   * All headers survive — no browser forbidden-header stripping.
+   */
+  _doGvisorRequest(body) {
+    const opts = this._options;
+    const method = (opts.method || 'GET').toUpperCase();
+    const path = opts.path || '/';
+    const hostname = opts.hostname || opts.host || 'localhost';
+    const port = parseInt(opts.port || (opts.protocol === 'https:' ? 443 : 80), 10);
+    const headers = this._buildAllHeaders();
+
+    // Ensure Host header
+    if (!headers['Host'] && !headers['host']) {
+      headers['Host'] = port === 80 || port === 443 ? hostname : `${hostname}:${port}`;
+    }
+
+    // Set Content-Length for body
+    if (body && !headers['Content-Length'] && !headers['content-length']) {
+      headers['Content-Length'] = String(body.byteLength);
+    }
+
+    // Build raw HTTP/1.1 request
+    let head = `${method} ${path} HTTP/1.1\r\n`;
+    for (const [k, v] of Object.entries(headers)) head += `${k}: ${v}\r\n`;
+    head += 'Connection: close\r\n\r\n';
+
+    const sock = new GvisorSocket(null);
+    sock.connect(port, hostname, () => {
+      sock.write(head);
+      if (body && body.byteLength) sock.write(body);
+    });
+
+    // Parse HTTP response from raw TCP stream
+    let respBuf = new Uint8Array(0);
+    let headersParsed = false;
+    let respHeaders = {};
+    let respRawHeaders = [];
+    let statusCode = 0;
+    let statusMessage = '';
+    let incomingMsg = null;
+
+    sock.on('data', (chunk) => {
+      const c = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer || chunk);
+      const nb = new Uint8Array(respBuf.length + c.length);
+      nb.set(respBuf); nb.set(c, respBuf.length);
+      respBuf = nb;
+
+      if (!headersParsed) {
+        const str = _decoder.decode(respBuf);
+        const idx = str.indexOf('\r\n\r\n');
+        if (idx === -1) return;
+        headersParsed = true;
+
+        const headerStr = str.slice(0, idx);
+        const bodyStart = respBuf.slice(_encoder.encode(str.slice(0, idx + 4)).length);
+        const lines = headerStr.split('\r\n');
+        const statusLine = lines[0].match(/^HTTP\/[\d.]+ (\d+)\s*(.*)/);
+        statusCode = statusLine ? parseInt(statusLine[1], 10) : 502;
+        statusMessage = statusLine ? statusLine[2] : '';
+
+        for (let i = 1; i < lines.length; i++) {
+          const colon = lines[i].indexOf(':');
+          if (colon <= 0) continue;
+          const key = lines[i].slice(0, colon).trim();
+          const val = lines[i].slice(colon + 1).trim();
+          const lk = key.toLowerCase();
+          respRawHeaders.push(key, val);
+          if (lk === 'set-cookie') {
+            if (!respHeaders[lk]) respHeaders[lk] = [val];
+            else respHeaders[lk].push(val);
+          } else if (respHeaders[lk] !== undefined) {
+            respHeaders[lk] += ', ' + val;
+          } else {
+            respHeaders[lk] = val;
+          }
+        }
+
+        // Create IncomingMessage-like Readable
+        incomingMsg = new Readable({ read() {} });
+        incomingMsg.statusCode = statusCode;
+        incomingMsg.statusMessage = statusMessage;
+        incomingMsg.headers = respHeaders;
+        incomingMsg.rawHeaders = respRawHeaders;
+        incomingMsg.socket = sock;
+        incomingMsg.httpVersion = '1.1';
+        incomingMsg.httpVersionMajor = 1;
+        incomingMsg.httpVersionMinor = 1;
+        incomingMsg.complete = false;
+
+        this._clearTimeoutTimer();
+        this.emit('response', incomingMsg);
+
+        if (bodyStart.length) incomingMsg.push(bodyStart);
+      } else if (incomingMsg) {
+        incomingMsg.push(c);
+      }
+    });
+
+    sock.on('end', () => {
+      if (incomingMsg) { incomingMsg.complete = true; incomingMsg.push(null); }
+    });
+    sock.on('close', () => {
+      if (incomingMsg && !incomingMsg.complete) { incomingMsg.complete = true; incomingMsg.push(null); }
+    });
+    sock.on('error', (err) => {
+      this._clearTimeoutTimer();
+      if (!this._destroyed) this.emit('error', err);
+    });
+
+    this.socket = sock;
+  }
+
   // Start a streaming fetch with ReadableStream body.
   // Subsequent _write() calls enqueue directly into the stream.
   // end() closes the stream.
@@ -745,28 +868,14 @@ class ClientRequest extends Writable {
         this._streamController.close();
       }
     } else {
-      // Buffered mode: build body and fire fetch
+      // Buffered mode: build body
       const method = (this._options.method || 'GET').toUpperCase();
       let body = null;
-      const fetchExtra = {};
 
       if (this._bodyChunks.length > 0 && method !== 'GET' && method !== 'HEAD') {
         if (this._bodyChunks.length === 1) {
-          // Single chunk — zero-copy, pass directly
           body = this._bodyChunks[0];
-        } else if (_canStreamUpload()) {
-          // Multiple chunks + streaming supported — yield chunks via ReadableStream
-          // to avoid concatenation copy
-          const chunks = this._bodyChunks;
-          body = new ReadableStream({
-            start(controller) {
-              for (const c of chunks) controller.enqueue(c);
-              controller.close();
-            },
-          });
-          fetchExtra.duplex = 'half';
         } else {
-          // Fallback: concatenate into one buffer
           const totalLen = this._bodyChunks.reduce((s, c) => s + c.byteLength, 0);
           const combined = new Uint8Array(totalLen);
           let offset = 0;
@@ -776,6 +885,25 @@ class ClientRequest extends Writable {
           }
           body = combined;
         }
+      }
+
+      // ── Route decision: gvisor TCP (all headers) → fetch (forbidden-stripped) ──
+      if (_hasBrowsingContext && isGvisorAvailable()) {
+        this._doGvisorRequest(body);
+        return;
+      }
+
+      // Fallback: browser fetch (headers stripped) or Node-native fetch
+      const fetchExtra = {};
+      if (body && this._bodyChunks.length > 1 && _canStreamUpload()) {
+        const chunks = this._bodyChunks;
+        body = new ReadableStream({
+          start(controller) {
+            for (const c of chunks) controller.enqueue(c);
+            controller.close();
+          },
+        });
+        fetchExtra.duplex = 'half';
       }
 
       const url = this._buildUrl();
@@ -970,6 +1098,7 @@ class FakeServer extends EventEmitter {
     registry[this._port] = this;
 
     this._maybeStartHttpRelay();
+    this._maybeStartGvisorListener();
 
     queueMicrotask(() => {
       this.emit('listening');
@@ -1036,6 +1165,78 @@ class FakeServer extends EventEmitter {
     } catch {
       this._relayWs = null;
     }
+  }
+
+  /** @type {import('./gvisor-net.js').GvisorServer|null} */
+  _gvisorTcp = null;
+
+  _maybeStartGvisorListener() {
+    if (!isGvisorAvailable()) return;
+    try {
+      this._gvisorTcp = new _GvisorTcpServer();
+      this._gvisorTcp.on('connection', (socket) => this._handleGvisorTcpConn(socket));
+      this._gvisorTcp.listen(this._port);
+    } catch { /* gvisor not running or port conflict — fall through to FakeServer */ }
+  }
+
+  _handleGvisorTcpConn(socket) {
+    let buf = new Uint8Array(0);
+    const onData = (chunk) => {
+      const c = chunk instanceof Uint8Array ? chunk : _encoder.encode(String(chunk));
+      const nb = new Uint8Array(buf.length + c.length);
+      nb.set(buf); nb.set(c, buf.length);
+      buf = nb;
+
+      const str = _decoder.decode(buf);
+      const idx = str.indexOf('\r\n\r\n');
+      if (idx === -1) return;
+
+      socket.removeListener('data', onData);
+      const lines = str.slice(0, idx).split('\r\n');
+      const parts = lines[0].split(' ');
+      const method = parts[0];
+      const url = parts[1] || '/';
+      const headers = {};
+      for (let i = 1; i < lines.length; i++) {
+        const colon = lines[i].indexOf(':');
+        if (colon > 0) {
+          headers[lines[i].slice(0, colon).toLowerCase().trim()] = lines[i].slice(colon + 1).trim();
+        }
+      }
+
+      const bodyStr = str.slice(idx + 4);
+      let bodyU8 = null;
+      if (bodyStr.length) bodyU8 = _encoder.encode(bodyStr);
+
+      const req = new ServerIncomingMessage({
+        method, url, host: headers.host || `localhost:${this._port}`, headers, body: bodyU8,
+      });
+      const res = new ServerResponse();
+
+      res.once('finish', () => {
+        const chunks = res._bodyChunks || [];
+        let body = new Uint8Array(0);
+        if (chunks.length === 1) body = chunks[0];
+        else if (chunks.length > 1) {
+          const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+          body = new Uint8Array(total);
+          let o = 0;
+          for (const c of chunks) { body.set(c, o); o += c.byteLength; }
+        }
+        const hdr = { ...res.getHeaders() };
+        if (!hdr['content-length']) hdr['content-length'] = String(body.byteLength);
+        let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage || 'OK'}\r\n`;
+        for (const [k, v] of Object.entries(hdr)) head += `${k}: ${v}\r\n`;
+        head += '\r\n';
+        socket.write(head);
+        if (body.byteLength) socket.write(body);
+        socket.end();
+      });
+
+      if (this._handler) this._handler(req, res);
+      this.emit('request', req, res);
+    };
+    socket.on('data', onData);
   }
 
   _sendRelayHttpResponse(id, fields) {
@@ -1114,6 +1315,10 @@ class FakeServer extends EventEmitter {
     this._listening = false;
     const registry = getBrowserLocalServerRegistry();
     delete registry[this._port];
+    if (this._gvisorTcp) {
+      try { this._gvisorTcp.close(); } catch { /* ignore */ }
+      this._gvisorTcp = null;
+    }
     if (typeof cb === 'function') queueMicrotask(cb);
     queueMicrotask(() => this.emit('close'));
     return this;

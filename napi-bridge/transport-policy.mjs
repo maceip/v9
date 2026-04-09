@@ -41,11 +41,15 @@ export function getHttpTransportMode() {
 
 /**
  * Raw TCP/TLS: bridge does not ship a tunnel client (AGPL wisp-js is optional / external).
- * @returns {'none'|'wisp-expected'|'embedder'}
+ * gvisor-tap-vsock: local Go binary provides full TCP/IP via WebSocket (NODEJS_GVISOR_WS_URL).
+ * @returns {'none'|'wisp-expected'|'embedder'|'gvisor'}
  */
 export function getRawSocketTransportMode() {
   const e = _env();
   if (typeof globalThis.__NODE_TAB_WISP_TCP_CONNECT === 'function') return 'embedder';
+  if (e.NODEJS_GVISOR_WS_URL && e.NODEJS_GVISOR_WS_URL !== '' && e.NODEJS_GVISOR_WS_URL !== '0') {
+    return 'gvisor';
+  }
   if (e.NODEJS_WISP_WS_URL && e.NODEJS_WISP_WS_URL !== '' && e.NODEJS_WISP_WS_URL !== '0') {
     return 'wisp-expected';
   }

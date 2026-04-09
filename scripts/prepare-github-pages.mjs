@@ -78,15 +78,26 @@ for (const f of ['edgejs.js', 'edgejs.wasm']) {
   copyFileSync(from, to);
 }
 
-// Strip shebang from edgejs.js — Emscripten sometimes emits #!/usr/bin/env node
-// which is invalid when the browser loads it via dynamic import().
+// Make edgejs.js browser-importable:
+// 1. Strip shebang (#!/usr/bin/env node) — invalid JS for import()
+// 2. Append ESM export — Emscripten outputs `var EdgeJSModule = (...)()` which is
+//    a script, not an ES module. Browser import() sees no exports without this.
 {
   const edgeJsDest = join(docsDist, 'edgejs.js');
   let src = readFileSync(edgeJsDest, 'utf8');
+  let changed = false;
   if (src.startsWith('#!')) {
     src = src.replace(/^#![^\n]*\n?/, '');
-    writeFileSync(edgeJsDest, src, 'utf8');
+    changed = true;
     console.log('Stripped shebang from docs/dist/edgejs.js');
+  }
+  if (!src.includes('export default')) {
+    src += '\nexport default EdgeJSModule;\n';
+    changed = true;
+    console.log('Appended ESM export default to docs/dist/edgejs.js');
+  }
+  if (changed) {
+    writeFileSync(edgeJsDest, src, 'utf8');
   }
 }
 

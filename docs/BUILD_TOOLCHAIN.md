@@ -14,7 +14,7 @@ Quick path without Emscripten: **`npm run vendor:wasm`** downloads pre-built art
 |--------|------------------|------|
 | **Node.js** | ≥ 18 (CI uses **22**) | Tests, `napi-bridge`, dev server |
 | **Git + CMake + Python 3** | OS or package manager | Configuring EdgeJS (CMake) |
-| **Emscripten** | **3.1.64** (match CI) | `emcmake` / `emcc` cross-build |
+| **Emscripten** | **4.0.23** (match CI; LLD 22) | `emcmake` / `emcc` cross-build |
 | **EdgeJS source** | `https://github.com/wasmerio/edgejs.git` (`edgejs-src/`) | Upstream runtime |
 | **NAPI headers** | Submodule `edgejs-src/napi` | `EDGE_NAPI_PROVIDER=imports` (HTTPS URL forced in `Makefile` **fetch**) |
 | **Emscripten patch** | `patches/edgejs-emscripten.patch` | OpenSSL/libuv/CLI CMake fixes for `Emscripten` |
@@ -47,7 +47,7 @@ After artifacts exist, run **tests** (next section on EC2, or `npm ci && npm run
 
 EC2 (Cory) stays always-on; **your laptop can go offline** and still get the same toolchain via **Linux in Docker** (bind-mount this repo).
 
-- **Image:** `docker/Dockerfile` — Ubuntu 24.04, Node **22**, **emsdk** (default **`tot`** so **wasm-ld** matches the stable Cory link path; override with `--build-arg EMSDK_FLAVOR=3.1.64` if you want CI-pinned LLVM and accept possible host/kernel crashes).
+- **Image:** `docker/Dockerfile` — Ubuntu 24.04, Node **22**, **emsdk** (default **4.0.23**; override with `--build-arg EMSDK_FLAVOR=tot` for bleeding-edge).
 - **Build image:** from repo root:  
   `docker build -f docker/Dockerfile -t v9-wasm-toolchain .`
 - **Full Wasm build in container:**  
@@ -83,7 +83,7 @@ CI’s **Integration** job does two things in order: **build Wasm** (`make confi
 
 ### Emscripten
 
-Install and activate **emsdk 3.1.64** ([Emscripten downloads](https://emscripten.org/docs/getting_started/downloads.html)). Every **configure/build** terminal:
+Install and activate **emsdk 4.0.23** ([Emscripten downloads](https://emscripten.org/docs/getting_started/downloads.html)), or run `make setup-emsdk`. Every **configure/build** terminal:
 
 ```bash
 source "$EMSDK/emsdk_env.sh"
@@ -153,13 +153,13 @@ Optional: `EDGEJS_STRICT_IMPORTS=1` is used in parts of `make test-integration` 
 ### Windows (this machine)
 
 1. Use **Git Bash** or **MSYS2** so `make` and the `Makefile`’s `bash` `SHELL` work (not `cmd.exe`).
-2. Install and activate **emsdk 3.1.64**; set `EMSDK` or rely on `~/emsdk` / `%USERPROFILE%\emsdk` per `Makefile`.
+2. Install and activate **emsdk 4.0.23** (or `make setup-emsdk`); set `EMSDK` or rely on `~/emsdk` / `%USERPROFILE%\emsdk` per `Makefile`.
 3. From Git Bash at the repo root: same `make fetch`, `source …/emsdk_env.sh`, `make configure`, `make build`.
 4. For the **unified contract**, install Chrome/Chromium, point **`CHROME_BIN`** at the `.exe`, run **`npm ci`**, then **`npm run test:nodejs-in-tab-contract`** (same phases as Cory).
 
 ### CI (GitHub Actions)
 
-- **Integration job** (`.github/workflows/ci.yml`): after the quick tier, runs `make configure` + `make build` with emsdk **3.1.64**, uploads **`edgejs-wasm-<sha>`** (`dist/edgejs.wasm`, `dist/edgejs.js`, `build/edge`), then runs **`make test-integration`** and **`make test-soak-quick`** (same sequence Cory should mirror after producing artifacts).
+- **Integration job** (`.github/workflows/ci.yml`): after the quick tier, runs `make configure` + `make build` with emsdk **4.0.23**, uploads **`edgejs-wasm-<sha>`** (`dist/edgejs.wasm`, `dist/edgejs.js`, `build/edge`), then runs **`make test-integration`** and **`make test-soak-quick`** (same sequence Cory should mirror after producing artifacts).
 - **Manual Wasm-only rebuild** (`.github/workflows/wasm-rebuild.yml`): **Actions → “Wasm runtime rebuild” → Run workflow** — builds and uploads the same artifact **without** requiring the quick tier (for emergency recovery).
 - **Pages** (`.github/workflows/pages.yml`): same `make configure` / `make build` before assembling `docs/`.
 
@@ -186,7 +186,7 @@ Optional reproducibility: after `make fetch`, `git -C edgejs-src checkout <sha>`
 
 | Symptom | Likely fix |
 |--------|------------|
-| **`wasm-ld` SIGSEGV** in `lld::wasm::ImportSection::addImport` at the **final link** (Emscripten **3.1.64** / **LLD 19**) | Confirmed on some hosts (e.g. **Ubuntu 24.04**, **kernel 6.17**, official `wasm-binaries` tarball). Not a corrupt download (same `md5` after re-install), not ASLR (`setarch -R` still crashes). **Workaround:** use a **newer SDK** so you get **LLD ≥ 22**, e.g. `cd ~/emsdk && ./emsdk install tot && ./emsdk activate tot`, then clean and `make configure && make build`. CI still pins **3.1.64**; if your machine needs `tot`, use that locally until LLVM 19 catches up. |
+| **`wasm-ld` SIGSEGV** at the final link | Was caused by LLD 19 in emsdk 3.1.64. Fixed by upgrading to **4.0.23** (LLD 22). If you still see this on an older SDK, upgrade: `EMSDK_VERSION=4.0.23 make setup-emsdk`. |
 | **`missing build/edge.js`** or tiny broken **`build/edge`** | Fixed in-repo: Emscripten often emits **`-o edge`** as a large **`build/edge`** JS file; the Makefile now renames it to **`edge.js`** and writes the Node shim via **`scripts/write-build-edge-shim.mjs`**. |
 | **`SyntaxError: Invalid or unexpected token`** loading **`build/edge`**, or MEMFS tests fail with **`Unexpected token 'export'`** / **`runFileAsync` exit 1** | Newer Emscripten glue can start with **`#!/usr/bin/env node`**. That is fine for **`node build/edge.js`** but invalid inside **`new Function(...)`**, so **`require('./build/edge')`** used to fail until the shim strips the first line. Regenerate **`build/edge`** with **`node scripts/write-build-edge-shim.mjs build`** (or **`make build`**). |
 | Contract **Phase 1** fails / browser won’t start | Set **`CHROME_BIN`** to Chromium; install `chromium` / `chromium-browser`; run `npm ci` so `playwright-core` is present. |

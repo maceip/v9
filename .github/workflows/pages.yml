@@ -106,11 +106,16 @@ jobs:
           # Wasm MUST be in docs/dist/
           test -f docs/dist/edgejs.js || { echo "::error::docs/dist/edgejs.js missing"; exit 1; }
           test -f docs/dist/edgejs.wasm || { echo "::error::docs/dist/edgejs.wasm missing"; exit 1; }
+          # Verify shebang is gone from deployed file
+          if head -1 docs/dist/edgejs.js | grep -q '^#!'; then
+            echo "::error::docs/dist/edgejs.js still has shebang after strip"
+            exit 1
+          fi
           if [ -f docs/napi-bridge/zlib.js ]; then
             grep -qF "from 'fflate'" docs/napi-bridge/zlib.js
             ! grep -qF 'node_modules/fflate' docs/napi-bridge/zlib.js
           fi
-          echo "Deployment verified — wasm runtime present"
+          echo "Deployment verified — wasm runtime present, shebang stripped"
 
       - uses: actions/configure-pages@v5
 

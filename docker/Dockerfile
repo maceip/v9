@@ -1,6 +1,5 @@
 # Reproducible EdgeJS / v9 Wasm toolchain for engineer laptops (Docker).
-# Matches the successful Cory path: modern wasm-ld via emsdk `tot` by default
-# (LLD 19 in 3.1.64 can SIGSEGV on some host kernels — see docs/BUILD_TOOLCHAIN.md).
+# Pins emsdk 4.0.23 (LLD 22) — same version as CI.
 #
 # Build from repo root:
 #   docker build -f docker/Dockerfile -t v9-wasm-toolchain .
@@ -9,8 +8,8 @@
 #   docker run --rm -v "$PWD:/workspace" -w /workspace v9-wasm-toolchain \
 #     bash -lc 'make fetch && make configure && make build'
 #
-# Optional: pin CI-like SDK (may still hit wasm-ld issues on some hosts):
-#   docker build -f docker/Dockerfile --build-arg EMSDK_FLAVOR=3.1.64 -t v9-wasm-3164 .
+# Override SDK version:
+#   docker build -f docker/Dockerfile --build-arg EMSDK_FLAVOR=tot -t v9-wasm-tot .
 
 # syntax=docker/dockerfile:1
 ARG UBUNTU_TAG=24.04
@@ -44,8 +43,8 @@ RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk
 
 WORKDIR /opt/emsdk
 
-# Default: tot (~ LLD 23) — same workaround class as Cory EC2 for stable final link.
-ARG EMSDK_FLAVOR=tot
+# Default: 4.0.23 (LLD 22) — matches CI pin.
+ARG EMSDK_FLAVOR=4.0.23
 RUN ./emsdk install "${EMSDK_FLAVOR}" \
   && ./emsdk activate "${EMSDK_FLAVOR}"
 
