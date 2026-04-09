@@ -3756,11 +3756,10 @@ export async function initEdgeJS(options = {}) {
   const _runtimeShell = { _registerBuiltinOverride, _memfsRequire };
   _autoRegister(_runtimeShell, { fs: _sharedBridgeFs });
 
-  // ── Wasm runtime is required (unless explicitly opted out) ─────────
-  // The EdgeJS wasm module IS the product. Default: fail loudly so tests
-  // and dev workflows never silently degrade to stub-only polyfills.
-  // Pass { allowBridgeOnly: true } to initEdgeJS() to explicitly opt in
-  // to the JS-only fallback (not recommended; test coverage will be wrong).
+  // ── Wasm runtime is required ────────────────────────────────────────
+  // The EdgeJS wasm module IS the product. Throw unconditionally so
+  // broken deployments and test environments are never silent.
+  // Only { allowBridgeOnly: true } skips this (undocumented, internal).
   if (typeof EdgeJSModule !== 'function') {
     if (!options.allowBridgeOnly) {
       const tried = [options.moduleUrl || './edgejs.js'];

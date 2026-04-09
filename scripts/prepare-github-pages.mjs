@@ -65,7 +65,21 @@ for (const htmlPath of walkHtmlFiles(docsWeb)) {
   writeFileSync(htmlPath, html, 'utf8');
 }
 
-for (const f of ['edgejs.js', 'edgejs.wasm', 'anthropic-sdk-bundle.js']) {
+// Wasm runtime is required — fail if missing
+for (const f of ['edgejs.js', 'edgejs.wasm']) {
+  const from = join(srcDist, f);
+  const to = join(docsDist, f);
+  if (!existsSync(from)) {
+    console.error(`FATAL: ${from} not found. The wasm runtime is required for deployment.`);
+    console.error('  npm run vendor:wasm   (download from CI)');
+    console.error('  npm run build         (build from source)');
+    process.exit(1);
+  }
+  copyFileSync(from, to);
+}
+
+// Optional: SDK bundle
+for (const f of ['anthropic-sdk-bundle.js']) {
   const from = join(srcDist, f);
   const to = join(docsDist, f);
   if (existsSync(from)) copyFileSync(from, to);
