@@ -63,11 +63,20 @@ jobs:
           make configure
           make build
 
+      - name: Verify wasm build output
+        run: |
+          set -e
+          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js not produced by build"; exit 1; }
+          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm not produced by build"; exit 1; }
+          test -f build/edge || { echo "::error::build/edge not produced by build"; exit 1; }
+          echo "Wasm build verified"
+          ls -la dist/edgejs.*
+
       - name: Upload Wasm build artifacts
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: edgejs-wasm-${{ github.sha }}
+          retention-days: 180
           path: |
             dist/edgejs.wasm
             dist/edgejs.js
@@ -78,3 +87,22 @@ jobs:
           source "$EMSDK/emsdk_env.sh"
           make test-integration
           make test-soak-quick
+
+  # Verify vendored wasm is present on main — catches pushes that
+  # forgot to commit the wasm after rebuilding.
+  wasm-vendored:
+    name: Wasm vendored check
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check vendored wasm
+        run: |
+          set -e
+          if [ ! -f dist/edgejs.js ] || [ ! -f dist/edgejs.wasm ]; then
+            echo "::error::dist/edgejs.{js,wasm} not committed. The wasm runtime must be vendored on main."
+            echo "::error::Run: npm run vendor:wasm && git add dist/edgejs.js dist/edgejs.wasm && git commit"
+            exit 1
+          fi
+          echo "Vendored wasm present"
+          ls -la dist/edgejs.*

@@ -1,11 +1,9 @@
 # Deploy docs/ to GitHub Pages.
 #
-# The landing page (glass terminal, zoom animations) lives in docs/ and is
-# committed directly — it deploys in ~30 seconds with no build step.
-#
-# Runtime artifacts (wasm, CLI bundle) are built by the separate CI workflow
-# and wasm-rebuild.yml.  Their absence is handled gracefully by the landing
-# page ("RUNTIME UNAVAILABLE").
+# The wasm runtime (dist/edgejs.{js,wasm}) is vendored in the repo.
+# If missing, the workflow falls back to downloading from the latest CI
+# Integration run. Deployment FAILS if wasm is not available — the runtime
+# is the product, not optional.
 #
 # If the job fails immediately with "Branch … is not allowed to deploy":
 # → Settings → Environments → github-pages → Deployment branches → "All branches"
@@ -44,29 +42,41 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Fetch the latest Wasm build artifacts from CI so dist/ has edgejs.{js,wasm}
-      - name: Download latest Wasm artifacts from CI
-        continue-on-error: true
+      # Wasm should be vendored in the repo (dist/edgejs.{js,wasm}).
+      # If not present (e.g. fresh repo before first build), try CI artifacts.
+      - name: Ensure wasm runtime exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -x
+          set -e
+          if [ -f dist/edgejs.js ] && [ -f dist/edgejs.wasm ]; then
+            echo "Wasm runtime found in checkout (vendored)"
+            ls -la dist/edgejs.*
+            exit 0
+          fi
+
+          echo "Wasm not vendored — downloading from latest CI run..."
           mkdir -p dist
-          # Find the most recent successful CI run on main that uploaded wasm artifacts
           RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main \
             --status success --limit 10 --json databaseId,conclusion \
             --jq '[.[] | select(.conclusion=="success")][0].databaseId')
-          if [ -n "$RUN_ID" ]; then
-            echo "Downloading wasm artifacts from CI run $RUN_ID"
-            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --pattern "edgejs-wasm-*" --dir /tmp/wasm-artifacts || true
-            # Artifacts unpack into a subdirectory named after the artifact
-            find /tmp/wasm-artifacts -name 'edgejs.js' -exec cp {} dist/ \;
-            find /tmp/wasm-artifacts -name 'edgejs.wasm' -exec cp {} dist/ \;
-            ls -la dist/edgejs.* 2>/dev/null || echo "Warning: wasm files not found in artifact"
-          else
-            echo "No successful CI run with wasm artifacts found"
+
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No successful CI run found and wasm is not vendored. Run: npm run vendor:wasm && git add dist/edgejs.js dist/edgejs.wasm && git commit"
+            exit 1
           fi
+
+          echo "Downloading from CI run $RUN_ID"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --pattern "edgejs-wasm-*" --dir /tmp/wasm-artifacts
+          find /tmp/wasm-artifacts -name 'edgejs.js' -exec cp {} dist/ \;
+          find /tmp/wasm-artifacts -name 'edgejs.wasm' -exec cp {} dist/ \;
+
+          # Hard check — no silent skip
+          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing after CI download"; exit 1; }
+          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing after CI download"; exit 1; }
+          echo "Wasm runtime downloaded from CI"
+          ls -la dist/edgejs.*
 
       # Bundle the Anthropic SDK for browser use
       - name: Bundle Anthropic SDK
@@ -75,7 +85,6 @@ jobs:
 
       # Assemble web/ + napi-bridge/ into docs/ and write .nojekyll
       - name: Assemble docs/ (web + napi-bridge)
-        continue-on-error: true
         run: node scripts/prepare-github-pages.mjs
 
       # Bundle CLI if @anthropic-ai/claude-code is available (devDependency)
@@ -83,17 +92,20 @@ jobs:
         continue-on-error: true
         run: node scripts/bundle-claude-for-pages.mjs
 
-      - name: Verify landing page essentials
+      - name: Verify deployment essentials
         run: |
           set -e
           test -f docs/index.html
           test -f docs/js/v9-app.js
           test -f docs/js/zoom.js
+          # Wasm MUST be in docs/dist/ — this is not optional
+          test -f docs/dist/edgejs.js || { echo "::error::docs/dist/edgejs.js missing — prepare-github-pages failed to copy wasm"; exit 1; }
+          test -f docs/dist/edgejs.wasm || { echo "::error::docs/dist/edgejs.wasm missing"; exit 1; }
           if [ -f docs/napi-bridge/zlib.js ]; then
             grep -qF "from 'fflate'" docs/napi-bridge/zlib.js
             ! grep -qF 'node_modules/fflate' docs/napi-bridge/zlib.js
           fi
-          echo "Landing page verified"
+          echo "Deployment verified — wasm runtime present"
 
       - uses: actions/configure-pages@v5
 

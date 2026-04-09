@@ -3757,14 +3757,13 @@ export async function initEdgeJS(options = {}) {
   _autoRegister(_runtimeShell, { fs: _sharedBridgeFs });
 
   // ── Wasm runtime is required ────────────────────────────────────────
-  // In Node.js (tests, CLI): throw so failures are never silent.
-  // In browser: the CLI pre-checks before launching; if we get here
-  // without wasm it means a Pages deploy is missing artifacts —
-  // surface the error visibly but don't crash the terminal UI.
+  // The EdgeJS wasm module IS the product. Throw unconditionally so
+  // broken deployments and test environments are never silent.
+  // Only { allowBridgeOnly: true } skips this (undocumented, internal).
   if (typeof EdgeJSModule !== 'function') {
-    if (isNode && !options.allowBridgeOnly) {
+    if (!options.allowBridgeOnly) {
       const tried = [options.moduleUrl || './edgejs.js'];
-      tried.push(options.modulePath || '../build/edge');
+      if (isNode) tried.push(options.modulePath || '../build/edge');
       throw new Error(
         `EdgeJS wasm runtime not found (tried: ${tried.join(', ')}).\n` +
         `  Core devs:     npm run build   (requires Emscripten toolchain)\n` +
