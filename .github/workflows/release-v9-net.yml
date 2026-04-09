@@ -1,15 +1,16 @@
-name: Release v9-net
+name: Release
 
 on:
   push:
-    tags:
-      - 'v9-net-v*'
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-cli:
+  # ── v9-net CLI binaries (Go, static) ────────────────────────────
+  build-v9-net:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,6 +27,9 @@ jobs:
           - goos: darwin
             goarch: arm64
             suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -34,19 +38,22 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Build v9-net CLI
+      - name: Build v9-net
         working-directory: cmd/v9-net
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
-        run: go build -trimpath -ldflags="-s -w" -o v9-net-${{ matrix.suffix }} .
+        run: |
+          go mod tidy
+          go build -trimpath -ldflags="-s -w" -o v9-net-${{ matrix.suffix }} .
 
       - uses: actions/upload-artifact@v4
         with:
           name: v9-net-${{ matrix.suffix }}
           path: cmd/v9-net/v9-net-${{ matrix.suffix }}
 
+  # ── v9-net Android APK (gomobile) ───────────────────────────────
   build-android:
     runs-on: ubuntu-latest
     steps:
@@ -70,56 +77,89 @@ jobs:
           go install golang.org/x/mobile/cmd/gobind@latest
           gomobile init
 
-      - name: Build AAR with gomobile
+      - name: Build AAR
         working-directory: pkg/v9net
         run: |
           go mod tidy
           gomobile bind -target=android/arm64,android/arm -androidapi 26 \
             -o ../../android/app/libs/v9net.aar .
 
-      - name: Build APK with Gradle
+      - name: Build APK
         working-directory: android
         run: |
-          chmod +x gradlew 2>/dev/null || true
-          # Use gradle wrapper or system gradle
-          if [ -f gradlew ]; then
-            ./gradlew assembleRelease --no-daemon
-          else
-            gradle assembleRelease --no-daemon
-          fi
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: Collect APK
         run: |
           mkdir -p out
-          find android -name '*.apk' -exec cp {} out/ \;
-          cd out
-          # Rename to include version
-          for f in *.apk; do
-            mv "$f" "v9-net-android-arm64.apk"
-            break
-          done
+          find android -name '*.apk' -exec cp {} out/v9-net-android.apk \;
           ls -lh out/
 
       - uses: actions/upload-artifact@v4
         with:
           name: v9-net-android
-          path: out/v9-net-android-arm64.apk
+          path: out/v9-net-android.apk
 
-  release:
-    needs: [build-cli, build-android]
+  # ── v9 Node.js CLI (npm pack) ───────────────────────────────────
+  build-v9-cli:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Pack v9 CLI
+        run: |
+          npm pack --pack-destination=out/
+          # Rename to predictable name
+          mv out/*.tgz out/v9-cli.tgz
+          ls -lh out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v9-cli
+          path: out/v9-cli.tgz
+
+  # ── Create GitHub Release ───────────────────────────────────────
+  release:
+    needs: [build-v9-net, build-android, build-v9-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate tag
+        id: tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y%m%d)
+          TAG="v0.1.0-${DATE}-${SHORT_SHA}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Generated tag: ${TAG}"
+
+      - name: Create git tag
+        run: |
+          git tag ${{ steps.tag.outputs.tag }}
+          git push origin ${{ steps.tag.outputs.tag }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
       - name: List release assets
-        run: ls -lh artifacts/
+        run: ls -lhR artifacts/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "v9 ${{ steps.tag.outputs.tag }}"
           generate_release_notes: true
           files: |
             artifacts/v9-net-*
+            artifacts/v9-cli.tgz
