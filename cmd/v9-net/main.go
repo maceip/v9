@@ -103,13 +103,24 @@ func main() {
 	)
 	flag.Parse()
 
-	// Default port forwards if none specified
-	if len(portFlags) == 0 {
+	// Default port forwards if none specified (or all empty)
+	hasReal := false
+	for _, p := range portFlags {
+		if strings.TrimSpace(p) != "" {
+			hasReal = true
+			break
+		}
+	}
+	if !hasReal {
 		portFlags = sliceFlags{"3000", "8080"}
 	}
 
 	forwards := make(map[string]string)
 	for _, p := range portFlags {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
 		parts := strings.Split(p, ":")
 		switch len(parts) {
 		case 3:
@@ -117,9 +128,18 @@ func main() {
 		case 2:
 			forwards["0.0.0.0:"+parts[0]] = vmIP + ":" + parts[1]
 		case 1:
-			// Simple form: -p 3000 means forward host:3000 → vm:3000
 			forwards["0.0.0.0:"+parts[0]] = vmIP + ":" + parts[0]
+		default:
+			fmt.Fprintf(os.Stderr, "warning: ignoring invalid port mapping: %s\n", p)
 		}
+	}
+
+	// Reject unknown positional args (common mistake: passing a port without -p)
+	if args := flag.Args(); len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "  Did you mean: v9-net -p %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "  Or:           v9-net -listen :%s\n", args[0])
+		os.Exit(1)
 	}
 
 	if *debug {
@@ -153,6 +173,11 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", websocket.Handler(func(ws *websocket.Conn) {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "  warning: session recovered from panic: %v\n", r)
+			}
+		}()
 		ws.PayloadType = websocket.BinaryFrame
 		if err := vn.AcceptQemu(context.Background(), ws); err != nil {
 			log.Printf("session ended: %v\n", err)
