@@ -70,11 +70,16 @@ jobs:
           make configure
           make build
 
-      - name: Verify wasm runtime
+      - name: Verify wasm runtime and strip shebang
         run: |
           set -e
           test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
           test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
+          # Emscripten emits #!/usr/bin/env node which breaks browser import()
+          if head -1 dist/edgejs.js | grep -q '^#!'; then
+            echo "Stripping shebang from dist/edgejs.js"
+            sed -i '1{/^#!/d}' dist/edgejs.js
+          fi
           echo "Wasm runtime verified"
           ls -la dist/edgejs.*
 
@@ -101,11 +106,16 @@ jobs:
           # Wasm MUST be in docs/dist/
           test -f docs/dist/edgejs.js || { echo "::error::docs/dist/edgejs.js missing"; exit 1; }
           test -f docs/dist/edgejs.wasm || { echo "::error::docs/dist/edgejs.wasm missing"; exit 1; }
+          # Verify shebang is gone from deployed file
+          if head -1 docs/dist/edgejs.js | grep -q '^#!'; then
+            echo "::error::docs/dist/edgejs.js still has shebang after strip"
+            exit 1
+          fi
           if [ -f docs/napi-bridge/zlib.js ]; then
             grep -qF "from 'fflate'" docs/napi-bridge/zlib.js
             ! grep -qF 'node_modules/fflate' docs/napi-bridge/zlib.js
           fi
-          echo "Deployment verified — wasm runtime present"
+          echo "Deployment verified — wasm runtime present, shebang stripped"
 
       - uses: actions/configure-pages@v5
 
