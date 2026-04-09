@@ -1,9 +1,9 @@
 # Deploy docs/ to GitHub Pages.
 #
-# The wasm runtime (dist/edgejs.{js,wasm}) is vendored in the repo.
-# If missing, the workflow falls back to downloading from the latest CI
-# Integration run. Deployment FAILS if wasm is not available — the runtime
-# is the product, not optional.
+# The wasm runtime is required for the site to work. This workflow is
+# self-sufficient: if wasm is vendored in the repo, it uses that.
+# If not, it builds from source with Emscripten before deploying.
+# Deployment FAILS if wasm cannot be produced.
 #
 # If the job fails immediately with "Branch … is not allowed to deploy":
 # → Settings → Environments → github-pages → Deployment branches → "All branches"
@@ -27,7 +27,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -42,40 +42,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Wasm should be vendored in the repo (dist/edgejs.{js,wasm}).
-      # If not present (e.g. fresh repo before first build), try CI artifacts.
-      - name: Ensure wasm runtime exists
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # ── Ensure wasm runtime exists ───────────────────────────────
+      # Priority: vendored in repo > build from source
+      - name: Check for vendored wasm
+        id: wasm-check
         run: |
-          set -e
           if [ -f dist/edgejs.js ] && [ -f dist/edgejs.wasm ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
             echo "Wasm runtime found in checkout (vendored)"
             ls -la dist/edgejs.*
-            exit 0
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Wasm not vendored — will build from source"
           fi
 
-          echo "Wasm not vendored — downloading from latest CI run..."
-          mkdir -p dist
-          RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main \
-            --status success --limit 10 --json databaseId,conclusion \
-            --jq '[.[] | select(.conclusion=="success")][0].databaseId')
+      - name: Setup Emscripten
+        if: steps.wasm-check.outputs.found == 'false'
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: tot
 
-          if [ -z "$RUN_ID" ]; then
-            echo "::error::No successful CI run found and wasm is not vendored. Run: npm run vendor:wasm && git add dist/edgejs.js dist/edgejs.wasm && git commit"
-            exit 1
-          fi
+      - name: Build wasm from source
+        if: steps.wasm-check.outputs.found == 'false'
+        run: |
+          source "$EMSDK/emsdk_env.sh"
+          make fetch
+          make configure
+          make build
 
-          echo "Downloading from CI run $RUN_ID"
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --pattern "edgejs-wasm-*" --dir /tmp/wasm-artifacts
-          find /tmp/wasm-artifacts -name 'edgejs.js' -exec cp {} dist/ \;
-          find /tmp/wasm-artifacts -name 'edgejs.wasm' -exec cp {} dist/ \;
-
-          # Hard check — no silent skip
-          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing after CI download"; exit 1; }
-          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing after CI download"; exit 1; }
-          echo "Wasm runtime downloaded from CI"
+      - name: Verify wasm runtime
+        run: |
+          set -e
+          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
+          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
+          echo "Wasm runtime verified"
           ls -la dist/edgejs.*
 
       # Bundle the Anthropic SDK for browser use
@@ -98,8 +98,8 @@ jobs:
           test -f docs/index.html
           test -f docs/js/v9-app.js
           test -f docs/js/zoom.js
-          # Wasm MUST be in docs/dist/ — this is not optional
-          test -f docs/dist/edgejs.js || { echo "::error::docs/dist/edgejs.js missing — prepare-github-pages failed to copy wasm"; exit 1; }
+          # Wasm MUST be in docs/dist/
+          test -f docs/dist/edgejs.js || { echo "::error::docs/dist/edgejs.js missing"; exit 1; }
           test -f docs/dist/edgejs.wasm || { echo "::error::docs/dist/edgejs.wasm missing"; exit 1; }
           if [ -f docs/napi-bridge/zlib.js ]; then
             grep -qF "from 'fflate'" docs/napi-bridge/zlib.js
