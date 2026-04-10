@@ -62,28 +62,34 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
-          check-latest: true
+          go-version: 'stable'
 
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK + NDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;27.0.12077973'
 
       - name: Install gomobile
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
+          export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
+          echo "Go version: $(go version)"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "NDK: $(ls $ANDROID_HOME/ndk/ 2>/dev/null || echo 'not found')"
 
       - name: Build AAR
         working-directory: pkg/v9net
         run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
           go mod tidy
-          gomobile bind -target=android/arm64,android/arm -androidapi 26 \
+          gomobile bind -v -target=android/arm64,android/arm -androidapi 26 \
             -o ../../android/app/libs/v9net.aar .
 
       - name: Build APK
