@@ -181,19 +181,34 @@
 
     // Auto-detect v9-net — enables gvisor TCP networking.
     // Override with ?gvisor=ws://host:port query param.
-    // Probe the control endpoint (/__v9net/forward) not the QEMU endpoint (/).
+    // Set env var OPTIMISTICALLY so modules see it at import time.
+    // If the probe fails, clear it (but by then modules already loaded
+    // and will get gvisor — if v9-net isn't running, connect() will
+    // fail gracefully with WS error).
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
       const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
+      // Set immediately — modules check this synchronously at import time
+      _env.NODEJS_GVISOR_WS_URL = wsUrl;
+      // Disable stare.network relay when v9-net handles ports directly
+      delete _env.NODEJS_IN_TAB_HTTP_RELAY;
+      delete _env.NODEJS_IN_TAB_HTTP_RELAY_WS;
       const probeUrl = new URL(wsUrl);
       probeUrl.pathname = '/__v9net/forward';
       const probe = new WebSocket(probeUrl.toString());
       probe.onopen = () => {
         probe.close();
-        _env.NODEJS_GVISOR_WS_URL = wsUrl;
         console.log('[v9-net] detected on ' + wsUrl + ' — TCP networking enabled');
       };
-      probe.onerror = () => { /* v9-net not running, no-op */ };
+      probe.onerror = () => {
+        // v9-net not running — clear gvisor env, restore relay
+        delete _env.NODEJS_GVISOR_WS_URL;
+        const host = globalThis.location?.hostname || '';
+        if (host.endsWith('.github.io')) {
+          _env.NODEJS_IN_TAB_HTTP_RELAY = '1';
+          _env.NODEJS_IN_TAB_HTTP_RELAY_WS = 'wss://relay.stare.network/__in-tab-http-ws';
+        }
+      };
     } catch { /* ignore */ }
 
     const _cwd = '/';
