@@ -178,6 +178,22 @@
         }
       }
     } catch { /* ignore */ }
+
+    // Auto-detect v9-net — enables gvisor TCP networking.
+    // Override with ?gvisor=ws://host:port query param.
+    try {
+      const params = new URLSearchParams(globalThis.location?.search || '');
+      const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
+      const probe = new WebSocket(wsUrl);
+      probe.binaryType = 'arraybuffer';
+      probe.onopen = () => {
+        probe.close();
+        _env.NODEJS_GVISOR_WS_URL = wsUrl;
+        console.log('[v9-net] detected on ' + wsUrl + ' — TCP networking enabled');
+      };
+      probe.onerror = () => { /* v9-net not running, no-op */ };
+    } catch { /* ignore */ }
+
     const _cwd = '/';
     // Minimal EventEmitter for signal handling (signal-exit library needs this)
     const _listeners = {};
