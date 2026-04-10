@@ -175,15 +175,17 @@ func main() {
 				fmt.Fprintf(os.Stderr, "  warning: session recovered from panic: %v\n", r)
 			}
 		}()
+		fmt.Fprintf(os.Stderr, "  [ws] QEMU session from %s\n", ws.Request().RemoteAddr)
 		ws.PayloadType = websocket.BinaryFrame
 		if err := vn.AcceptQemu(context.Background(), ws); err != nil {
-			log.Printf("session ended: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  [ws] session ended: %v\n", err)
 		}
 	}))
 
 	// Port forward control endpoint — uses gvisor's built-in PortsForwarder
 	// via the services mux (/services/forwarder/expose and /unexpose)
 	mux.Handle("/__v9net/forward", websocket.Handler(func(ws *websocket.Conn) {
+		fmt.Fprintf(os.Stderr, "  [ctrl] control connection from %s\n", ws.Request().RemoteAddr)
 		defer ws.Close()
 		dec := json.NewDecoder(ws)
 		enc := json.NewEncoder(ws)

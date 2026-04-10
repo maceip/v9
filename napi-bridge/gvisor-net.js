@@ -208,6 +208,7 @@ class NetworkStack {
 
     ws.onopen = () => {
       this._ready = true;
+      console.log('[v9-net:stack] WebSocket connected to ' + this._wsUrl);
       this._sendGratuitousArp();
       for (const cb of this._readyCbs) cb();
       this._readyCbs = [];
@@ -216,10 +217,11 @@ class NetworkStack {
       this._onWsData(new Uint8Array(ev.data));
     };
     ws.onclose = () => {
+      console.warn('[v9-net:stack] WebSocket closed');
       this._ready = false;
       for (const c of this._conns.values()) c._onError(new Error('gvisor WS closed'));
     };
-    ws.onerror = () => { this._ready = false; };
+    ws.onerror = (e) => { console.error('[v9-net:stack] WebSocket error', e); this._ready = false; };
   }
 
   _whenReady(cb) {
@@ -817,10 +819,12 @@ export class GvisorServer extends EventEmitter {
       port = o.port; host = o.host;
     }
     this._port = port || 0;
+    console.log('[v9-net:server] listen(' + (this._port || 'auto') + ') called');
     const stack = getGvisorStack();
     if (!this._port) this._port = stack._allocPort();
     stack._listeners.set(this._port, this);
     this._listening = true;
+    console.log('[v9-net:server] registered listener on VM port ' + this._port);
 
     // Tell v9-net to open this port on the host for incoming connections
     _requestPortForward(this._port);
@@ -861,32 +865,49 @@ let _controlWs = null;
 function _getControlWs() {
   if (_controlWs && _controlWs.readyState <= 1) return _controlWs;
   const baseUrl = _env().NODEJS_GVISOR_WS_URL;
-  if (!baseUrl) return null;
-  // Control endpoint is at /__v9net/forward on the same host
+  if (!baseUrl) {
+    console.warn('[v9-net:control] no NODEJS_GVISOR_WS_URL — cannot open control channel');
+    return null;
+  }
   const url = new URL(baseUrl);
   url.pathname = '/__v9net/forward';
   const WS = globalThis.__browserRuntimeNativeWebSocket || globalThis.WebSocket;
   try {
+    console.log('[v9-net:control] connecting to ' + url.toString());
     _controlWs = new WS(url.toString());
-    _controlWs.onclose = () => { _controlWs = null; };
-    _controlWs.onerror = () => { _controlWs = null; };
-  } catch { _controlWs = null; }
+    _controlWs.onopen = () => { console.log('[v9-net:control] connected'); };
+    _controlWs.onmessage = (ev) => {
+      try { console.log('[v9-net:control] response:', ev.data); } catch {}
+    };
+    _controlWs.onclose = () => { console.log('[v9-net:control] closed'); _controlWs = null; };
+    _controlWs.onerror = (e) => { console.error('[v9-net:control] error', e); _controlWs = null; };
+  } catch (e) { console.error('[v9-net:control] failed to create WS:', e); _controlWs = null; }
   return _controlWs;
 }
 
 function _sendControl(msg) {
   const ws = _getControlWs();
-  if (!ws) return;
-  const send = () => { try { ws.send(JSON.stringify(msg)); } catch {} };
+  if (!ws) {
+    console.error('[v9-net:control] cannot send — no control WS:', JSON.stringify(msg));
+    return;
+  }
+  const send = () => {
+    try {
+      console.log('[v9-net:control] sending:', JSON.stringify(msg));
+      ws.send(JSON.stringify(msg));
+    } catch (e) { console.error('[v9-net:control] send failed:', e); }
+  };
   if (ws.readyState === 1) send();
   else ws.addEventListener('open', send, { once: true });
 }
 
 function _requestPortForward(port) {
+  console.log('[v9-net] requesting port forward:', port);
   _sendControl({ action: 'forward', port });
 }
 
 function _requestPortUnforward(port) {
+  console.log('[v9-net] requesting port unforward:', port);
   _sendControl({ action: 'unforward', port });
 }
 

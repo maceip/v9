@@ -1177,13 +1177,21 @@ class FakeServer extends EventEmitter {
   _gvisorTcp = null;
 
   _maybeStartGvisorListener() {
-    if (!isGvisorAvailable()) return;
+    console.log('[v9-net:http] _maybeStartGvisorListener() isGvisorAvailable=' + isGvisorAvailable() + ' port=' + this._port);
+    if (!isGvisorAvailable()) {
+      console.log('[v9-net:http] gvisor NOT available — using FakeServer only');
+      return;
+    }
     try {
       this._gvisorTcp = new _GvisorTcpServer();
-      this._gvisorTcp.on('connection', (socket) => this._handleGvisorTcpConn(socket));
+      this._gvisorTcp.on('connection', (socket) => {
+        console.log('[v9-net:http] incoming TCP connection on port ' + this._port);
+        this._handleGvisorTcpConn(socket);
+      });
       this._gvisorTcp.listen(this._port);
-    } catch {
-      // Clean up: remove from stack listeners so orphaned entries don't swallow connections
+      console.log('[v9-net:http] gvisor TCP listener started on port ' + this._port);
+    } catch (e) {
+      console.error('[v9-net:http] gvisor listener failed:', e);
       if (this._gvisorTcp) {
         try { this._gvisorTcp.close(); } catch {}
         this._gvisorTcp = null;
