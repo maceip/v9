@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
 	gvntypes "github.com/containers/gvisor-tap-vsock/pkg/types"
@@ -91,91 +90,6 @@ HOW IT WORKS
 OPTIONS
 `
 
-// ── Dynamic port forwarder ──────────────────────────────────────
-
-type portForwarder struct {
-	mu        sync.Mutex
-	listeners map[int]net.Listener
-	vn        *gvnvirtualnetwork.VirtualNetwork
-}
-
-func newPortForwarder(vn *gvnvirtualnetwork.VirtualNetwork) *portForwarder {
-	return &portForwarder{
-		listeners: make(map[int]net.Listener),
-		vn:        vn,
-	}
-}
-
-func (pf *portForwarder) Forward(port int) error {
-	pf.mu.Lock()
-	defer pf.mu.Unlock()
-
-	if _, exists := pf.listeners[port]; exists {
-		return nil // already forwarding
-	}
-
-	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("cannot listen on %s: %w", addr, err)
-	}
-
-	pf.listeners[port] = ln
-	fmt.Fprintf(os.Stderr, "  + forwarding port %d\n", port)
-
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return // listener closed
-			}
-			go pf.proxy(conn, port)
-		}
-	}()
-
-	return nil
-}
-
-func (pf *portForwarder) proxy(hostConn net.Conn, port int) {
-	defer hostConn.Close()
-
-	vmAddr := fmt.Sprintf("%s:%d", vmIP, port)
-	vmConn, err := pf.vn.Dial("tcp", vmAddr)
-	if err != nil {
-		log.Printf("forward %d: dial VM failed: %v", port, err)
-		return
-	}
-	defer vmConn.Close()
-
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(vmConn, hostConn); done <- struct{}{} }()
-	go func() { io.Copy(hostConn, vmConn); done <- struct{}{} }()
-	<-done
-	<-done // wait for both directions
-}
-
-func (pf *portForwarder) Close(port int) {
-	pf.mu.Lock()
-	defer pf.mu.Unlock()
-	if ln, ok := pf.listeners[port]; ok {
-		ln.Close()
-		delete(pf.listeners, port)
-		fmt.Fprintf(os.Stderr, "  - stopped forwarding port %d\n", port)
-	}
-}
-
-func (pf *portForwarder) CloseAll() {
-	pf.mu.Lock()
-	defer pf.mu.Unlock()
-	for port, ln := range pf.listeners {
-		ln.Close()
-		delete(pf.listeners, port)
-		log.Printf("closed port %d", port)
-	}
-}
-
-// ── Main ────────────────────────────────────────────────────────
-
 func main() {
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
@@ -206,7 +120,7 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
-	// Static forwards from -p flags (gvisor config level)
+	// Static forwards from -p flags
 	forwards := make(map[string]string)
 	for _, p := range portFlags {
 		p = strings.TrimSpace(p)
@@ -249,8 +163,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	pf := newPortForwarder(vn)
-	defer pf.CloseAll()
+	// Get the services mux which includes /forwarder/expose and /forwarder/unexpose
+	servicesMux := vn.ServicesMux()
 
 	mux := http.NewServeMux()
 
@@ -267,7 +181,8 @@ func main() {
 		}
 	}))
 
-	// Dynamic port forward control endpoint
+	// Port forward control endpoint — uses gvisor's built-in PortsForwarder
+	// via the services mux (/services/forwarder/expose and /unexpose)
 	mux.Handle("/__v9net/forward", websocket.Handler(func(ws *websocket.Conn) {
 		defer ws.Close()
 		dec := json.NewDecoder(ws)
@@ -286,14 +201,34 @@ func main() {
 					enc.Encode(map[string]interface{}{"ok": false, "error": "invalid port"})
 					continue
 				}
-				if err := pf.Forward(msg.Port); err != nil {
-					log.Printf("forward port %d failed: %v", msg.Port, err)
-					enc.Encode(map[string]interface{}{"ok": false, "error": err.Error()})
-				} else {
+				local := fmt.Sprintf("0.0.0.0:%d", msg.Port)
+				remote := fmt.Sprintf("%s:%d", vmIP, msg.Port)
+				// Use gvisor's built-in forwarder via internal HTTP API
+				body := strings.NewReader(fmt.Sprintf(`{"local":"%s","remote":"%s","protocol":"tcp"}`, local, remote))
+				req, _ := http.NewRequest("POST", "/services/forwarder/expose", body)
+				req.Header.Set("Content-Type", "application/json")
+				rec := &responseRecorder{code: 200}
+				servicesMux.ServeHTTP(rec, req)
+				if rec.code == 200 {
+					fmt.Fprintf(os.Stderr, "  + forwarding port %d\n", msg.Port)
 					enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+				} else {
+					errMsg := rec.body.String()
+					if strings.Contains(errMsg, "already running") {
+						enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+					} else {
+						log.Printf("forward port %d failed: %s", msg.Port, errMsg)
+						enc.Encode(map[string]interface{}{"ok": false, "error": errMsg})
+					}
 				}
 			case "unforward":
-				pf.Close(msg.Port)
+				local := fmt.Sprintf("0.0.0.0:%d", msg.Port)
+				body := strings.NewReader(fmt.Sprintf(`{"local":"%s","protocol":"tcp"}`, local))
+				req, _ := http.NewRequest("POST", "/services/forwarder/unexpose", body)
+				req.Header.Set("Content-Type", "application/json")
+				rec := &responseRecorder{code: 200}
+				servicesMux.ServeHTTP(rec, req)
+				fmt.Fprintf(os.Stderr, "  - stopped forwarding port %d\n", msg.Port)
 				enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
 			default:
 				enc.Encode(map[string]interface{}{"ok": false, "error": "unknown action"})
@@ -323,7 +258,6 @@ func main() {
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		fmt.Fprintf(os.Stderr, "\n  Shutting down...\n")
-		pf.CloseAll()
 		server.Close()
 	}()
 
@@ -343,6 +277,22 @@ func main() {
 		}
 	}
 }
+
+// responseRecorder captures HTTP response from internal ServeMux calls
+type responseRecorder struct {
+	code int
+	body strings.Builder
+	hdr  http.Header
+}
+
+func (r *responseRecorder) Header() http.Header {
+	if r.hdr == nil {
+		r.hdr = make(http.Header)
+	}
+	return r.hdr
+}
+func (r *responseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
+func (r *responseRecorder) WriteHeader(code int)         { r.code = code }
 
 type sliceFlags []string
 
