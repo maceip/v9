@@ -86,7 +86,7 @@ OPTIONS
 `
 
 func main() {
-	// Override default flag.Usage
+	// Override default flag.Usage (v2)
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
 		flag.PrintDefaults()
