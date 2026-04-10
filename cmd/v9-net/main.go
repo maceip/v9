@@ -151,6 +151,7 @@ func (pf *portForwarder) proxy(hostConn net.Conn, port int) {
 	go func() { io.Copy(vmConn, hostConn); done <- struct{}{} }()
 	go func() { io.Copy(hostConn, vmConn); done <- struct{}{} }()
 	<-done
+	<-done // wait for both directions
 }
 
 func (pf *portForwarder) Close(port int) {

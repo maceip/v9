@@ -1176,13 +1176,21 @@ class FakeServer extends EventEmitter {
       this._gvisorTcp = new _GvisorTcpServer();
       this._gvisorTcp.on('connection', (socket) => this._handleGvisorTcpConn(socket));
       this._gvisorTcp.listen(this._port);
-    } catch { /* gvisor not running or port conflict — fall through to FakeServer */ }
+    } catch {
+      // Clean up: remove from stack listeners so orphaned entries don't swallow connections
+      if (this._gvisorTcp) {
+        try { this._gvisorTcp.close(); } catch {}
+        this._gvisorTcp = null;
+      }
+    }
   }
 
   _handleGvisorTcpConn(socket) {
     let buf = new Uint8Array(0);
     const onData = (chunk) => {
-      const c = chunk instanceof Uint8Array ? chunk : _encoder.encode(String(chunk));
+      const c = chunk instanceof Uint8Array ? chunk
+        : (chunk instanceof ArrayBuffer ? new Uint8Array(chunk)
+        : _encoder.encode(String(chunk)));
       const nb = new Uint8Array(buf.length + c.length);
       nb.set(buf); nb.set(c, buf.length);
       buf = nb;

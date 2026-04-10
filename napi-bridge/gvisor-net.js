@@ -225,6 +225,14 @@ class NetworkStack {
   _whenReady(cb) {
     if (this._ready) { cb(); return; }
     this._readyCbs.push(cb);
+    // Timeout: if WS never connects, fire error instead of hanging forever
+    setTimeout(() => {
+      const idx = this._readyCbs.indexOf(cb);
+      if (idx >= 0) {
+        this._readyCbs.splice(idx, 1);
+        console.error('[gvisor-net] WebSocket connect timeout — is v9-net running?');
+      }
+    }, 10000);
   }
 
   _allocPort() {
