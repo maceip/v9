@@ -53,73 +53,35 @@ jobs:
           name: v9-net-${{ matrix.suffix }}
           path: cmd/v9-net/v9-net-${{ matrix.suffix }}
 
-  # ── v9-net Android APK (gomobile) ───────────────────────────────
+  # ── v9-net Android binary (cross-compiled Go) ────────────────────
+  # Plain static binary for Android ARM64 — runs via Termux or adb shell.
+  # gomobile AAR/APK approach kept in android/ for future use but not
+  # built in CI until the toolchain issues are resolved.
   build-android:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Go (latest from go.dev)
-        run: |
-          GO_LATEST=$(curl -sf https://go.dev/VERSION?m=text | head -1)
-          echo "Installing $GO_LATEST"
-          curl -sfL "https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
-          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          /usr/local/go/bin/go version
-
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-go@v5
         with:
-          distribution: 'temurin'
-          java-version: '21'
+          go-version: '1.22'
 
-      - name: Setup Android SDK + NDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'ndk;27.0.12077973'
-
-      - name: Install gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-          gomobile init
-          echo "Go: $(go version)"
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
-          ls "$ANDROID_HOME/ndk/" 2>/dev/null || echo "NDK not in ANDROID_HOME/ndk"
-          # Set NDK if not already
-          if [ -z "$ANDROID_NDK_HOME" ]; then
-            NDK_DIR=$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d | head -1)
-            if [ -n "$NDK_DIR" ]; then
-              echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
-              echo "Set ANDROID_NDK_HOME=$NDK_DIR"
-            fi
-          fi
-
-      - name: Build AAR
-        working-directory: pkg/v9net
+      - name: Build v9-net for Android ARM64
+        working-directory: cmd/v9-net
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: '0'
         run: |
           go mod tidy
-          gomobile bind -v -target=android/arm64,android/arm -androidapi 26 \
-            -o ../../android/app/libs/v9net.aar .
-
-      - name: Build APK
-        working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
-
-      - name: Collect APK
-        run: |
-          mkdir -p out
-          find android -name '*.apk' -exec cp {} out/v9-net-android.apk \;
-          ls -lh out/
+          go build -trimpath -ldflags="-s -w" -o v9-net-android-arm64 .
+          ls -lh v9-net-android-arm64
+          file v9-net-android-arm64
 
       - uses: actions/upload-artifact@v4
         with:
-          name: v9-net-android
-          path: out/v9-net-android.apk
+          name: v9-net-android-arm64
+          path: cmd/v9-net/v9-net-android-arm64
 
   # ── v9 Node.js CLI (npm pack) ───────────────────────────────────
   build-v9-cli:
@@ -147,9 +109,7 @@ jobs:
 
   # ── Create GitHub Release ───────────────────────────────────────
   release:
-    needs: [build-v9-net, build-v9-cli]
-    # Android is best-effort (continue-on-error); don't block release on it
-    if: always() && needs.build-v9-net.result == 'success' && needs.build-v9-cli.result == 'success'
+    needs: [build-v9-net, build-android, build-v9-cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -178,14 +138,6 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-
-      # Android APK may not exist if build-android failed
-      - name: Download Android artifact (best-effort)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: v9-net-android
-          path: artifacts
 
       - name: List release assets
         run: ls -lhR artifacts/
