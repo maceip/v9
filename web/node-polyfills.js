@@ -191,16 +191,18 @@
       console.log('[v9-net:probe] setting NODEJS_GVISOR_WS_URL=' + wsUrl);
       // Set immediately — modules check this synchronously at import time
       _env.NODEJS_GVISOR_WS_URL = wsUrl;
-      // Disable stare.network relay when v9-net handles ports directly
-      delete _env.NODEJS_IN_TAB_HTTP_RELAY;
-      delete _env.NODEJS_IN_TAB_HTTP_RELAY_WS;
+      // Keep relay vars intact until probe succeeds — modules may need them
+      // if v9-net turns out to not be running
       const probeUrl = new URL(wsUrl);
       probeUrl.pathname = '/__v9net/forward';
       console.log('[v9-net:probe] connecting to ' + probeUrl.toString());
       const probe = new WebSocket(probeUrl.toString());
       probe.onopen = () => {
         probe.close();
-        console.log('[v9-net:probe] SUCCESS — v9-net is running, TCP networking enabled');
+        // v9-net confirmed running — disable relay, gvisor handles everything
+        delete _env.NODEJS_IN_TAB_HTTP_RELAY;
+        delete _env.NODEJS_IN_TAB_HTTP_RELAY_WS;
+        console.log('[v9-net:probe] SUCCESS — v9-net is running, TCP networking enabled, relay disabled');
       };
       probe.onerror = (e) => {
         console.warn('[v9-net:probe] FAILED — v9-net not reachable, falling back to relay', e);
