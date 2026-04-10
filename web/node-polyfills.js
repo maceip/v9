@@ -181,11 +181,13 @@
 
     // Auto-detect v9-net — enables gvisor TCP networking.
     // Override with ?gvisor=ws://host:port query param.
+    // Probe the control endpoint (/__v9net/forward) not the QEMU endpoint (/).
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
       const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
-      const probe = new WebSocket(wsUrl);
-      probe.binaryType = 'arraybuffer';
+      const probeUrl = new URL(wsUrl);
+      probeUrl.pathname = '/__v9net/forward';
+      const probe = new WebSocket(probeUrl.toString());
       probe.onopen = () => {
         probe.close();
         _env.NODEJS_GVISOR_WS_URL = wsUrl;
