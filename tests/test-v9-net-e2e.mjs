@@ -141,6 +141,17 @@ async function main() {
       fail++;
     }
 
+    // ── Check for stream errors (push after EOF etc.) ──────────
+    const pageErrors = pageLogs.filter(l => l.startsWith('[pageerror]'));
+    if (pageErrors.length === 0) {
+      console.log('   ✓ No page errors');
+      pass++;
+    } else {
+      console.log(`   ✗ ${pageErrors.length} page error(s):`);
+      for (const e of pageErrors) console.log('     ', e);
+      fail++;
+    }
+
   } catch (err) {
     console.error('Test error:', err.message);
     fail++;

@@ -697,6 +697,7 @@ class ClientRequest extends Writable {
     // Parse HTTP response from raw TCP stream
     let respBuf = new Uint8Array(0);
     let headersParsed = false;
+    let respDone = false;
     let respHeaders = {};
     let respRawHeaders = [];
     let statusCode = 0;
@@ -704,6 +705,7 @@ class ClientRequest extends Writable {
     let incomingMsg = null;
 
     sock.on('data', (chunk) => {
+      if (respDone) return;
       const c = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer || chunk);
       const nb = new Uint8Array(respBuf.length + c.length);
       nb.set(respBuf); nb.set(c, respBuf.length);
@@ -761,10 +763,14 @@ class ClientRequest extends Writable {
     });
 
     sock.on('end', () => {
+      if (respDone) return;
+      respDone = true;
       if (incomingMsg) { incomingMsg.complete = true; incomingMsg.push(null); }
     });
     sock.on('close', () => {
-      if (incomingMsg && !incomingMsg.complete) { incomingMsg.complete = true; incomingMsg.push(null); }
+      if (respDone) return;
+      respDone = true;
+      if (incomingMsg) { incomingMsg.complete = true; incomingMsg.push(null); }
     });
     sock.on('error', (err) => {
       this._clearTimeoutTimer();

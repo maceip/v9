@@ -97,7 +97,8 @@ export class Readable extends EventEmitter {
   push(chunk) {
     const state = this._readableState;
     if (state.ended) {
-      this.emit('error', new Error('stream.push() after EOF'));
+      // Node.js emits ERR_STREAM_PUSH_AFTER_EOF but doesn't throw.
+      // Log for debugging but don't emit 'error' which propagates as pageerror.
       return false;
     }
     if (chunk === null) {
