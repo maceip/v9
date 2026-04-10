@@ -60,9 +60,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
+      - name: Install Go (latest from go.dev)
+        run: |
+          GO_LATEST=$(curl -sf https://go.dev/VERSION?m=text | head -1)
+          echo "Installing $GO_LATEST"
+          curl -sfL "https://go.dev/dl/${GO_LATEST}.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          /usr/local/go/bin/go version
 
       - uses: actions/setup-java@v4
         with:
@@ -78,16 +83,23 @@ jobs:
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
-          export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
-          echo "Go version: $(go version)"
+          echo "Go: $(go version)"
           echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "NDK: $(ls $ANDROID_HOME/ndk/ 2>/dev/null || echo 'not found')"
+          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          ls "$ANDROID_HOME/ndk/" 2>/dev/null || echo "NDK not in ANDROID_HOME/ndk"
+          # Set NDK if not already
+          if [ -z "$ANDROID_NDK_HOME" ]; then
+            NDK_DIR=$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d | head -1)
+            if [ -n "$NDK_DIR" ]; then
+              echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+              echo "Set ANDROID_NDK_HOME=$NDK_DIR"
+            fi
+          fi
 
       - name: Build AAR
         working-directory: pkg/v9net
         run: |
-          export PATH="$PATH:$(go env GOPATH)/bin"
           go mod tidy
           gomobile bind -v -target=android/arm64,android/arm -androidapi 26 \
             -o ../../android/app/libs/v9net.aar .
