@@ -119,11 +119,20 @@ jobs:
       - name: Generate tag
         id: tag
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          DATE=$(date -u +%Y%m%d)
-          TAG="v0.1.0-${DATE}-${SHORT_SHA}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Generated tag: ${TAG}"
+          # Find the last release number and increment
+          LAST=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          if [ -z "$LAST" ]; then
+            NEXT="v0.1.0"
+          else
+            # Extract patch number and increment: v0.1.42 → v0.1.43
+            MAJOR=$(echo "$LAST" | cut -d. -f1)
+            MINOR=$(echo "$LAST" | cut -d. -f2)
+            PATCH=$(echo "$LAST" | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "tag=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "Release: ${NEXT}"
 
       - name: Create git tag
         env:
