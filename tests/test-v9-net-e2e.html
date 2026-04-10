@@ -71,7 +71,8 @@ try {
 
   // Test 2: http.request() with forbidden headers (via gvisor TCP, not fetch)
   // This calls back to our own server on port 3000 — headers should survive
-  srv.on('listening', () => {
+  // Wait for dynamic port forward to complete before making outbound request
+  srv.on('listening', () => { setTimeout(() => {
     const reqOpts = {
       hostname: '192.168.127.254', // NAT loopback → host localhost
       port: port,
@@ -109,7 +110,7 @@ try {
       emit('[outbound-done]');
     });
     req.end();
-  });
+  }, 2000); });
 
   // Test 3: net.createServer (raw TCP echo)
   const tcpPort = parseInt(params.get('tcpPort') || '3001', 10);

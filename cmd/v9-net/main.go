@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	gvntypes "github.com/containers/gvisor-tap-vsock/pkg/types"
@@ -36,7 +38,7 @@ QUICK START
     $ v9-net
 
   That's it. Open https://maceip.github.io/v9/ in your browser.
-  Ports 3000 and 8080 are forwarded by default.
+  Ports are forwarded automatically when the browser app calls listen().
 
 EXAMPLES
 
@@ -59,7 +61,7 @@ EXAMPLES
     $ ./cmd/v9-net/v9-net &          # start the network proxy
     $ npx v9 run examples/hello.js   # run a Node.js app in-browser
 
-  4. Forward custom ports:
+  4. Pre-forward specific ports (optional — dynamic forwarding is automatic):
 
     $ v9-net -p 4000 -p 5173 -p 8081
 
@@ -67,7 +69,7 @@ EXAMPLES
 
     $ v9-net -listen :9999
 
-  6. With debug logging (shows ARP, TCP handshakes):
+  6. With debug logging (shows ARP, TCP handshakes, port forwards):
 
     $ v9-net -debug
 
@@ -75,25 +77,112 @@ HOW IT WORKS
 
   Browser (v9 runtime)  ←— WebSocket —→  v9-net  ←— real TCP —→  internet
                                             ↕
-                                     port forwarding
-                                     localhost:3000 → browser app
+                                     dynamic port forwarding
+                                     browser listen(19836) → host :19836 opens
 
   Your browser sets NODEJS_GVISOR_WS_URL=ws://localhost:8765 and all
   net.connect(), http.createServer().listen(), tls.connect() calls
   route through this proxy. No CORS issues, no forbidden headers.
 
+  When the browser calls server.listen(port), v9-net automatically
+  opens that port on your machine and forwards traffic into the
+  virtual network. No need to pre-declare ports.
+
 OPTIONS
 `
 
+// ── Dynamic port forwarder ──────────────────────────────────────
+
+type portForwarder struct {
+	mu        sync.Mutex
+	listeners map[int]net.Listener
+	vn        *gvnvirtualnetwork.VirtualNetwork
+}
+
+func newPortForwarder(vn *gvnvirtualnetwork.VirtualNetwork) *portForwarder {
+	return &portForwarder{
+		listeners: make(map[int]net.Listener),
+		vn:        vn,
+	}
+}
+
+func (pf *portForwarder) Forward(port int) error {
+	pf.mu.Lock()
+	defer pf.mu.Unlock()
+
+	if _, exists := pf.listeners[port]; exists {
+		return nil // already forwarding
+	}
+
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("cannot listen on %s: %w", addr, err)
+	}
+
+	pf.listeners[port] = ln
+	fmt.Fprintf(os.Stderr, "  + forwarding port %d\n", port)
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			go pf.proxy(conn, port)
+		}
+	}()
+
+	return nil
+}
+
+func (pf *portForwarder) proxy(hostConn net.Conn, port int) {
+	defer hostConn.Close()
+
+	vmAddr := fmt.Sprintf("%s:%d", vmIP, port)
+	vmConn, err := pf.vn.Dial("tcp", vmAddr)
+	if err != nil {
+		log.Printf("forward %d: dial VM failed: %v", port, err)
+		return
+	}
+	defer vmConn.Close()
+
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(vmConn, hostConn); done <- struct{}{} }()
+	go func() { io.Copy(hostConn, vmConn); done <- struct{}{} }()
+	<-done
+}
+
+func (pf *portForwarder) Close(port int) {
+	pf.mu.Lock()
+	defer pf.mu.Unlock()
+	if ln, ok := pf.listeners[port]; ok {
+		ln.Close()
+		delete(pf.listeners, port)
+		fmt.Fprintf(os.Stderr, "  - stopped forwarding port %d\n", port)
+	}
+}
+
+func (pf *portForwarder) CloseAll() {
+	pf.mu.Lock()
+	defer pf.mu.Unlock()
+	for port, ln := range pf.listeners {
+		ln.Close()
+		delete(pf.listeners, port)
+		log.Printf("closed port %d", port)
+	}
+}
+
+// ── Main ────────────────────────────────────────────────────────
+
 func main() {
-	// Override default flag.Usage (v2)
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr, usage)
 		flag.PrintDefaults()
 	}
 
 	var portFlags sliceFlags
-	flag.Var(&portFlags, "p", "forward a port between host and browser (e.g. -p 3000)")
+	flag.Var(&portFlags, "p", "pre-forward a port (e.g. -p 3000). Dynamic forwarding is always on.")
 	var (
 		listenAddr = flag.String("listen", ":8765", "WebSocket listen address")
 		debug      = flag.Bool("debug", false, "enable verbose logging")
@@ -103,18 +192,20 @@ func main() {
 	)
 	flag.Parse()
 
-	// Default port forwards if none specified (or all empty)
-	hasReal := false
-	for _, p := range portFlags {
-		if strings.TrimSpace(p) != "" {
-			hasReal = true
-			break
-		}
-	}
-	if !hasReal {
-		portFlags = sliceFlags{"3000", "8080"}
+	if args := flag.Args(); len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "  Did you mean: v9-net -p %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "  Or:           v9-net -listen :%s\n", args[0])
+		os.Exit(1)
 	}
 
+	if *debug {
+		log.SetOutput(os.Stderr)
+	} else {
+		log.SetOutput(io.Discard)
+	}
+
+	// Static forwards from -p flags (gvisor config level)
 	forwards := make(map[string]string)
 	for _, p := range portFlags {
 		p = strings.TrimSpace(p)
@@ -132,20 +223,6 @@ func main() {
 		default:
 			fmt.Fprintf(os.Stderr, "warning: ignoring invalid port mapping: %s\n", p)
 		}
-	}
-
-	// Reject unknown positional args (common mistake: passing a port without -p)
-	if args := flag.Args(); len(args) > 0 {
-		fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", args[0])
-		fmt.Fprintf(os.Stderr, "  Did you mean: v9-net -p %s\n", args[0])
-		fmt.Fprintf(os.Stderr, "  Or:           v9-net -listen :%s\n", args[0])
-		os.Exit(1)
-	}
-
-	if *debug {
-		log.SetOutput(os.Stderr)
-	} else {
-		log.SetOutput(io.Discard)
 	}
 
 	config := &gvntypes.Configuration{
@@ -171,7 +248,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	pf := newPortForwarder(vn)
+	defer pf.CloseAll()
+
 	mux := http.NewServeMux()
+
+	// QEMU virtual network endpoint
 	mux.Handle("/", websocket.Handler(func(ws *websocket.Conn) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -184,27 +266,63 @@ func main() {
 		}
 	}))
 
+	// Dynamic port forward control endpoint
+	mux.Handle("/__v9net/forward", websocket.Handler(func(ws *websocket.Conn) {
+		defer ws.Close()
+		dec := json.NewDecoder(ws)
+		enc := json.NewEncoder(ws)
+		for {
+			var msg struct {
+				Action string `json:"action"`
+				Port   int    `json:"port"`
+			}
+			if err := dec.Decode(&msg); err != nil {
+				return
+			}
+			switch msg.Action {
+			case "forward":
+				if msg.Port < 1 || msg.Port > 65535 {
+					enc.Encode(map[string]interface{}{"ok": false, "error": "invalid port"})
+					continue
+				}
+				if err := pf.Forward(msg.Port); err != nil {
+					log.Printf("forward port %d failed: %v", msg.Port, err)
+					enc.Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+				} else {
+					enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+				}
+			case "unforward":
+				pf.Close(msg.Port)
+				enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+			default:
+				enc.Encode(map[string]interface{}{"ok": false, "error": "unknown action"})
+			}
+		}
+	}))
+
 	listener, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot listen on %s: %v\n", *listenAddr, err)
 		os.Exit(1)
 	}
 
-	// Print startup banner
 	fmt.Fprintf(os.Stderr, "\n  v9-net running\n\n")
 	fmt.Fprintf(os.Stderr, "  WebSocket:  ws://localhost%s\n", *listenAddr)
-	fmt.Fprintf(os.Stderr, "  Ports:      %s\n", strings.Join(portFlags, ", "))
+	if len(portFlags) > 0 {
+		fmt.Fprintf(os.Stderr, "  Pre-forwarded: %s\n", strings.Join(portFlags, ", "))
+	}
+	fmt.Fprintf(os.Stderr, "  Dynamic forwarding: enabled (ports open on demand)\n")
 	fmt.Fprintf(os.Stderr, "  Open:       https://maceip.github.io/v9/\n")
 	fmt.Fprintf(os.Stderr, "\n  Press Ctrl+C to stop.\n\n")
 
 	server := &http.Server{Handler: mux}
 
-	// Graceful shutdown on Ctrl+C
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		fmt.Fprintf(os.Stderr, "\n  Shutting down...\n")
+		pf.CloseAll()
 		server.Close()
 	}()
 

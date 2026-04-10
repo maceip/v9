@@ -813,6 +813,10 @@ export class GvisorServer extends EventEmitter {
     if (!this._port) this._port = stack._allocPort();
     stack._listeners.set(this._port, this);
     this._listening = true;
+
+    // Tell v9-net to open this port on the host for incoming connections
+    _requestPortForward(this._port);
+
     queueMicrotask(() => {
       this.emit('listening');
       if (cb) cb();
@@ -822,7 +826,10 @@ export class GvisorServer extends EventEmitter {
 
   close(cb) {
     this._listening = false;
-    try { getGvisorStack()._listeners.delete(this._port); } catch {}
+    try {
+      getGvisorStack()._listeners.delete(this._port);
+      _requestPortUnforward(this._port);
+    } catch {}
     if (cb) queueMicrotask(cb);
     queueMicrotask(() => this.emit('close'));
     return this;
@@ -837,6 +844,42 @@ export class GvisorServer extends EventEmitter {
     sock.connecting = false;
     this.emit('connection', sock);
   }
+}
+
+// ─── Dynamic port forwarding control channel ───────────────────────
+
+let _controlWs = null;
+
+function _getControlWs() {
+  if (_controlWs && _controlWs.readyState <= 1) return _controlWs;
+  const baseUrl = _env().NODEJS_GVISOR_WS_URL;
+  if (!baseUrl) return null;
+  // Control endpoint is at /__v9net/forward on the same host
+  const url = new URL(baseUrl);
+  url.pathname = '/__v9net/forward';
+  const WS = globalThis.__browserRuntimeNativeWebSocket || globalThis.WebSocket;
+  try {
+    _controlWs = new WS(url.toString());
+    _controlWs.onclose = () => { _controlWs = null; };
+    _controlWs.onerror = () => { _controlWs = null; };
+  } catch { _controlWs = null; }
+  return _controlWs;
+}
+
+function _sendControl(msg) {
+  const ws = _getControlWs();
+  if (!ws) return;
+  const send = () => { try { ws.send(JSON.stringify(msg)); } catch {} };
+  if (ws.readyState === 1) send();
+  else ws.addEventListener('open', send, { once: true });
+}
+
+function _requestPortForward(port) {
+  _sendControl({ action: 'forward', port });
+}
+
+function _requestPortUnforward(port) {
+  _sendControl({ action: 'unforward', port });
 }
 
 // ─── Public API ─────────────────────────────────────────────────────
