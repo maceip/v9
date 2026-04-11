@@ -567,6 +567,8 @@
 
   const _origFetch = globalThis.fetch;
   const _proxyUrl = (() => {
+    // When v9-net is running, skip the CORS proxy — traffic goes through gvisor
+    if (globalThis.__V9_GVISOR_WS_URL__) return '';
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
       const q = params.get('proxy');
