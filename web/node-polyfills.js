@@ -191,6 +191,7 @@
       console.log('[v9-net:probe] setting NODEJS_GVISOR_WS_URL=' + wsUrl);
       // Set immediately — modules check this synchronously at import time
       _env.NODEJS_GVISOR_WS_URL = wsUrl;
+      console.log('[v9-net:probe] env check — _env.NODEJS_GVISOR_WS_URL=' + _env.NODEJS_GVISOR_WS_URL + ' process.env.NODEJS_GVISOR_WS_URL=' + globalThis.process?.env?.NODEJS_GVISOR_WS_URL);
       // Keep relay vars intact until probe succeeds — modules may need them
       // if v9-net turns out to not be running
       const probeUrl = new URL(wsUrl);
