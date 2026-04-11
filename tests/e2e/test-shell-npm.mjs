@@ -428,6 +428,63 @@ async function runTests() {
     });
     assert(sandboxStderr, 'Sandbox stderr contains "command not found" for unknown commands');
 
+    // ═══════════════════════════════════════════════════════════════
+    // Test 21: node <script.js> — run a script from MEMFS
+    // ═══════════════════════════════════════════════════════════════
+    await page.evaluate(() => {
+      const rt = globalThis.__edgeRuntime;
+      rt.fs.writeFileSync('/workspace/hello.js', 'console.log("hello-from-script-" + (2 + 2));\n');
+    });
+    await shellExec(page, 'node /workspace/hello.js');
+    const nodeScriptText = await getTerminalText(page);
+    assert(nodeScriptText.includes('hello-from-script-4'), 'node <script.js> executes JS and captures console.log');
+
+    // ═══════════════════════════════════════════════════════════════
+    // Test 22: node -e "expression" — eval JS
+    // ═══════════════════════════════════════════════════════════════
+    await shellExec(page, 'node -e "1 + 1"');
+    const nodeEvalText = await getTerminalText(page);
+    assert(nodeEvalText.includes('2'), 'node -e "1 + 1" evaluates and prints result');
+
+    // ═══════════════════════════════════════════════════════════════
+    // Test 23: node <script.js> with require('fs')
+    // ═══════════════════════════════════════════════════════════════
+    await page.evaluate(() => {
+      const rt = globalThis.__edgeRuntime;
+      rt.fs.writeFileSync('/workspace/fs-test.js',
+        'const fs = require("fs");\n' +
+        'fs.writeFileSync("/workspace/written-by-script.txt", "it-works");\n' +
+        'const data = fs.readFileSync("/workspace/written-by-script.txt", "utf8");\n' +
+        'console.log("read-back:" + data);\n'
+      );
+    });
+    await shellExec(page, 'node /workspace/fs-test.js');
+    const fsScriptText = await getTerminalText(page);
+    assert(fsScriptText.includes('read-back:it-works'), 'node script can require("fs") and do file I/O');
+
+    // ═══════════════════════════════════════════════════════════════
+    // Test 24: Shell-first boot with auto-run bundle
+    //   Simulates what happens when ?bundle= is set:
+    //   shell writes a script, "auto-runs" it, output appears, prompt returns
+    // ═══════════════════════════════════════════════════════════════
+    await page.evaluate(() => {
+      const rt = globalThis.__edgeRuntime;
+      rt.fs.writeFileSync('/workspace/autorun-app.js',
+        'console.log("autorun-app-started");\n' +
+        'console.log("autorun-app-finished");\n'
+      );
+    });
+    await shellExec(page, 'node /workspace/autorun-app.js', 1500);
+    const autorunText = await getTerminalText(page);
+    assert(
+      autorunText.includes('autorun-app-started') && autorunText.includes('autorun-app-finished'),
+      'Shell-first boot: node <bundle> runs app and output appears in terminal'
+    );
+    // Verify prompt came back after the script finished
+    const lines = autorunText.split('\n');
+    const lastNonEmpty = lines.filter(l => l.trim()).pop() || '';
+    assert(lastNonEmpty.includes('$'), 'Shell-first boot: prompt returns after app exits');
+
     // ── Summary ──
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
 
