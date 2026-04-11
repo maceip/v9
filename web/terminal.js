@@ -438,6 +438,24 @@ async function boot() {
 
     if (config.appBundle && config.autorun) {
       await controller.start();
+    } else {
+      // No app bundle — start interactive shell
+      try {
+        const { createShell } = await import('../napi-bridge/shell.js');
+        const shell = createShell({
+          write: (data) => globalThis._xtermWrite?.(data),
+          cwd: DEFAULT_WORKSPACE,
+          env: baseEnv(getAnthropicKey()),
+        });
+        globalThis.__edgeShell = shell;
+        globalThis._stdinPush = (data) => shell.feed(data);
+        term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
+        term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
+        shell.prompt();
+      } catch (shellErr) {
+        _nativeError('[shell] Failed to start shell:', shellErr);
+        term.writeln(`\x1b[33m[shell] ${_safe(shellErr.message)}\x1b[0m`);
+      }
     }
   } catch (err) {
     _nativeError('[edgejs] Boot error:', err);
