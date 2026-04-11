@@ -80,12 +80,8 @@
     }
 }
 </script>
-<script>
-  // Minimal process polyfill (subset of web/node-polyfills.js)
-  if (!globalThis.process) globalThis.process = { env: {}, versions: {}, platform: 'browser', argv: [] };
-  if (!globalThis.process.env) globalThis.process.env = {};
-  if (!globalThis.global) globalThis.global = globalThis;
-</script>
+<script src="/web/pages-proxy-default.js"></script>
+<script src="/web/node-polyfills.js"></script>
 </head>
 <body>
 <pre id="log"></pre>
@@ -99,7 +95,7 @@ function emit(msg) {
 // Set gvisor WS URL from query param (default ws://localhost:8765)
 const params = new URLSearchParams(location.search);
 const wsUrl = params.get('ws') || 'ws://localhost:8765';
-globalThis.process.env.NODEJS_GVISOR_WS_URL = wsUrl;
+globalThis.__V9_GVISOR_WS_URL__ = wsUrl;
 emit(`[setup] NODEJS_GVISOR_WS_URL = ${wsUrl}`);
 
 try {

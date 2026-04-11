@@ -80,11 +80,8 @@
     }
 }
 </script>
-<script>
-  if (!globalThis.process) globalThis.process = { env: {}, versions: {}, platform: 'browser', argv: [] };
-  if (!globalThis.process.env) globalThis.process.env = {};
-  if (!globalThis.global) globalThis.global = globalThis;
-</script>
+<script src="/web/pages-proxy-default.js"></script>
+<script src="/web/node-polyfills.js"></script>
 </head>
 <body>
 <pre id="log"></pre>
@@ -93,7 +90,7 @@ const log = document.getElementById('log');
 function emit(msg) { log.textContent += msg + '\n'; console.log(msg); }
 
 const params = new URLSearchParams(location.search);
-globalThis.process.env.NODEJS_GVISOR_WS_URL = params.get('ws') || 'ws://localhost:8765';
+globalThis.__V9_GVISOR_WS_URL__ = params.get('ws') || 'ws://localhost:8765';
 
 const net = await import('net');
 
