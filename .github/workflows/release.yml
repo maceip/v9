@@ -119,17 +119,16 @@ jobs:
       - name: Generate tag
         id: tag
         run: |
-          # Find the last release number and increment
-          LAST=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          # Only consider clean semver tags (v0.1.N) not old date-based ones
+          LAST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           if [ -z "$LAST" ]; then
-            NEXT="v0.1.0"
+            NEXT="v0.2.0"
           else
-            # Extract patch number and increment: v0.1.42 → v0.1.43
-            MAJOR=$(echo "$LAST" | cut -d. -f1)
-            MINOR=$(echo "$LAST" | cut -d. -f2)
-            PATCH=$(echo "$LAST" | cut -d. -f3)
+            MAJOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LAST" | sed 's/^v//' | cut -d. -f2)
+            PATCH=$(echo "$LAST" | sed 's/^v//' | cut -d. -f3)
             PATCH=$((PATCH + 1))
-            NEXT="${MAJOR}.${MINOR}.${PATCH}"
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
           fi
           echo "tag=${NEXT}" >> "$GITHUB_OUTPUT"
           echo "Release: ${NEXT}"
