@@ -6,6 +6,7 @@
 
 import { defaultMemfs, resolvePath, normalizePath as _normPath } from './memfs.js';
 import fsModule from './fs.js';
+import { npm as _npmRun } from './npm.js';
 
 const _decoder = new TextDecoder('utf-8');
 const _encoder = new TextEncoder();
@@ -1384,6 +1385,28 @@ function statCmd(args) {
 function chmod() { return { stdout: '', stderr: '', exitCode: 0 }; }
 function chown() { return { stdout: '', stderr: '', exitCode: 0 }; }
 
+// ─── npm ────────────────────────────────────────────────────────────
+
+function npmCmd(args, options) {
+  return _npmRun(args, { ...options, memfs: _activeMemfs });
+}
+
+// ─── node / npx stubs ───────────────────────────────────────────────
+
+function nodeCmd(args) {
+  const vals = args.map(a => typeof a === 'string' ? a : a.value);
+  if (vals.length === 0) return { stdout: '', stderr: 'node: interactive REPL not supported\n', exitCode: 1 };
+  const eIdx = vals.indexOf('-e') >= 0 ? vals.indexOf('-e') : vals.indexOf('--eval');
+  if (eIdx >= 0 && vals[eIdx + 1]) {
+    try {
+      const result = (new Function('return (' + vals[eIdx + 1] + ')'))();
+      return { stdout: String(result) + '\n', stderr: '', exitCode: 0 };
+    } catch (err) {
+      return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
+    }
+  }
+  return { stdout: '', stderr: 'node: script execution requires runtime — use v9 run\n', exitCode: 1 };
+}
 
 
 export const commands = {
@@ -1393,6 +1416,7 @@ export const commands = {
   test: testCmd, '[': testCmd,
   rg, xargs, tee, sed, awk, which, whoami, date, uname, seq, yes, printf: printfCmd,
   readlink, realpath: realpathCmd, stat: statCmd, chmod, chown,
+  npm: npmCmd, node: nodeCmd,
 };
 
 export function hasCommand(name) {
