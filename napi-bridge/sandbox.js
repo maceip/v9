@@ -6,10 +6,12 @@
  *   const output = sb.runCmd("echo 'Hello, world!'");
  *   console.log(await output.stdout());
  *
+ * Supports async commands (like npm install) transparently — the Output
+ * promises resolve when the async work completes.
+ *
  * Differences from bVisor:
  *   - Commands execute against MEMFS shell shims, not real Linux binaries.
  *   - Filesystem is in-memory (MEMFS), not a COW overlay on the host FS.
- *   - Output is buffered (synchronous shell execution), not incrementally streamed.
  *   - Runs in any browser — no Linux/seccomp dependency.
  *
  * See docs/BVISOR_API_EVALUATION.md for full compatibility analysis.
@@ -26,7 +28,7 @@ export class Sandbox {
 
   constructor(options = {}) {
     this.#logLevel = 'OFF';
-    this.#cwd = options.cwd || '/';
+    this.#cwd = options.cwd || '/workspace';
   }
 
   /**
@@ -56,6 +58,12 @@ export class Sandbox {
       this.#cwd = result.cwd;
     }
 
+    // If the command returned an _async promise (e.g. npm install),
+    // the Output streams resolve when the async work completes.
+    if (result._async) {
+      return _createAsyncOutput(result._async);
+    }
+
     return _createOutput(result.stdout ?? '', result.stderr ?? '');
   }
 }
@@ -69,13 +77,9 @@ export class Sandbox {
  */
 
 /**
- * Create a bVisor-compatible Output object from buffered strings.
- * @param {string} stdoutStr
- * @param {string} stderrStr
- * @returns {Output}
+ * Create Output from buffered strings (sync commands).
  */
 function _createOutput(stdoutStr, stderrStr) {
-  // Pre-encode once; each stream reader gets its own copy via slice.
   const stdoutBytes = stdoutStr.length > 0 ? _encoder.encode(stdoutStr) : null;
   const stderrBytes = stderrStr.length > 0 ? _encoder.encode(stderrStr) : null;
 
@@ -94,6 +98,37 @@ function _createOutput(stdoutStr, stderrStr) {
     }),
     stdout: () => Promise.resolve(stdoutStr),
     stderr: () => Promise.resolve(stderrStr),
+  };
+}
+
+/**
+ * Create Output from an async promise (e.g. npm install).
+ * The promise resolves to { stdout, stderr, exitCode }.
+ */
+function _createAsyncOutput(asyncPromise) {
+  const resultPromise = asyncPromise.then(r => r).catch(err => ({
+    stdout: '',
+    stderr: err.message + '\n',
+    exitCode: 1,
+  }));
+
+  return {
+    stdoutStream: new ReadableStream({
+      async start(controller) {
+        const r = await resultPromise;
+        if (r.stdout) controller.enqueue(_encoder.encode(r.stdout));
+        controller.close();
+      },
+    }),
+    stderrStream: new ReadableStream({
+      async start(controller) {
+        const r = await resultPromise;
+        if (r.stderr) controller.enqueue(_encoder.encode(r.stderr));
+        controller.close();
+      },
+    }),
+    stdout: () => resultPromise.then(r => r.stdout ?? ''),
+    stderr: () => resultPromise.then(r => r.stderr ?? ''),
   };
 }
 
