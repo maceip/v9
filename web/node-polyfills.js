@@ -816,4 +816,30 @@
     globalThis.structuredClone = (obj) => JSON.parse(JSON.stringify(obj));
   }
 
+  // ─── v9-net gvisor detection (runs ALWAYS, even if process was pre-defined) ──
+  // Must be OUTSIDE the if(process===undefined) block because Emscripten or
+  // other loaders may define process before node-polyfills.js runs.
+  try {
+    const _proc = globalThis.process;
+    if (_proc && _proc.env) {
+      const params = new URLSearchParams(globalThis.location?.search || '');
+      const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
+      _proc.env.NODEJS_GVISOR_WS_URL = wsUrl;
+      console.log('[v9-net] NODEJS_GVISOR_WS_URL set on process.env: ' + wsUrl);
+
+      const probeUrl = new URL(wsUrl);
+      probeUrl.pathname = '/__v9net/forward';
+      const probe = new WebSocket(probeUrl.toString());
+      probe.onopen = () => {
+        probe.close();
+        delete _proc.env.NODEJS_IN_TAB_HTTP_RELAY;
+        delete _proc.env.NODEJS_IN_TAB_HTTP_RELAY_WS;
+        console.log('[v9-net] SUCCESS — connected to v9-net, relay disabled');
+      };
+      probe.onerror = () => {
+        console.warn('[v9-net] v9-net not reachable — networking falls back gracefully');
+      };
+    }
+  } catch { /* ignore */ }
+
 })();
