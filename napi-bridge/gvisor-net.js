@@ -864,9 +864,9 @@ let _controlWs = null;
 
 function _getControlWs() {
   if (_controlWs && _controlWs.readyState <= 1) return _controlWs;
-  const baseUrl = _env().NODEJS_GVISOR_WS_URL;
+  const baseUrl = globalThis.__V9_GVISOR_WS_URL__ || _env().NODEJS_GVISOR_WS_URL;
   if (!baseUrl) {
-    console.warn('[v9-net:control] no NODEJS_GVISOR_WS_URL — cannot open control channel');
+    console.warn('[v9-net:control] no gvisor URL — cannot open control channel');
     return null;
   }
   const url = new URL(baseUrl);
