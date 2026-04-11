@@ -500,6 +500,11 @@
       transform: translateY(-2px) scale(1.08);
       opacity: 1;
     }
+    .shell-tile {
+      opacity: 1;
+      border-color: rgba(0, 200, 150, 0.5);
+      color: #00c896;
+    }
 
     /* ── Responsive: Pixel 9 Pro Fold folded (≤ 380px) ── */
     @media (max-width: 380px) {
@@ -817,7 +822,9 @@
     <img class="nav-icon" src="icons/Globe.svg" alt="" style="top:28px;left:1020px" loading="lazy">
 
     <span class="nav-name">v9</span>
-    <div id="dismissed-tray"></div>
+    <div id="dismissed-tray">
+      <div class="dismissed-tile shell-tile" id="shell-tile" title="Interactive Shell">sh</div>
+    </div>
     <div style="flex:1"></div>
     <a href="NODEJS_IN_TAB_ROADMAP.md" style="margin-left:12px;font-size:11px;color:var(--text-secondary);text-decoration:none;font-family:IBM Plex Mono,monospace;">Roadmap</a>
 

@@ -298,6 +298,37 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ── Shell tile — permanent "sh" tile in navbar opens shell-only terminal ──
+const shellTile = document.getElementById('shell-tile');
+if (shellTile) {
+  shellTile.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state === 'RUNNING') {
+      // Already running — switch iframe to shell mode
+      const root = siteRootPrefix();
+      const base = `${window.location.origin}${root}`;
+      const shellUrl = new URL('web/index.html?autorun=0', base).href;
+      cliFrame.src = shellUrl;
+      cliLoaded = true;
+      cliFrame.classList.add('visible');
+      bootText.style.display = 'none';
+      return;
+    }
+    // From idle — load shell and zoom in
+    const root = siteRootPrefix();
+    const base = `${window.location.origin}${root}`;
+    const shellUrl = new URL('web/index.html?autorun=0', base).href;
+    cliFrame.src = shellUrl;
+    cliLoaded = false; // force loadCLI() to wait for the new src
+    if (state === 'IDLE') {
+      state = 'ZOOMING';
+      termWrap.classList.remove('idle');
+      termWrap.classList.add('zoomed');
+      zoom.zoomIn();
+    }
+  });
+}
+
 let dismissedCount = 0;
 function addDismissedTile() {
   dismissedCount++;
