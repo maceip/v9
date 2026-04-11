@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shell Test</title>
+  <script>
+  (function () {
+    // Set base to project root so imports resolve correctly
+    var b = document.createElement('base');
+    var href = location.href;
+    // Strip /tests/e2e/shell-test-page.html to get project root
+    var root = href.substring(0, href.indexOf('/tests/'));
+    b.href = root + '/';
+    document.head.appendChild(b);
+  })();
+  </script>
+  <link rel="stylesheet" href="/node_modules/xterm/css/xterm.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1b26; }
+    #terminal { width: 100%; height: 100%; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "fflate": "/node_modules/fflate/esm/browser.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script src="/node_modules/xterm/lib/xterm.js"></script>
+  <script type="module">
+    try {
+    const Terminal = globalThis.Terminal;
+    const { createShell } = await import('/napi-bridge/shell.js');
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'monospace',
+      theme: { background: '#1a1b26', foreground: '#a9b1d6' },
+    });
+
+    const container = document.getElementById('terminal');
+    term.open(container);
+
+    // Expose globals for tests
+    globalThis.__edgeTerm = term;
+
+    // Wire up console.log to terminal
+    globalThis._xtermWrite = (data) => term.write(data);
+    const _origLog = console.log.bind(console);
+    console.log = (...args) => {
+      const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\r\n';
+      term.write(text);
+      _origLog(...args);
+    };
+    console.error = (...args) => {
+      const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\r\n';
+      term.write('\x1b[31m' + text + '\x1b[0m');
+    };
+
+    // Build a minimal runtime-like object for the shell test
+    // The shell only needs the MEMFS (via shell-commands.js getMemfs())
+    // and the shell parser.
+    const { defaultMemfs } = await import('./napi-bridge/memfs.js');
+
+    // Fake runtime with fs for test assertions
+    globalThis.__edgeRuntime = {
+      fs: {
+        writeFileSync(path, data) {
+          if (typeof data === 'string') data = new TextEncoder().encode(data);
+          defaultMemfs.writeFile(path, data);
+        },
+        readFileSync(path, encoding) {
+          const raw = defaultMemfs.readFile(path);
+          if (encoding === 'utf8' || encoding === 'utf-8') return new TextDecoder().decode(raw);
+          return raw;
+        },
+        unlinkSync(path) { defaultMemfs.unlink(path); },
+        mkdirSync(path, opts) { defaultMemfs.mkdir(path, opts?.recursive); },
+        readdirSync(path) { return defaultMemfs.readdir(path); },
+        existsSync(path) { return defaultMemfs.exists(path); },
+      },
+      require(name, fromDir) {
+        // Minimal require for testing installed packages
+        const { NapiBridge } = globalThis.__napiBridge || {};
+        if (NapiBridge) return NapiBridge.require(name, fromDir);
+        // Fallback: read and eval the package main
+        const pkgPath = (fromDir || '/workspace') + '/node_modules/' + name + '/package.json';
+        const pkg = JSON.parse(new TextDecoder().decode(defaultMemfs.readFile(pkgPath)));
+        const mainFile = pkg.main || 'index.js';
+        const mainPath = (fromDir || '/workspace') + '/node_modules/' + name + '/' + mainFile;
+        const src = new TextDecoder().decode(defaultMemfs.readFile(mainPath));
+        const mod = { exports: {} };
+        const fn = new Function('module', 'exports', 'require', '__filename', '__dirname', src);
+        fn(mod, mod.exports, () => {}, mainPath, mainPath.replace(/\/[^/]+$/, ''));
+        return mod.exports;
+      },
+    };
+
+    // Ensure default directories exist
+    try { defaultMemfs.mkdir('/workspace', true); } catch {}
+    try { defaultMemfs.mkdir('/home/user', true); } catch {}
+    try { defaultMemfs.mkdir('/tmp', true); } catch {}
+
+    // Create and start shell
+    const shell = createShell({
+      write: (data) => term.write(data),
+      cwd: '/workspace',
+      env: { HOME: '/home/user', PATH: '/usr/local/bin:/usr/bin:/bin', USER: 'user' },
+    });
+
+    globalThis.__edgeShell = shell;
+    globalThis._stdinPush = (data) => shell.feed(data);
+
+    term.onData((data) => shell.feed(data));
+
+    term.writeln('\x1b[36mv9 shell test\x1b[0m\r\n');
+    shell.prompt();
+
+    // Signal that we're ready
+    globalThis.__shellReady = true;
+    globalThis.__shellError = null;
+    } catch (err) {
+      globalThis.__shellError = err.message + '\n' + err.stack;
+      console.error('[shell-init] FAILED:', err);
+    }
+  </script>
+</body>
+</html>
