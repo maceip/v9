@@ -914,13 +914,17 @@ function _requestPortUnforward(port) {
 // ─── Public API ─────────────────────────────────────────────────────
 
 export function isGvisorAvailable() {
-  const e = _env();
-  return !!(e.NODEJS_GVISOR_WS_URL && e.NODEJS_GVISOR_WS_URL !== '' && e.NODEJS_GVISOR_WS_URL !== '0');
+  // Check dedicated global first (immune to process.env replacement),
+  // then fall back to process.env
+  const url = globalThis.__V9_GVISOR_WS_URL__
+    || _env().NODEJS_GVISOR_WS_URL;
+  return !!(url && url !== '' && url !== '0');
 }
 
 export function getGvisorStack() {
   if (_stack) return _stack;
-  const url = _env().NODEJS_GVISOR_WS_URL;
+  const url = globalThis.__V9_GVISOR_WS_URL__
+    || _env().NODEJS_GVISOR_WS_URL;
   if (!url) throw new Error('NODEJS_GVISOR_WS_URL not set (see docs/TRANSPORT.md)');
   _stack = new NetworkStack(url);
   return _stack;

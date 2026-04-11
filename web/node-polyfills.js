@@ -817,29 +817,30 @@
   }
 
   // ─── v9-net gvisor detection (runs ALWAYS, even if process was pre-defined) ──
-  // Must be OUTSIDE the if(process===undefined) block because Emscripten or
-  // other loaders may define process before node-polyfills.js runs.
+  // Store on a dedicated global that no module system can overwrite.
   try {
-    const _proc = globalThis.process;
-    if (_proc && _proc.env) {
-      const params = new URLSearchParams(globalThis.location?.search || '');
-      const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
-      _proc.env.NODEJS_GVISOR_WS_URL = wsUrl;
-      console.log('[v9-net] NODEJS_GVISOR_WS_URL set on process.env: ' + wsUrl);
+    const params = new URLSearchParams(globalThis.location?.search || '');
+    const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
+    // Set on a dedicated global — immune to process.env replacement
+    globalThis.__V9_GVISOR_WS_URL__ = wsUrl;
+    // Also try process.env for anything that checks it directly
+    if (globalThis.process?.env) globalThis.process.env.NODEJS_GVISOR_WS_URL = wsUrl;
+    console.log('[v9-net] gvisor URL set: ' + wsUrl);
 
-      const probeUrl = new URL(wsUrl);
-      probeUrl.pathname = '/__v9net/forward';
-      const probe = new WebSocket(probeUrl.toString());
-      probe.onopen = () => {
-        probe.close();
-        delete _proc.env.NODEJS_IN_TAB_HTTP_RELAY;
-        delete _proc.env.NODEJS_IN_TAB_HTTP_RELAY_WS;
-        console.log('[v9-net] SUCCESS — connected to v9-net, relay disabled');
-      };
-      probe.onerror = () => {
-        console.warn('[v9-net] v9-net not reachable — networking falls back gracefully');
-      };
-    }
+    const probeUrl = new URL(wsUrl);
+    probeUrl.pathname = '/__v9net/forward';
+    const probe = new WebSocket(probeUrl.toString());
+    probe.onopen = () => {
+      probe.close();
+      if (globalThis.process?.env) {
+        delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY;
+        delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY_WS;
+      }
+      console.log('[v9-net] SUCCESS — connected, relay disabled');
+    };
+    probe.onerror = () => {
+      console.warn('[v9-net] v9-net not reachable — falls back gracefully');
+    };
   } catch { /* ignore */ }
 
 })();
