@@ -437,35 +437,50 @@ async function boot() {
     globalThis.__edgeProcess = processBridge;
 
     // Always start the interactive shell first — it's the primary experience.
-    // If a bundle is configured, the shell launches it (like typing `node app.js`).
-    // When the app exits, the user is back at the prompt.
+    // If a bundle is configured, the runtime launches it; when it exits,
+    // stdin falls through to the shell and the user gets a prompt.
+    let shell = null;
     try {
       const { createShell } = await import('../napi-bridge/shell.js');
-      const shell = createShell({
+      shell = createShell({
         write: (data) => globalThis._xtermWrite?.(data),
         cwd: DEFAULT_WORKSPACE,
         env: baseEnv(getAnthropicKey()),
       });
       globalThis.__edgeShell = shell;
-      globalThis._stdinPush = (data) => shell.feed(data);
-      term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
-      term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
-
-      if (config.appBundle && config.autorun) {
-        // Auto-run the bundle through the shell — output goes to terminal,
-        // and when it exits the user gets the prompt back.
-        shell.prompt();
-        shell.feed(`node ${config.appBundle}\n`);
-      } else {
-        shell.prompt();
-      }
     } catch (shellErr) {
-      _nativeError('[shell] Failed to start shell:', shellErr);
-      term.writeln(`\x1b[33m[shell] ${_safe(shellErr.message)}\x1b[0m`);
+      _nativeError('[shell] Failed to load shell:', shellErr);
+    }
 
-      // Fallback: run bundle directly if shell fails
-      if (config.appBundle && config.autorun) {
+    if (config.appBundle && config.autorun) {
+      // Launch the bundle via the full Wasm runtime (controller.start).
+      // When the app exits, activate the shell prompt.
+      term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser\r\n');
+      try {
         await controller.start();
+        // App launched — when it exits, show shell prompt
+        controller.waitForExit().then(() => {
+          if (shell) {
+            term.writeln('');
+            globalThis._stdinPush = (data) => shell.feed(data);
+            shell.prompt();
+          }
+        }).catch(() => {});
+      } catch (startErr) {
+        _nativeError('[boot] Bundle failed, dropping to shell:', startErr);
+        if (shell) {
+          term.writeln(`\x1b[33m${_safe(startErr.message)}\x1b[0m\r\n`);
+          globalThis._stdinPush = (data) => shell.feed(data);
+          shell.prompt();
+        }
+      }
+    } else {
+      // No bundle — shell is the primary interface
+      if (shell) {
+        globalThis._stdinPush = (data) => shell.feed(data);
+        term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
+        term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
+        shell.prompt();
       }
     }
   } catch (err) {
