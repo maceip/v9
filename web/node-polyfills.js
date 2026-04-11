@@ -205,14 +205,12 @@
         console.log('[v9-net:probe] SUCCESS — v9-net is running, TCP networking enabled, relay disabled');
       };
       probe.onerror = (e) => {
-        console.warn('[v9-net:probe] FAILED — v9-net not reachable, falling back to relay', e);
-        // v9-net not running — clear gvisor env, restore relay
-        delete _env.NODEJS_GVISOR_WS_URL;
-        const host = globalThis.location?.hostname || '';
-        if (host.endsWith('.github.io')) {
-          _env.NODEJS_IN_TAB_HTTP_RELAY = '1';
-          _env.NODEJS_IN_TAB_HTTP_RELAY_WS = 'wss://relay.stare.network/__in-tab-http-ws';
-        }
+        // v9-net not running. Leave NODEJS_GVISOR_WS_URL set —
+        // gvisor-net.js handles connection failures gracefully with
+        // timeouts and error events. Deleting the env var here causes
+        // a race condition where modules may or may not see it depending
+        // on how fast the WS refusal comes back.
+        console.warn('[v9-net:probe] FAILED — v9-net not reachable. Networking will fall back gracefully.', e);
       };
     } catch { /* ignore */ }
 
