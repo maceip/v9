@@ -6,6 +6,7 @@
 
 import { defaultMemfs, resolvePath, normalizePath as _normPath } from './memfs.js';
 import fsModule from './fs.js';
+import { npm as _npmRun } from './npm.js';
 
 const _decoder = new TextDecoder('utf-8');
 const _encoder = new TextEncoder();
@@ -1384,6 +1385,93 @@ function statCmd(args) {
 function chmod() { return { stdout: '', stderr: '', exitCode: 0 }; }
 function chown() { return { stdout: '', stderr: '', exitCode: 0 }; }
 
+// ─── npm ────────────────────────────────────────────────────────────
+
+function npmCmd(args, options) {
+  return _npmRun(args, { ...options, memfs: _activeMemfs });
+}
+
+// ─── node / npx stubs ───────────────────────────────────────────────
+
+function nodeCmd(args, options) {
+  const vals = args.map(a => typeof a === 'string' ? a : a.value);
+  if (vals.length === 0) return { stdout: '', stderr: 'node: interactive REPL not supported\n', exitCode: 1 };
+
+  // node -e "code" / node --eval "code"
+  const eIdx = vals.indexOf('-e') >= 0 ? vals.indexOf('-e') : vals.indexOf('--eval');
+  if (eIdx >= 0 && vals[eIdx + 1]) {
+    try {
+      const result = (new Function('return (' + vals[eIdx + 1] + ')'))();
+      return { stdout: (result !== undefined ? String(result) : '') + '\n', stderr: '', exitCode: 0 };
+    } catch (err) {
+      return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
+    }
+  }
+
+  // node <script.js> [args...] — run a script from MEMFS
+  const scriptPath = vals[0];
+  if (scriptPath && !scriptPath.startsWith('-')) {
+    const resolved = normalizePath(scriptPath);
+    try {
+      const src = _decoder.decode(_activeMemfs.readFile(resolved));
+      const stdout = [];
+      const stderr = [];
+      // Minimal script sandbox: capture console.log/error output
+      const _log = (...a) => stdout.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+      const _err = (...a) => stderr.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+      const scriptConsole = { log: _log, error: _err, warn: _err, info: _log, debug: _log, dir: _log };
+      const mod = { exports: {} };
+      const scriptArgs = vals.slice(1);
+      const scriptDir = resolved.replace(/\/[^/]+$/, '') || '/';
+      const fn = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', 'process', src);
+      const fakeProcess = {
+        argv: ['node', resolved, ...scriptArgs],
+        env: options?.env || {},
+        cwd: () => options?.cwd || '/',
+        exit: (code) => { throw { __nodeExit: true, code: code || 0 }; },
+        stdout: { write: (d) => stdout.push(String(d)) },
+        stderr: { write: (d) => stderr.push(String(d)) },
+      };
+      // Minimal require for scripts
+      const scriptRequire = (name) => {
+        if (name === 'path') return { join: (...p) => p.join('/').replace(/\/+/g, '/'), resolve: (...p) => normalizePath(p.join('/')) };
+        if (name === 'fs') return fsModule;
+        // Try node_modules
+        const nmPath = normalizePath(scriptDir + '/node_modules/' + name + '/package.json');
+        try {
+          const pkg = JSON.parse(_decoder.decode(_activeMemfs.readFile(nmPath)));
+          const mainFile = pkg.main || 'index.js';
+          const mainPath = normalizePath(scriptDir + '/node_modules/' + name + '/' + mainFile);
+          const mainSrc = _decoder.decode(_activeMemfs.readFile(mainPath));
+          const m2 = { exports: {} };
+          const f2 = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', mainSrc);
+          f2(m2, m2.exports, scriptRequire, scriptConsole, mainPath, mainPath.replace(/\/[^/]+$/, ''));
+          return m2.exports;
+        } catch { throw new Error(`Cannot find module '${name}'`); }
+      };
+      try {
+        fn(mod, mod.exports, scriptRequire, scriptConsole, resolved, scriptDir, fakeProcess);
+      } catch (e) {
+        if (e?.__nodeExit) {
+          return { stdout: stdout.join('\n') + (stdout.length ? '\n' : ''), stderr: stderr.join('\n') + (stderr.length ? '\n' : ''), exitCode: e.code };
+        }
+        stderr.push(e.message);
+      }
+      return {
+        stdout: stdout.join('\n') + (stdout.length ? '\n' : ''),
+        stderr: stderr.join('\n') + (stderr.length ? '\n' : ''),
+        exitCode: stderr.length > 0 ? 1 : 0,
+      };
+    } catch (err) {
+      if (err.code === 'ENOENT' || err.message?.includes('ENOENT')) {
+        return { stdout: '', stderr: `node: ${scriptPath}: No such file or directory\n`, exitCode: 1 };
+      }
+      return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
+    }
+  }
+
+  return { stdout: '', stderr: 'Usage: node <script.js> or node -e "code"\n', exitCode: 1 };
+}
 
 
 export const commands = {
@@ -1393,6 +1481,7 @@ export const commands = {
   test: testCmd, '[': testCmd,
   rg, xargs, tee, sed, awk, which, whoami, date, uname, seq, yes, printf: printfCmd,
   readlink, realpath: realpathCmd, stat: statCmd, chmod, chown,
+  npm: npmCmd, node: nodeCmd,
 };
 
 export function hasCommand(name) {
