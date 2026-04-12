@@ -1,14 +1,14 @@
 /**
  * v9 — Main application controller.
  *
- * State machine: IDLE → ZOOMING → RUNNING ⇄ IDLE
+ * Two terminals side-by-side:
+ *   - Left:  Interactive shell (web/index.html?autorun=0)
+ *   - Right: Claude Code CLI (web/index.html?bundle=...&autorun=1)
  *
- * - IDLE: Terminal at small scale, glass animation visible
- * - ZOOMING: Smooth damped-spring zoom animation
- * - RUNNING: Full-screen terminal with CLI visible
+ * State machine per terminal: IDLE → ZOOMING → RUNNING ⇄ IDLE
  *
- * CLI loads on first click, then stays alive across zoom cycles.
- * Terminal text scales with the frame during minimize/restore.
+ * Clicking either terminal zooms BOTH into full split-screen.
+ * Escape/swipe dismisses BOTH back to idle pair.
  */
 
 import { NavFluid } from './fluid.js';
@@ -20,9 +20,8 @@ import { TacticalHUD } from './hud.js';
 import { initThemeSwitcher } from './theme.js';
 import { DPad } from './dpad.js';
 
-// ── State ──
-let state = 'IDLE';
-let cliLoaded = false; // True once iframe has loaded at least once
+// ── Shared state ──
+let pairState = 'IDLE'; // IDLE | ZOOMING | RUNNING | UNAVAILABLE
 
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
@@ -30,14 +29,7 @@ const navFluidCanvas = document.getElementById('nav-fluid');
 const progressBar = document.getElementById('progress-bar');
 const fog = document.getElementById('fog');
 const spotlight = document.getElementById('spotlight');
-const termWrap = document.getElementById('terminal-wrap');
-const termScreen = document.getElementById('terminal-screen');
-const glassCanvas = document.getElementById('glass-canvas');
-const termOverlay = document.getElementById('terminal-overlay');
-const bootText = document.getElementById('boot-text');
-const cliFrame = document.getElementById('cli-frame');
 
-let glass = null;
 let fluid = null;
 
 // ── Theme detection ──
@@ -48,10 +40,10 @@ function applyTheme() {
   } else {
     document.documentElement.classList.add('light');
   }
-  if (glass) glass.isDark = isDark.matches;
+  for (const term of terminals) {
+    if (term.glass) term.glass.isDark = isDark.matches;
+  }
 }
-isDark.addEventListener('change', applyTheme);
-applyTheme();
 
 // ── Progress bar ──
 function setProgress(pct) {
@@ -79,126 +71,7 @@ navbar.addEventListener('mousemove', (e) => {
   fluid.onMouse((e.clientX - rect.left) / rect.width, 1.0 - (e.clientY - rect.top) / rect.height);
 });
 
-// ── Glass scene ──
-try {
-  glass = new GlassScene(glassCanvas);
-  glass.isDark = isDark.matches;
-  glass.start();
-  setProgress(75);
-} catch (e) { setProgress(75); }
-
-function resizeGlass() { if (glass) glass.resize(); }
-window.addEventListener('resize', resizeGlass);
-new ResizeObserver(resizeGlass).observe(termScreen);
-
-// ── Mobile D-Pad ──
-const dpad = new DPad(cliFrame);
-
-// ── Zoom controller ──
-const zoom = new ZoomController(termWrap, {
-  onComplete: (direction) => {
-    if (direction === 'in' && state === 'ZOOMING') {
-      state = 'RUNNING';
-      if (glass) { glass.fog = 0; glass.glassBlur = 0; glass.stop(); }
-      if (!cliLoaded) loadCLI();
-      // Tell iframe to re-fit terminal to actual container size
-      try { cliFrame.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
-      // Show d-pad on mobile
-      if (window.innerWidth < 900) dpad.show();
-    } else if (direction === 'out') {
-      state = 'IDLE';
-      termWrap.classList.add('idle');
-      dpad.hide();
-    }
-  },
-  onProgress: (p, direction) => {
-    if (direction === 'out') {
-      fog.style.opacity = String(1.0 - p);
-      spotlight.style.opacity = String(0.6 + p * 0.4);
-      if (glass) {
-        glass.fog = 0.12 * (1.0 - p);
-        glass.glassBlur = 0.4 * (1.0 - p * 0.9);
-      }
-      return;
-    }
-    // Zoom in
-    fog.style.opacity = String(1.0 - p);
-    spotlight.style.opacity = String(0.6 + p * 0.4);
-    if (glass) {
-      const glassFade = p < 0.8 ? p * 0.3 : 0.24 + (p - 0.8) * 3.8;
-      glass.fog = 0.12 * (1.0 - Math.min(1, glassFade));
-      glass.glassBlur = 0.4 * (1.0 - Math.min(1, glassFade));
-    }
-  }
-});
-
-// ── Icons ──
-initIcons();
-setProgress(100);
-
-// ── Click/tap to zoom in ──
-// Use touchend on mobile to avoid the 300ms click delay; prevent double-fire.
-let _activatedByTouch = false;
-termWrap.addEventListener('touchend', (e) => {
-  _activatedByTouch = true;
-  handleActivate(e);
-  // Reset flag after click would have fired
-  setTimeout(() => { _activatedByTouch = false; }, 400);
-}, true);
-termWrap.addEventListener('click', (e) => {
-  if (_activatedByTouch) return; // Already handled by touchend
-  handleActivate(e);
-}, true);
-
-function handleActivate(e) {
-  if (state !== 'IDLE') return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  state = 'ZOOMING';
-  termWrap.classList.remove('idle');
-  termWrap.classList.add('zoomed');
-
-  if (!cliLoaded && !cliFrame.src) {
-    resolveWebURL().then(url => { if (url) cliFrame.src = url; });
-  }
-
-  zoom.zoomIn();
-}
-
-// ── Load CLI into visible state ──
-async function loadCLI() {
-  const webUrl = cliFrame.src ? true : await resolveWebURL();
-  if (!webUrl && !cliFrame.src) {
-    showRuntimeUnavailable();
-    return;
-  }
-  if (!cliFrame.src && typeof webUrl === 'string') {
-    cliFrame.src = webUrl;
-  }
-
-  // Wait for iframe load
-  await new Promise(resolve => {
-    try {
-      if (cliFrame.contentDocument && cliFrame.contentDocument.readyState === 'complete') {
-        return resolve();
-      }
-    } catch { /* cross-origin */ }
-    cliFrame.addEventListener('load', resolve, { once: true });
-  });
-
-  cliLoaded = true;
-  cliFrame.classList.add('visible');
-  bootText.style.display = 'none';
-
-  // Tell the terminal to refit now that it's visible at full size
-  try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
-  // And again after a short delay to catch any layout settling
-  setTimeout(() => {
-    try { cliFrame.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
-  }, 200);
-}
-
+// ── Helpers ──
 function siteRootPrefix() {
   let p = new URL(window.location.href).pathname;
   if (p.endsWith('/index.html')) p = p.slice(0, -'/index.html'.length);
@@ -218,30 +91,125 @@ function anthropicProxyForCLIiframe() {
   return '';
 }
 
-async function resolveWebURL() {
+function buildShellURL() {
+  const root = siteRootPrefix();
+  const base = `${window.location.origin}${root}`;
+  return new URL('web/index.html?autorun=0', base).href;
+}
+
+function buildClaudeURL() {
   const root = siteRootPrefix();
   const bundlePath = `${root.replace(/\/$/, '')}/dist/claude-code-cli.js`;
   const base = `${window.location.origin}${root}`;
   const u = new URL(`web/index.html?bundle=${encodeURIComponent(bundlePath)}&autorun=1`, base);
   const proxy = anthropicProxyForCLIiframe();
   if (proxy) u.searchParams.set('proxy', proxy);
-  const webUrl = u.href;
-
-  async function ok(url) {
-    try { const r = await fetch(url, { method: 'HEAD', mode: 'same-origin' }); return r.ok || r.status === 405; }
-    catch { return false; }
-  }
-  if (await ok(webUrl)) return webUrl;
-  try { const r = await fetch(webUrl, { method: 'GET', mode: 'same-origin' }); if (r.ok) return webUrl; }
-  catch { /* ignore */ }
-  return null;
+  return u.href;
 }
 
-function showRuntimeUnavailable() {
-  state = 'UNAVAILABLE';
+async function urlReachable(url) {
+  try { const r = await fetch(url, { method: 'HEAD', mode: 'same-origin' }); return r.ok || r.status === 405; }
+  catch { return false; }
+}
+
+// ── Terminal factory ──
+// Each terminal has its own DOM elements, glass scene, zoom controller, iframe state.
+function createTerminal({ wrapId, frameId, screenId, glassCanvasId, overlayId, bootTextId, iframeId, urlBuilder, title }) {
+  const term = {
+    wrap: document.getElementById(wrapId),
+    frame: document.getElementById(frameId),
+    screen: document.getElementById(screenId),
+    glassCanvas: document.getElementById(glassCanvasId),
+    overlay: document.getElementById(overlayId),
+    bootText: document.getElementById(bootTextId),
+    iframe: document.getElementById(iframeId),
+    glass: null,
+    zoom: null,
+    loaded: false,
+    urlBuilder,
+    title,
+  };
+
+  // Glass scene for this terminal
+  try {
+    term.glass = new GlassScene(term.glassCanvas);
+    term.glass.isDark = isDark.matches;
+    term.glass.start();
+  } catch (e) { /* glass optional */ }
+
+  // Resize glass when the screen element changes size
+  const resizeGlass = () => { if (term.glass) term.glass.resize(); };
+  new ResizeObserver(resizeGlass).observe(term.screen);
+
+  // Zoom controller — per terminal
+  term.zoom = new ZoomController(term.wrap, {
+    onComplete: (direction) => {
+      if (direction === 'in') {
+        if (term.glass) { term.glass.fog = 0; term.glass.glassBlur = 0; term.glass.stop(); }
+        if (!term.loaded) loadIframe(term);
+        try { term.iframe.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+      } else if (direction === 'out') {
+        term.wrap.classList.add('idle');
+      }
+    },
+    onProgress: (p, direction) => {
+      if (direction === 'out') {
+        if (term.glass) {
+          term.glass.fog = 0.12 * (1.0 - p);
+          term.glass.glassBlur = 0.4 * (1.0 - p * 0.9);
+        }
+        return;
+      }
+      if (term.glass) {
+        const glassFade = p < 0.8 ? p * 0.3 : 0.24 + (p - 0.8) * 3.8;
+        term.glass.fog = 0.12 * (1.0 - Math.min(1, glassFade));
+        term.glass.glassBlur = 0.4 * (1.0 - Math.min(1, glassFade));
+      }
+    },
+  });
+
+  return term;
+}
+
+// ── Load iframe for a terminal (lazy, on first zoom-in) ──
+async function loadIframe(term) {
+  if (term.loaded) return;
+
+  let url = term.iframe.src;
+  if (!url) {
+    const built = term.urlBuilder();
+    if (!(await urlReachable(built))) {
+      showRuntimeUnavailable(term);
+      return;
+    }
+    term.iframe.src = built;
+    url = built;
+  }
+
+  // Wait for iframe to load
+  await new Promise(resolve => {
+    try {
+      if (term.iframe.contentDocument && term.iframe.contentDocument.readyState === 'complete') {
+        return resolve();
+      }
+    } catch { /* cross-origin */ }
+    term.iframe.addEventListener('load', resolve, { once: true });
+  });
+
+  term.loaded = true;
+  term.iframe.classList.add('visible');
+  if (term.bootText) term.bootText.style.display = 'none';
+
+  try { term.iframe.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  setTimeout(() => {
+    try { term.iframe.contentWindow.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  }, 200);
+}
+
+function showRuntimeUnavailable(term) {
+  pairState = 'UNAVAILABLE';
   const panel = document.createElement('div');
   panel.className = 'boot-line visible';
-  panel.id = 'runtime-unavailable';
   panel.style.cssText = 'margin-top:16px;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,120,120,0.45);background:rgba(80,10,10,0.22);max-width:560px';
   const title = document.createElement('div');
   title.style.cssText = 'color:#ff8a8a;font-family:IBM Plex Mono,monospace;font-size:13px;letter-spacing:0.06em;margin-bottom:8px';
@@ -249,50 +217,153 @@ function showRuntimeUnavailable() {
   panel.appendChild(title);
   const detail = document.createElement('div');
   detail.style.cssText = 'font-family:IBM Plex Mono,monospace;font-size:14px;line-height:1.6;color:var(--fg)';
-  detail.textContent = 'The runtime iframe could not be reached. Ensure wasm and bundle are built.';
+  detail.textContent = `The ${term.title} iframe could not be reached. Ensure wasm and bundle are built.`;
   panel.appendChild(detail);
-  bootText.appendChild(panel);
+  if (term.bootText) term.bootText.appendChild(panel);
 }
 
-// ── Mouse/touch warp for glass shader ──
+// ── Create the two terminals ──
+const shellTerm = createTerminal({
+  wrapId: 'terminal-wrap',
+  frameId: 'terminal-frame',
+  screenId: 'terminal-screen',
+  glassCanvasId: 'glass-canvas',
+  overlayId: 'terminal-overlay',
+  bootTextId: 'boot-text',
+  iframeId: 'cli-frame',
+  urlBuilder: buildShellURL,
+  title: 'shell',
+});
+
+const claudeTerm = createTerminal({
+  wrapId: 'terminal-wrap-2',
+  frameId: 'terminal-frame-2',
+  screenId: 'terminal-screen-2',
+  glassCanvasId: 'glass-canvas-2',
+  overlayId: 'terminal-overlay-2',
+  bootTextId: 'boot-text-2',
+  iframeId: 'cli-frame-2',
+  urlBuilder: buildClaudeURL,
+  title: 'Claude Code',
+});
+
+const terminals = [shellTerm, claudeTerm];
+
+// ── Apply theme now that terminals exist ──
+isDark.addEventListener('change', applyTheme);
+applyTheme();
+
+// ── Mobile D-Pad (applies to whichever terminal is active — default to Claude) ──
+const dpad = new DPad(claudeTerm.iframe);
+
+setProgress(75);
+initIcons();
+setProgress(100);
+
+// ── Click/tap to zoom in — both terminals zoom together ──
+let _activatedByTouch = false;
+function bindActivate(term) {
+  term.wrap.addEventListener('touchend', (e) => {
+    _activatedByTouch = true;
+    handleActivate(e);
+    setTimeout(() => { _activatedByTouch = false; }, 400);
+  }, true);
+  term.wrap.addEventListener('click', (e) => {
+    if (_activatedByTouch) return;
+    handleActivate(e);
+  }, true);
+}
+for (const t of terminals) bindActivate(t);
+
+function handleActivate(e) {
+  if (pairState !== 'IDLE') return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  pairState = 'ZOOMING';
+  for (const t of terminals) {
+    t.wrap.classList.remove('idle');
+    t.wrap.classList.add('zoomed');
+  }
+
+  // Preload URLs (but don't wait)
+  for (const t of terminals) {
+    if (!t.loaded && !t.iframe.src) {
+      urlReachable(t.urlBuilder()).then(ok => {
+        if (ok) t.iframe.src = t.urlBuilder();
+      });
+    }
+  }
+
+  // Start zoom animations on both simultaneously
+  let completed = 0;
+  const onOneComplete = () => {
+    completed++;
+    if (completed === terminals.length) {
+      pairState = 'RUNNING';
+      if (window.innerWidth < 900) dpad.show();
+    }
+  };
+  for (const t of terminals) {
+    const origComplete = t.zoom.onComplete;
+    t.zoom.onComplete = (dir) => {
+      origComplete(dir);
+      if (dir === 'in') onOneComplete();
+      t.zoom.onComplete = origComplete;
+    };
+    t.zoom.zoomIn();
+  }
+}
+
+// ── Mouse/touch warp for glass shader (both terminals) ──
 function updateGlassMouse(clientX, clientY) {
-  if (!glass) return;
-  const rect = termScreen.getBoundingClientRect();
-  glass.mouse.x = (clientX - rect.left) / rect.width;
-  glass.mouse.y = 1.0 - (clientY - rect.top) / rect.height;
+  for (const t of terminals) {
+    if (!t.glass) continue;
+    const rect = t.screen.getBoundingClientRect();
+    t.glass.mouse.x = (clientX - rect.left) / rect.width;
+    t.glass.mouse.y = 1.0 - (clientY - rect.top) / rect.height;
+  }
 }
 document.addEventListener('mousemove', (e) => updateGlassMouse(e.clientX, e.clientY));
 document.addEventListener('touchmove', (e) => {
   if (e.touches[0]) updateGlassMouse(e.touches[0].clientX, e.touches[0].clientY);
 }, { passive: true });
 
-// ── Minimize — CLI stays alive, text scales with frame ──
+// ── Minimize — both terminals back to idle pair ──
 let dismissCount = 0;
 
 function resetToIdle() {
-  termWrap.classList.remove('zoomed');
-  if (glass) { glass.fog = 0.12; glass.glassBlur = 0.4; glass.start(); }
+  for (const t of terminals) {
+    t.wrap.classList.remove('zoomed');
+    if (t.glass) { t.glass.fog = 0.12; t.glass.glassBlur = 0.4; t.glass.start(); }
+  }
 
   dismissCount++;
-  const shrink = Math.min(dismissCount * 0.04, 0.15);
-  zoom.setShrink(shrink);
-  zoom.zoomOut();
+  const shrink = Math.min(dismissCount * 0.02, 0.08);
+  for (const t of terminals) {
+    t.zoom.setShrink(shrink);
+    t.zoom.zoomOut();
+  }
 
-  fog.style.opacity = '1';
-  spotlight.style.opacity = '0.6';
+  pairState = 'IDLE';
+  if (fog) fog.style.opacity = '1';
+  if (spotlight) spotlight.style.opacity = '0.6';
+  dpad.hide();
 }
 
-// ── Swipe-to-dismiss ──
+// ── Swipe-to-dismiss (on the pair container — either terminal triggers) ──
 const dismissedTray = document.getElementById('dismissed-tray');
 
-const swipeDismiss = new SwipeDismiss(termWrap, {
-  canSwipe: () => state === 'RUNNING' || state === 'UNAVAILABLE',
-  onDismiss: () => { addDismissedTile(); resetToIdle(); },
-  onSnapBack: () => {},
-});
+for (const t of terminals) {
+  new SwipeDismiss(t.wrap, {
+    canSwipe: () => pairState === 'RUNNING' || pairState === 'UNAVAILABLE',
+    onDismiss: () => { addDismissedTile(); resetToIdle(); },
+    onSnapBack: () => {},
+  });
+}
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && (state === 'RUNNING' || state === 'UNAVAILABLE')) {
+  if (e.key === 'Escape' && (pairState === 'RUNNING' || pairState === 'UNAVAILABLE')) {
     addDismissedTile();
     resetToIdle();
   }
@@ -307,10 +378,9 @@ function addDismissedTile() {
   tile.title = `Session ${dismissedCount}`;
   tile.addEventListener('click', () => {
     tile.remove();
-    if (state === 'IDLE') handleActivate(new Event('click'));
+    if (pairState === 'IDLE') handleActivate(new Event('click'));
   });
   dismissedTray.appendChild(tile);
-  // Animate in (scale pop in navbar)
   tile.style.transform = 'scale(0.3)';
   tile.style.opacity = '0';
   requestAnimationFrame(() => {
@@ -323,23 +393,24 @@ function addDismissedTile() {
 // ── Swipe-dismiss from iframe (touch events can't cross iframe boundary) ──
 window.addEventListener('message', (e) => {
   if (e.data?.type === 'v9:swipe-dismiss') {
-    if (state === 'RUNNING' || state === 'UNAVAILABLE') {
+    if (pairState === 'RUNNING' || pairState === 'UNAVAILABLE') {
       addDismissedTile();
       resetToIdle();
     }
   }
 });
 
-// ── Resize / orientation change handler ──
+// ── Resize / orientation change ──
 function handleViewportChange() {
   if (fluid && fluid.active) fluid.resize();
-  if (state === 'RUNNING') {
-    try { cliFrame.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+  if (pairState === 'RUNNING') {
+    for (const t of terminals) {
+      try { t.iframe.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
+    }
   }
 }
 window.addEventListener('resize', handleViewportChange);
 window.addEventListener('orientationchange', () => {
-  // orientationchange fires before resize on some Android devices
   setTimeout(handleViewportChange, 200);
 });
 
@@ -349,4 +420,4 @@ const hud = new TacticalHUD();
 // ── Theme crayon switcher ──
 initThemeSwitcher();
 
-console.log('[v9] Page ready.');
+console.log('[v9] Page ready (two-terminal layout).');

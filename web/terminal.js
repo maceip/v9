@@ -385,6 +385,22 @@ async function boot() {
   let runtime = null;
   let processBridge = null;
 
+  // ── Shell is resilient: initializes even if the Wasm runtime fails ──
+  // The shell only needs MEMFS and the shell parser, not EdgeJS.
+  let shell = null;
+  try {
+    const { createShell } = await import('../napi-bridge/shell.js');
+    shell = createShell({
+      write: (data) => globalThis._xtermWrite?.(data),
+      cwd: DEFAULT_WORKSPACE,
+      env: baseEnv(getAnthropicKey()),
+    });
+    globalThis.__edgeShell = shell;
+    globalThis.__edgeTerm = term;
+  } catch (shellErr) {
+    _nativeError('[shell] Failed to load shell:', shellErr);
+  }
+
   try {
     const ts = Date.now();
     const napiRoot = new URL('../napi-bridge/', import.meta.url).href;
@@ -436,29 +452,13 @@ async function boot() {
     globalThis.__edgeRuntime = runtime;
     globalThis.__edgeProcess = processBridge;
 
-    // Always start the interactive shell first — it's the primary experience.
-    // If a bundle is configured, the runtime launches it; when it exits,
-    // stdin falls through to the shell and the user gets a prompt.
-    let shell = null;
-    try {
-      const { createShell } = await import('../napi-bridge/shell.js');
-      shell = createShell({
-        write: (data) => globalThis._xtermWrite?.(data),
-        cwd: DEFAULT_WORKSPACE,
-        env: baseEnv(getAnthropicKey()),
-      });
-      globalThis.__edgeShell = shell;
-    } catch (shellErr) {
-      _nativeError('[shell] Failed to load shell:', shellErr);
-    }
-
+    // Shell-first boot: the shell was already initialized above (resilient to Wasm failure).
+    // If a bundle is configured, launch it via the full Wasm runtime.
+    // When the app exits, stdin routes back to the shell for a prompt.
     if (config.appBundle && config.autorun) {
-      // Launch the bundle via the full Wasm runtime (controller.start).
-      // When the app exits, activate the shell prompt.
       term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser\r\n');
       try {
         await controller.start();
-        // App launched — when it exits, show shell prompt
         controller.waitForExit().then(() => {
           if (shell) {
             term.writeln('');
@@ -485,7 +485,15 @@ async function boot() {
     }
   } catch (err) {
     _nativeError('[edgejs] Boot error:', err);
-    term.writeln(`\x1b[31m${_safe(err.message)}\x1b[0m`);
+    // Wasm runtime failed to load — fall back to shell only (resilient mode)
+    if (shell) {
+      term.writeln(`\x1b[33m[wasm] Runtime unavailable: ${_safe(err.message)}\x1b[0m`);
+      term.writeln('\x1b[90mShell is still available (pure JS, no Wasm needed).\x1b[0m\r\n');
+      globalThis._stdinPush = (data) => shell.feed(data);
+      shell.prompt();
+    } else {
+      term.writeln(`\x1b[31m${_safe(err.message)}\x1b[0m`);
+    }
   }
 
   // Allow Ctrl+C to copy when there's a selection, Ctrl+V to paste

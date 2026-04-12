@@ -257,21 +257,40 @@
     }
     :root.light .bg-icon { opacity: 0.3; }
 
+    /* ── Terminal pair container (split-screen) ── */
+    #terminal-pair {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      padding: 6px;
+      z-index: 20;
+    }
+    @media (max-width: 899px) {
+      #terminal-pair {
+        flex-direction: column;
+        gap: 8px;
+        padding: 4px;
+      }
+    }
+
     /* ── Terminal container ── */
-    #terminal-wrap {
+    .terminal-wrap {
       position: relative;
-      width: calc(100% - 12px);
-      height: calc(100% - 12px);
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 0;
       z-index: 20;
       cursor: pointer;
       transform-origin: center center;
       transition: none; /* JS handles animation */
       touch-action: manipulation;
     }
-    #terminal-wrap.zoomed { cursor: default; }
+    .terminal-wrap.zoomed { cursor: default; }
 
     /* Terminal frame — clean device bezel, white border in dark (iRobot) */
-    #terminal-frame {
+    .terminal-frame {
       position: absolute; inset: 0;
       border: 2px solid var(--frame-border);
       border-radius: 10px;
@@ -292,7 +311,7 @@
         0 8px 32px rgba(0,0,0,0.3),
         0 16px 64px rgba(0,0,0,0.15);
     }
-    :root.light #terminal-frame {
+    :root.light .terminal-frame {
       background:
         linear-gradient(170deg,
           rgba(255,255,255,0.4) 0%,
@@ -302,7 +321,7 @@
     }
 
     /* Subtle surface texture — almost invisible, just adds materiality */
-    #terminal-frame::before {
+    .terminal-frame::before {
       content: '';
       position: absolute; inset: 0;
       background:
@@ -381,7 +400,7 @@
     }
 
     /* Terminal screen (glass) */
-    #terminal-screen {
+    .terminal-screen {
       position: absolute;
       top: 4px; left: 4px; right: 4px; bottom: 4px;
       border-radius: 6px;
@@ -391,7 +410,7 @@
     }
 
     /* Glass canvas (tumble shader + liquid glass) — above overlay when idle */
-    #glass-canvas {
+    .glass-canvas {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
       z-index: 6;
@@ -399,20 +418,37 @@
       transition: opacity 0.3s ease;
     }
     /* When zoomed in, hide glass canvas entirely so iframe gets pointer events */
-    #terminal-wrap.zoomed #glass-canvas { opacity: 0; }
+    .terminal-wrap.zoomed .glass-canvas { opacity: 0; }
 
     /* Terminal overlay — dark bg for terminal readability, hidden at idle */
-    #terminal-overlay {
+    .terminal-overlay {
       position: absolute; inset: 0;
       z-index: 4;
       opacity: 0;
       background: rgba(10,10,15,0.97);
       transition: opacity 0.3s ease;
     }
-    #terminal-wrap.zoomed #terminal-overlay { opacity: 1; }
+    .terminal-wrap.zoomed .terminal-overlay { opacity: 1; }
+
+    /* Terminal label (shown when idle, identifies which terminal) */
+    .terminal-label {
+      position: absolute;
+      top: 8px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 7;
+      font-family: 'Goldman', sans-serif;
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: var(--accent);
+      opacity: 0.75;
+      pointer-events: none;
+      text-shadow: 0 0 8px rgba(0,0,0,0.4);
+      transition: opacity 0.3s ease;
+    }
+    .terminal-wrap.zoomed .terminal-label { opacity: 0; }
 
     /* Boot text */
-    #boot-text {
+    .boot-text {
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
@@ -449,7 +485,7 @@
     @keyframes blink { 50% { opacity: 0; } }
 
     /* CLI iframe */
-    #cli-frame {
+    .cli-frame {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
       border: none;
@@ -458,11 +494,11 @@
       transition: opacity 0.5s ease;
       z-index: 5;
     }
-    #cli-frame.visible { opacity: 1; pointer-events: auto; }
+    .cli-frame.visible { opacity: 1; pointer-events: auto; }
 
     /* ── Idle state: terminal in distance ── */
-    #terminal-wrap.idle {
-      transform: scale(0.42) translateY(8%);
+    .terminal-wrap.idle {
+      transform: scale(0.88) translateY(2%);
     }
 
     /* ── Swipe dismiss (physics in swipe.js) ── */
@@ -507,40 +543,29 @@
       .nav-name { font-size: 14px; letter-spacing: 1px; }
       .nav-vent, .nav-seam, .nav-light, .nav-icon { display: none; }
       #viewport { top: 36px; }
-      #terminal-wrap {
-        width: calc(100% - 6px);
-        height: calc(100% - 6px);
-      }
-      #terminal-wrap.idle { transform: scale(0.55) translateY(5%); }
-      #terminal-frame { border-radius: 8px; border-width: 1.5px; }
-      #terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
+      .terminal-wrap.idle { transform: scale(0.92) translateY(1%); }
+      .terminal-frame { border-radius: 8px; border-width: 1.5px; }
+      .terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
       .frame-icon { display: none; }
       .frame-joint { width: 4px; height: 4px; }
       .bg-icon { width: 20px; height: 20px; }
       #dismissed-tray { gap: 4px; margin-left: 6px; }
       .dismissed-tile { width: 30px; height: 20px; font-size: 7px; }
-      #boot-text { font-size: 11px; }
+      .boot-text { font-size: 11px; }
+      .terminal-label { font-size: 9px; }
     }
 
     /* ── Responsive: Pixel 9 Pro Fold expanded / tablet (381px–899px) ── */
     @media (min-width: 381px) and (max-width: 899px) {
       #navbar { height: 40px; }
       #viewport { top: 40px; }
-      #terminal-wrap {
-        width: calc(100% - 8px);
-        height: calc(100% - 8px);
-      }
-      #terminal-wrap.idle { transform: scale(0.48) translateY(6%); }
-      #boot-text { font-size: 13px; }
+      .terminal-wrap.idle { transform: scale(0.9) translateY(2%); }
+      .boot-text { font-size: 13px; }
     }
 
     /* ── Responsive: Desktop (≥ 900px) ── */
     @media (min-width: 900px) {
-      #terminal-wrap {
-        width: calc(100% - 16px);
-        height: calc(100% - 16px);
-      }
-      #terminal-wrap.idle { transform: scale(0.42) translateY(8%); }
+      .terminal-wrap.idle { transform: scale(0.88) translateY(2%); }
     }
 
     /* ── Mobile D-Pad — game controller overlay ── */
@@ -845,44 +870,73 @@
     <div id="fog"></div>
     <div id="spotlight"></div>
 
-    <!-- Terminal -->
-    <div id="terminal-wrap" class="idle">
-      <div id="terminal-frame">
-        <!-- Frame micro-details -->
-        <div class="frame-vent" style="top:8px;left:50%;transform:translateX(-50%)"></div>
-        <div class="frame-vent" style="bottom:8px;left:50%;transform:translateX(-50%)"></div>
-        <div class="frame-seam" style="top:20px;left:2px;height:30px;transform:rotate(35deg)"></div>
-        <div class="frame-seam" style="top:20px;right:2px;height:30px;transform:rotate(-35deg)"></div>
-        <div class="frame-seam" style="bottom:20px;left:2px;height:30px;transform:rotate(-35deg)"></div>
-        <div class="frame-seam" style="bottom:20px;right:2px;height:30px;transform:rotate(35deg)"></div>
-        <div class="frame-joint" style="top:4px;left:4px"></div>
-        <div class="frame-joint" style="top:4px;right:4px"></div>
-        <div class="frame-joint" style="bottom:4px;left:4px"></div>
-        <div class="frame-joint" style="bottom:4px;right:4px"></div>
-        <div class="frame-light" style="top:2px;left:20%;width:15%"></div>
-        <div class="frame-light" style="bottom:2px;right:20%;width:12%"></div>
-        <div class="frame-light" style="top:50%;left:1px;width:1px;height:20%;transform:translateY(-50%)"></div>
+    <!-- Terminal pair: shell (left) + Claude CLI (right) -->
+    <div id="terminal-pair">
+      <!-- Terminal 1: Interactive shell (npm, node, MEMFS) -->
+      <div id="terminal-wrap" class="terminal-wrap idle" data-role="shell">
+        <div id="terminal-frame" class="terminal-frame">
+          <div class="frame-vent" style="top:8px;left:50%;transform:translateX(-50%)"></div>
+          <div class="frame-vent" style="bottom:8px;left:50%;transform:translateX(-50%)"></div>
+          <div class="frame-seam" style="top:20px;left:2px;height:30px;transform:rotate(35deg)"></div>
+          <div class="frame-seam" style="top:20px;right:2px;height:30px;transform:rotate(-35deg)"></div>
+          <div class="frame-seam" style="bottom:20px;left:2px;height:30px;transform:rotate(-35deg)"></div>
+          <div class="frame-seam" style="bottom:20px;right:2px;height:30px;transform:rotate(35deg)"></div>
+          <div class="frame-joint" style="top:4px;left:4px"></div>
+          <div class="frame-joint" style="top:4px;right:4px"></div>
+          <div class="frame-joint" style="bottom:4px;left:4px"></div>
+          <div class="frame-joint" style="bottom:4px;right:4px"></div>
+          <div class="frame-light" style="top:2px;left:20%;width:15%"></div>
+          <div class="frame-light" style="bottom:2px;right:20%;width:12%"></div>
+          <div class="frame-light" style="top:50%;left:1px;width:1px;height:20%;transform:translateY(-50%)"></div>
 
-        <!-- Corner icons -->
-        <img class="frame-icon tl" src="icons/Cpu.svg" alt="" loading="lazy">
-        <img class="frame-icon tr" src="icons/Shield.svg" alt="" loading="lazy">
-        <img class="frame-icon bl" src="icons/Zap.svg" alt="" loading="lazy">
-        <img class="frame-icon br" src="icons/Terminal.svg" alt="" loading="lazy">
+          <img class="frame-icon tl" src="icons/Cpu.svg" alt="" loading="lazy">
+          <img class="frame-icon tr" src="icons/Shield.svg" alt="" loading="lazy">
+          <img class="frame-icon bl" src="icons/Zap.svg" alt="" loading="lazy">
+          <img class="frame-icon br" src="icons/Terminal.svg" alt="" loading="lazy">
 
-        <!-- Glass screen -->
-        <div id="terminal-screen">
-          <canvas id="glass-canvas"></canvas>
-
-          <!-- Terminal overlay (boot text + xterm) -->
-          <div id="terminal-overlay">
-            <div id="boot-text"></div>
+          <div id="terminal-screen" class="terminal-screen">
+            <canvas id="glass-canvas" class="glass-canvas"></canvas>
+            <div class="terminal-label">SHELL</div>
+            <div id="terminal-overlay" class="terminal-overlay">
+              <div id="boot-text" class="boot-text"></div>
+            </div>
+            <iframe id="cli-frame" class="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="v9 shell"></iframe>
           </div>
-
-          <!-- CLI iframe (loads real web/index.html after boot) -->
-          <iframe id="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Claude Code (browser runtime)"></iframe>
         </div>
       </div>
 
+      <!-- Terminal 2: Claude Code CLI (real Node.js + Anthropic SDK) -->
+      <div id="terminal-wrap-2" class="terminal-wrap idle" data-role="claude">
+        <div id="terminal-frame-2" class="terminal-frame">
+          <div class="frame-vent" style="top:8px;left:50%;transform:translateX(-50%)"></div>
+          <div class="frame-vent" style="bottom:8px;left:50%;transform:translateX(-50%)"></div>
+          <div class="frame-seam" style="top:20px;left:2px;height:30px;transform:rotate(35deg)"></div>
+          <div class="frame-seam" style="top:20px;right:2px;height:30px;transform:rotate(-35deg)"></div>
+          <div class="frame-seam" style="bottom:20px;left:2px;height:30px;transform:rotate(-35deg)"></div>
+          <div class="frame-seam" style="bottom:20px;right:2px;height:30px;transform:rotate(35deg)"></div>
+          <div class="frame-joint" style="top:4px;left:4px"></div>
+          <div class="frame-joint" style="top:4px;right:4px"></div>
+          <div class="frame-joint" style="bottom:4px;left:4px"></div>
+          <div class="frame-joint" style="bottom:4px;right:4px"></div>
+          <div class="frame-light" style="top:2px;left:20%;width:15%"></div>
+          <div class="frame-light" style="bottom:2px;right:20%;width:12%"></div>
+          <div class="frame-light" style="top:50%;left:1px;width:1px;height:20%;transform:translateY(-50%)"></div>
+
+          <img class="frame-icon tl" src="icons/Cpu.svg" alt="" loading="lazy">
+          <img class="frame-icon tr" src="icons/Shield.svg" alt="" loading="lazy">
+          <img class="frame-icon bl" src="icons/Zap.svg" alt="" loading="lazy">
+          <img class="frame-icon br" src="icons/Terminal.svg" alt="" loading="lazy">
+
+          <div id="terminal-screen-2" class="terminal-screen">
+            <canvas id="glass-canvas-2" class="glass-canvas"></canvas>
+            <div class="terminal-label">CLAUDE CODE</div>
+            <div id="terminal-overlay-2" class="terminal-overlay">
+              <div id="boot-text-2" class="boot-text"></div>
+            </div>
+            <iframe id="cli-frame-2" class="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Claude Code (browser runtime)"></iframe>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
