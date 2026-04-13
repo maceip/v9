@@ -156,13 +156,21 @@ jobs:
           fi
           export ANDROID_NDK_HOME="$NDK_DIR"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          # gomobile bind imports golang.org/x/mobile/bind from the TARGET
-          # module's go.mod. pkg/v9net doesn't depend on it (it's only needed
-          # for the Android binding, not the Linux binary) — add it at CI
-          # time. The tool's own error message literally says "run go get
-          # golang.org/x/mobile/bind" when this is missing.
-          go get golang.org/x/mobile/bind
+          # gomobile bind imports golang.org/x/mobile/bind from the target
+          # module's go.mod via packages.Load. pkg/v9net doesn't import it
+          # (nothing in the Linux binary needs it) so we add it here.
+          #
+          # CRITICAL: order matters. We MUST NOT run `go mod tidy` after
+          # `go get` — tidy removes the require because no source file
+          # actually imports golang.org/x/mobile/bind. That puts us back
+          # in the broken state where gobind reports "no Go package in
+          # golang.org/x/mobile/bind".
+          #
+          # So: tidy first (clean up any staleness from checkout), THEN
+          # get, then NO tidy. Verified locally: pre-tidy the package
+          # resolves with 9 GoFiles; post-tidy it's 0 files and broken.
           go mod tidy
+          go get golang.org/x/mobile/bind
           mkdir -p ../../android/app/libs
           gomobile bind \
             -v \
