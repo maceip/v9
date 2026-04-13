@@ -812,10 +812,27 @@
       || globalThis.__V9_GVISOR_WS_URL__
       || procEnv.NODEJS_GVISOR_WS_URL
       || 'ws://localhost:8765';
-    const wispWs = params.get('wisp')
-      || globalThis.__V9_WISP_WS_URL__
-      || procEnv.NODEJS_WISP_WS_URL
-      || null;
+    const rawWispParam = params.get('wisp');
+    // Kill-switch forms for hosted Wisp (applies BEFORE the precedence
+    // chain so a self-hoster can turn it off without knowing about the
+    // stare-network default). See transport-defaults-stare.js for the
+    // matching logic on the GitHub Pages side.
+    const wispDisabled =
+      globalThis.__V9_DISABLE_WISP__ === true
+      || rawWispParam === '0'
+      || rawWispParam === 'off'
+      || rawWispParam === 'false'
+      || rawWispParam === 'no'
+      || (() => {
+        try { return globalThis.localStorage?.getItem('v9NoWisp') === '1'; }
+        catch { return false; }
+      })();
+    const wispWs = wispDisabled
+      ? null
+      : (rawWispParam && rawWispParam !== '1' ? rawWispParam : null)
+        || globalThis.__V9_WISP_WS_URL__
+        || procEnv.NODEJS_WISP_WS_URL
+        || null;
     const fetchProxy = params.get('fetchProxy')
       || globalThis.__V9_FETCH_PROXY_URL__
       || procEnv.NODEJS_IN_TAB_FETCH_PROXY
@@ -835,7 +852,9 @@
     }
 
     console.log('[v9-net] transport probe: tier-1 v9-net  = ' + gvisorWs);
-    console.log('[v9-net] transport probe: tier-2 wisp    = ' + (wispWs || '(not configured)'));
+    console.log('[v9-net] transport probe: tier-2 wisp    = ' + (
+      wispDisabled ? '(disabled by kill switch)' : (wispWs || '(not configured)')
+    ));
     console.log('[v9-net] transport probe: tier-3 proxy   = ' + (fetchProxy || '(not configured)'));
     console.log('[v9-net] transport probe: tier-4 direct  = browser fetch()');
 
