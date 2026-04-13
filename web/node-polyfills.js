@@ -821,8 +821,6 @@
       || procEnv.NODEJS_IN_TAB_FETCH_PROXY
       || null;
 
-    const probeTimeout = 3000;
-
     // Always set the tier-1 URL so modules that check at import time find it.
     // gvisor-net.js will handle connection failures gracefully.
     globalThis.__V9_GVISOR_WS_URL__ = gvisorWs;
@@ -841,8 +839,8 @@
     console.log('[v9-net] transport probe: tier-3 proxy   = ' + (fetchProxy || '(not configured)'));
     console.log('[v9-net] transport probe: tier-4 direct  = browser fetch()');
 
-    // Generic WebSocket reachability probe
-    const probeWs = (url) => new Promise((resolve) => {
+    // Generic WebSocket reachability probe with caller-supplied timeout
+    const probeWs = (url, timeoutMs) => new Promise((resolve) => {
       let done = false;
       try {
         const ws = new WebSocket(url);
@@ -851,7 +849,7 @@
           done = true;
           try { ws.close(); } catch {}
           resolve(false);
-        }, probeTimeout);
+        }, timeoutMs);
         ws.onopen = () => {
           if (done) return;
           done = true;
@@ -868,51 +866,88 @@
       } catch { resolve(false); }
     });
 
-    // ── Tier 1: Local v9-net probe (always runs) ─────────────────────
-    (() => {
+    // HTTP HEAD probe with AbortController so it can't hang past its deadline.
+    const probeFetch = (url, timeoutMs) => new Promise((resolve) => {
+      const ctl = new AbortController();
+      const t = setTimeout(() => {
+        try { ctl.abort(); } catch {}
+        resolve(false);
+      }, timeoutMs);
+      fetch(url, { method: 'HEAD', mode: 'cors', signal: ctl.signal })
+        .then((r) => {
+          clearTimeout(t);
+          resolve(r.ok || r.status === 405 || r.status === 404);
+        })
+        .catch(() => {
+          clearTimeout(t);
+          resolve(false);
+        });
+    });
+
+    // Run the probes async, after the current boot path has finished
+    // setting up the terminal/shell. Otherwise a 1.5s localhost probe plus
+    // two 2s fallbacks would race the very first paint.
+    //
+    // Tier-2/3 only fire if tier-1 fails — if the local v9-net is running,
+    // we don't burn time probing hosted fallbacks we'll never use.
+    const runProbes = async () => {
+      // ── Tier 1: Local v9-net probe ─────────────────────────────────
+      let tier1Ok = false;
       try {
         const url = new URL(gvisorWs);
         url.pathname = '/__v9net/forward';
-        probeWs(url.toString()).then((ok) => {
-          if (ok) {
-            console.log('[v9-net] tier-1 v9-net reachable — raw TCP available');
-          } else {
-            console.log('[v9-net] tier-1 v9-net not reachable (local binary not running)');
-          }
-        });
+        // Localhost is fast: 1500ms is plenty. A working daemon answers
+        // in <50ms; a missing one refuses the connection immediately.
+        tier1Ok = await probeWs(url.toString(), 1500);
       } catch { /* malformed URL */ }
-    })();
+      if (tier1Ok) {
+        console.log('[v9-net] tier-1 v9-net reachable — raw TCP available');
+        // Short-circuit: local v9-net handles everything tier-2/3 would.
+        // Still note what's configured so users know the fallback chain.
+        if (wispWs) {
+          console.log('[v9-net] tier-2 wisp configured (probe skipped — tier-1 active)');
+        }
+        if (fetchProxy) {
+          console.log('[v9-net] tier-3 fetch proxy configured (probe skipped — tier-1 active)');
+        }
+        console.log('[v9-net] tier-4 direct fetch always available (CORS-restricted)');
+        return;
+      }
+      console.log('[v9-net] tier-1 v9-net not reachable (local binary not running)');
 
-    // ── Tier 2: Hosted Wisp probe (opt-in) ────────────────────────────
-    if (wispWs) {
-      probeWs(wispWs).then((ok) => {
+      // ── Tier 2: Hosted Wisp probe (opt-in) ────────────────────────
+      if (wispWs) {
+        const ok = await probeWs(wispWs, 2000);
         if (ok) {
           console.log('[v9-net] tier-2 wisp reachable — hosted TCP tunnel available');
         } else {
           console.log('[v9-net] tier-2 wisp not reachable');
         }
-      });
-    } else {
-      console.log('[v9-net] tier-2 wisp not configured (no URL set)');
-    }
+      } else {
+        console.log('[v9-net] tier-2 wisp not configured (no URL set)');
+      }
 
-    // ── Tier 3: Hosted fetch proxy probe (opt-in) ────────────────────
-    if (fetchProxy) {
-      fetch(fetchProxy, { method: 'HEAD', mode: 'cors' })
-        .then((r) => r.ok || r.status === 405 || r.status === 404)
-        .catch(() => false)
-        .then((ok) => {
-          if (ok) {
-            console.log('[v9-net] tier-3 fetch proxy reachable — HTTP(S) with full headers available');
-          } else {
-            console.log('[v9-net] tier-3 fetch proxy not reachable');
-          }
-        });
-    } else {
-      console.log('[v9-net] tier-3 fetch proxy not configured (no URL set)');
-    }
+      // ── Tier 3: Hosted fetch proxy probe (opt-in) ─────────────────
+      if (fetchProxy) {
+        const ok = await probeFetch(fetchProxy, 2000);
+        if (ok) {
+          console.log('[v9-net] tier-3 fetch proxy reachable — HTTP(S) with full headers available');
+        } else {
+          console.log('[v9-net] tier-3 fetch proxy not reachable');
+        }
+      } else {
+        console.log('[v9-net] tier-3 fetch proxy not configured (no URL set)');
+      }
 
-    console.log('[v9-net] tier-4 direct fetch always available (CORS-restricted)');
+      console.log('[v9-net] tier-4 direct fetch always available (CORS-restricted)');
+    };
+
+    // Defer so probes never block the first paint or terminal init.
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      globalThis.requestIdleCallback(() => { runProbes(); }, { timeout: 2000 });
+    } else {
+      setTimeout(() => { runProbes(); }, 0);
+    }
   } catch (probeErr) {
     console.log('[v9-net] transport probe skipped:', probeErr?.message || probeErr);
   }

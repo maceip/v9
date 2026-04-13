@@ -513,12 +513,16 @@ async function boot() {
   });
 
   term.onData((data) => {
-    if (runtime && typeof runtime.pushStdin === 'function') {
-      runtime.pushStdin(data);
-      return;
-    }
+    // _stdinPush is the explicit current-owner override. We set it to
+    // shell.feed when the shell is active (either as the primary interface
+    // or after a bundle has exited). Check it FIRST so the shell actually
+    // receives keystrokes even when a Wasm runtime is also initialized.
     if (typeof globalThis._stdinPush === 'function') {
       globalThis._stdinPush(data);
+      return;
+    }
+    if (runtime && typeof runtime.pushStdin === 'function') {
+      runtime.pushStdin(data);
     }
   });
 

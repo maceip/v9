@@ -243,6 +243,40 @@ async function runTests() {
     });
     assert(hasPushStdin, 'Runtime has pushStdin for keyboard input');
 
+    // ── Test 8b: Real keyboard input reaches the shell ──
+    // Regression: term.onData had wrong priority — `runtime.pushStdin` ran
+    // before `_stdinPush`, so when the Wasm runtime was up (the common case)
+    // keystrokes went to the dead Wasm stdin buffer and the shell appeared
+    // frozen. This test exercises the REAL xterm keyboard path (not
+    // `_stdinPush` directly) to catch any future priority regression.
+    //
+    // Shell-first boot runs when ?autorun=0, so we expect `_stdinPush` to be
+    // wired to `shell.feed`. Typing should land in the shell and echo back
+    // into the xterm buffer as the user types.
+    const kbdMarker = 'kbd-probe-' + Math.random().toString(36).slice(2, 8);
+    // Focus xterm so keyboard events go to its hidden textarea.
+    await page.evaluate(() => {
+      const el = document.querySelector('.xterm-helper-textarea');
+      if (el) el.focus();
+      else document.querySelector('.xterm')?.focus();
+    });
+    await page.waitForTimeout(100);
+    await page.keyboard.type(`echo ${kbdMarker}`);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(800);
+    const kbdOut = await page.evaluate(() => {
+      const term = globalThis.__edgeTerm;
+      if (!term) return '';
+      const lines = [];
+      for (let i = 0; i < term.buffer.active.length; i++) {
+        const ln = term.buffer.active.getLine(i);
+        if (ln) lines.push(ln.translateToString(true));
+      }
+      return lines.join('\n');
+    });
+    assert(kbdOut.includes(kbdMarker),
+      'Keyboard input reaches shell through xterm.onData priority chain');
+
     // ── Test 9: No critical console errors ──
     const criticalErrors = consoleErrors.filter(e =>
       !e.includes('favicon.ico') &&
