@@ -282,15 +282,6 @@
     #terminal-wrap { left: 6px; }
     #terminal-wrap-2 { right: 6px; }
 
-    @media (max-width: 899px) {
-      /* Stack vertically on mobile */
-      .terminal-wrap {
-        left: 4px; right: 4px; width: auto;
-        height: calc(50% - 6px);
-      }
-      #terminal-wrap { top: 4px; bottom: auto; }
-      #terminal-wrap-2 { top: auto; bottom: 4px; }
-    }
     .terminal-wrap.zoomed { cursor: default; }
 
     /* Terminal frame — clean device bezel, white border in dark (iRobot) */
@@ -524,11 +515,6 @@
       z-index: 30;
       transition: top 0.3s ease, bottom 0.3s ease, left 0.3s ease, right 0.3s ease;
     }
-    @media (max-width: 899px) {
-      .terminal-wrap.zoomed {
-        top: 4px; bottom: 4px; left: 4px; right: 4px;
-      }
-    }
 
     /* ── Swipe dismiss (physics in swipe.js) ── */
     /* SwipeDismiss handles transform directly via rAF spring solver */
@@ -566,34 +552,208 @@
       opacity: 1;
     }
 
-    /* ── Responsive: Pixel 9 Pro Fold folded (≤ 380px) ── */
-    @media (max-width: 380px) {
-      #navbar { height: 36px; padding: 0 10px; }
-      .nav-name { font-size: 14px; letter-spacing: 1px; }
+    /* ════════════════════════════════════════════════════════════════
+       Responsive layout — three form-factors:
+
+         1. DESKTOP (default, no media query):
+              top navbar, side-by-side terminals
+
+         2. TOUCH PORTRAIT (phones, tablets in portrait, foldables folded):
+              bottom navbar, stacked terminals
+
+         3. TOUCH LANDSCAPE (phones/tablets/foldables held sideways):
+              left side-rail navbar, side-by-side terminals
+
+       The touch-vs-desktop distinction is `pointer: coarse` so a desktop
+       with a 16:9 landscape window doesn't accidentally get the side rail.
+       A Surface Pro in tablet mode reports pointer:coarse → side rail.
+       A Mac with a trackpad reports pointer:fine → top bar.
+       ════════════════════════════════════════════════════════════════ */
+
+    /* ── Terminal stacking: always stack in portrait (any device) ── */
+    @media (orientation: portrait) {
+      .terminal-wrap {
+        left: 6px; right: 6px; width: auto;
+        height: calc(50% - 9px);
+      }
+      #terminal-wrap { top: 6px; bottom: auto; }
+      #terminal-wrap-2 { top: auto; bottom: 6px; }
+
+      /* Zoomed overrides — ID+class specificity beats the media-query ID
+         selectors above, so the zoomed tile actually fills the viewport
+         instead of keeping bottom:auto with a 0 height. */
+      #terminal-wrap.zoomed,
+      #terminal-wrap-2.zoomed {
+        top: 6px;
+        bottom: 6px;
+        left: 6px;
+        right: 6px;
+        width: auto;
+        height: auto;
+      }
+    }
+
+    /* ── Touch portrait: bottom navbar ────────────────────────────── */
+    @media (pointer: coarse) and (orientation: portrait) {
+      #navbar {
+        top: auto;
+        bottom: 0;
+        height: 48px;
+        padding: 0 14px;
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        padding-left: max(14px, env(safe-area-inset-left, 0));
+        padding-right: max(14px, env(safe-area-inset-right, 0));
+        border-bottom: none;
+        border-top: 1px solid var(--nav-border);
+        /* Flip the highlight gradient so the top edge glows (matches "panel at bottom") */
+        background:
+          linear-gradient(0deg,
+            rgba(255,255,255,0.06) 0%,
+            rgba(255,255,255,0.015) 50%,
+            rgba(0,0,0,0.08) 100%),
+          var(--nav-bg);
+      }
+      :root.light #navbar {
+        background:
+          linear-gradient(0deg,
+            rgba(255,255,255,0.5) 0%,
+            rgba(255,255,255,0.1) 50%,
+            rgba(0,0,0,0.04) 100%),
+          var(--nav-bg);
+      }
+      #viewport {
+        top: 0;
+        bottom: calc(48px + env(safe-area-inset-bottom, 0));
+      }
+      /* Hide the horizontal decorations that assume a top bar */
       .nav-vent, .nav-seam, .nav-light, .nav-icon { display: none; }
-      #viewport { top: 36px; }
-      .terminal-wrap.idle { transform: scale(0.8) translateY(3%); }
-      .terminal-frame { border-radius: 8px; border-width: 1.5px; }
-      .terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
+      .nav-name { font-size: 15px; letter-spacing: 1.5px; }
+      /* Progress bar moves to the top edge of the (now bottom) navbar so it
+         visually borders the terminal area above it */
+      .nav-progress { bottom: auto; top: 0; }
+      /* Scale down chrome for tight screens */
       .frame-icon { display: none; }
       .frame-joint { width: 4px; height: 4px; }
       .bg-icon { width: 20px; height: 20px; }
-      #dismissed-tray { gap: 4px; margin-left: 6px; }
-      .dismissed-tile { width: 30px; height: 20px; font-size: 7px; }
+      #dismissed-tray { gap: 6px; margin-left: 10px; }
+      .dismissed-tile { width: 36px; height: 26px; font-size: 8px; }
+      .boot-text { font-size: 12px; }
+      .terminal-label { font-size: 9px; }
+      .terminal-wrap.idle { transform: scale(0.86) translateY(1%); }
+    }
+
+    /* ── Extra-narrow portrait (Fold folded, ≤ 380px) ── */
+    @media (pointer: coarse) and (orientation: portrait) and (max-width: 380px) {
+      #navbar { height: 44px; padding-left: 10px; padding-right: 10px; }
+      #viewport { bottom: calc(44px + env(safe-area-inset-bottom, 0)); }
+      .nav-name { font-size: 14px; letter-spacing: 1px; }
+      .dismissed-tile { width: 30px; height: 22px; font-size: 7px; }
+      .terminal-frame { border-radius: 8px; border-width: 1.5px; }
+      .terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
       .boot-text { font-size: 11px; }
+    }
+
+    /* ── Touch landscape: vertical side rail navbar ──────────────── */
+    @media (pointer: coarse) and (orientation: landscape) {
+      #navbar {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: auto;
+        width: 56px;
+        height: auto;
+        flex-direction: column;
+        padding: 14px 0;
+        padding-top: max(14px, env(safe-area-inset-top, 0));
+        padding-bottom: max(14px, env(safe-area-inset-bottom, 0));
+        padding-left: env(safe-area-inset-left, 0);
+        align-items: center;
+        border-bottom: none;
+        border-right: 1px solid var(--nav-border);
+        /* Rotate the subtle highlight 90deg (left edge glows) */
+        background:
+          linear-gradient(90deg,
+            rgba(255,255,255,0.06) 0%,
+            rgba(255,255,255,0.015) 50%,
+            rgba(0,0,0,0.08) 100%),
+          var(--nav-bg);
+      }
+      :root.light #navbar {
+        background:
+          linear-gradient(90deg,
+            rgba(255,255,255,0.5) 0%,
+            rgba(255,255,255,0.1) 50%,
+            rgba(0,0,0,0.04) 100%),
+          var(--nav-bg);
+      }
+      /* Rotate the brushed-texture grain 90deg so it still looks like metal */
+      #navbar::after {
+        background:
+          repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 2px,
+            rgba(255,255,255,0.008) 2px,
+            rgba(255,255,255,0.008) 3px
+          );
+      }
+
+      #viewport {
+        top: 0;
+        left: calc(56px + env(safe-area-inset-left, 0));
+      }
+
+      /* Vertical "v9" label */
+      .nav-name {
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        font-size: 16px;
+        letter-spacing: 3px;
+        margin: 8px 0;
+      }
+
+      /* Hide decorations that assume horizontal layout */
+      .nav-vent, .nav-seam, .nav-light, .nav-icon { display: none; }
+
+      /* Dismissed tiles stack vertically below the v9 label */
+      #dismissed-tray {
+        flex-direction: column;
+        gap: 6px;
+        margin: 12px 0 0 0;
+        height: auto;
+      }
+      .dismissed-tile {
+        width: 32px;
+        height: 22px;
+        flex-shrink: 0;
+      }
+
+      /* The `flex:1` spacer div becomes a vertical spacer — already works
+         because its parent is flex-direction: column now. */
+
+      /* Hide the Roadmap text link in the tight rail — it's available on
+         wider form factors. */
+      #navbar > a[href*="ROADMAP"] { display: none; }
+
+      /* Progress bar: small horizontal strip at the BOTTOM of the rail.
+         JS sets .nav-progress-bar width:X% which still works since the
+         container is absolutely positioned with width:auto. */
+      .nav-progress {
+        position: absolute;
+        top: auto;
+        left: 8px;
+        right: 8px;
+        bottom: max(8px, env(safe-area-inset-bottom, 0));
+        width: auto;
+        height: 2px;
+      }
+
+      .boot-text { font-size: 12px; }
       .terminal-label { font-size: 9px; }
     }
 
-    /* ── Responsive: Pixel 9 Pro Fold expanded / tablet (381px–899px) ── */
-    @media (min-width: 381px) and (max-width: 899px) {
-      #navbar { height: 40px; }
-      #viewport { top: 40px; }
-      .terminal-wrap.idle { transform: scale(0.76) translateY(4%); }
-      .boot-text { font-size: 13px; }
-    }
-
-    /* ── Responsive: Desktop (≥ 900px) ── */
-    @media (min-width: 900px) {
+    /* ── Desktop idle scale (default, non-touch or wide) ── */
+    @media (min-width: 900px) and (pointer: fine) {
       .terminal-wrap.idle { transform: scale(0.72) translateY(5%); }
     }
 
