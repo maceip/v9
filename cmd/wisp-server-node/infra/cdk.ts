@@ -15,7 +15,7 @@
  *     │ wss://fetch.stare.network/wisp/
  *     ▼
  *   CloudFront + WAF
- *     │ (origin: <random>.awsapprunner.com)
+ *     │ (origin: <id>.<region>.awsapprunner.com)
  *     │ (origin protocol: https-only)
  *     │ (WS upgrade pass-through)
  *     ▼
@@ -29,35 +29,33 @@
  *   cd cmd/wisp-server-node/infra
  *   npm install
  *   npx cdk bootstrap           # once per account/region
+ *   npx cdk deploy              # initial deploy (will log ECR URI)
  *   ../build-and-push.sh        # builds Docker image, pushes to ECR
- *   npx cdk deploy
+ *   # then trigger a redeploy:
+ *   aws apprunner start-deployment --service-arn $(aws apprunner \
+ *     list-services --query \
+ *     "ServiceSummaryList[?ServiceName=='wisp-server'].ServiceArn | [0]" \
+ *     --output text)
  *
  * Cost (approximate):
- *   - App Runner min 0.25 vCPU / 0.5 GB (~$5/mo idle, more on use)
- *   - CloudFront first 1TB free, then ~$0.085/GB
- *   - WAF ~$5/mo + $1/rule + $0.60/million requests
- *   - ACM cert free
+ *   - App Runner 0.25 vCPU / 0.5 GB (~$5-15/mo)
+ *   - CloudFront: first 1 TB/month free, then ~$0.085/GB
+ *   - WAF: ~$5/mo base + $1/rule + $0.60/million requests
+ *   - ACM cert: free
  *   Total idle: ~$10-15/mo. Under load: mostly bandwidth.
  */
 
-import {
-  App,
-  Stack,
-  StackProps,
-  Duration,
-  RemovalPolicy,
-  CfnOutput,
-  aws_apprunner as apprunner,
-  aws_certificatemanager as acm,
-  aws_cloudfront as cloudfront,
-  aws_cloudfront_origins as origins,
-  aws_ecr as ecr,
-  aws_iam as iam,
-  aws_wafv2 as wafv2,
-} from 'aws-cdk-lib';
+import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as apprunner from 'aws-cdk-lib/aws-apprunner';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 
-interface WispStackProps extends StackProps {
+interface WispStackProps extends cdk.StackProps {
   /**
    * Custom domain to serve the Wisp server on. The ACM cert will be created
    * in us-east-1 for CloudFront. You must own this DNS name and point it at
@@ -79,7 +77,7 @@ interface WispStackProps extends StackProps {
   bandwidthBps?: number;
 }
 
-export class WispServerStack extends Stack {
+export class WispServerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: WispStackProps = {}) {
     super(scope, id, props);
 
@@ -91,7 +89,7 @@ export class WispServerStack extends Stack {
     // ─── ECR repository ─────────────────────────────────────────────
     const repo = new ecr.Repository(this, 'WispEcr', {
       repositoryName: 'wisp-server-node',
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       imageScanOnPush: true,
       lifecycleRules: [
         { maxImageCount: 10, description: 'Keep last 10 images' },
@@ -123,7 +121,7 @@ export class WispServerStack extends Stack {
         authenticationConfiguration: {
           accessRoleArn: accessRole.roleArn,
         },
-        autoDeploymentsEnabled: false, // we push images manually
+        autoDeploymentsEnabled: false, // images pushed manually
         imageRepository: {
           imageIdentifier: `${repo.repositoryUri}:latest`,
           imageRepositoryType: 'ECR',
@@ -154,15 +152,15 @@ export class WispServerStack extends Stack {
         healthyThreshold: 1,
         unhealthyThreshold: 3,
       },
-      // Let App Runner scale down to 1 instance idle (can't go to 0 but it's cheap)
-      autoScalingConfigurationArn: undefined, // uses default 1-25
     });
 
-    const appRunnerUrl = appRunner.attrServiceUrl;
+    // attrServiceUrl is the bare DNS name like "abcd.us-east-1.awsapprunner.com"
+    // (no scheme). We use it directly as the CloudFront origin domain.
+    const appRunnerDomain = appRunner.attrServiceUrl;
 
     // ─── WAF web ACL ────────────────────────────────────────────────
-    // WAF for CloudFront must live in us-east-1. If deploying from another
-    // region, put this stack in us-east-1 or use a separate stack.
+    // WAF for CloudFront must live in us-east-1. This stack's env.region
+    // is set to us-east-1 below so the constraint is satisfied.
     const webAcl = new wafv2.CfnWebACL(this, 'WispWaf', {
       name: 'wisp-server-waf',
       scope: 'CLOUDFRONT',
@@ -234,14 +232,10 @@ export class WispServerStack extends Stack {
     }
 
     // ─── CloudFront distribution ────────────────────────────────────
-    const origin = new origins.HttpOrigin(
-      // App Runner URL comes back as https://<id>.awsapprunner.com, strip protocol
-      `\${Token[TOKEN.${appRunnerUrl}]}`.replace('https://', ''),
-      {
-        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-        httpsPort: 443,
-      },
-    );
+    const origin = new origins.HttpOrigin(appRunnerDomain, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+      httpsPort: 443,
+    });
 
     const distribution = new cloudfront.Distribution(this, 'WispCdn', {
       comment: 'v9 Wisp server — hosted TCP tunnel for GitHub Pages demo',
@@ -262,20 +256,20 @@ export class WispServerStack extends Stack {
     });
 
     // ─── Outputs ────────────────────────────────────────────────────
-    new CfnOutput(this, 'AppRunnerUrl', {
+    new cdk.CfnOutput(this, 'AppRunnerUrl', {
       value: appRunner.attrServiceUrl,
       description: 'Direct App Runner URL (origin)',
     });
-    new CfnOutput(this, 'CloudFrontDomain', {
+    new cdk.CfnOutput(this, 'CloudFrontDomain', {
       value: distribution.distributionDomainName,
       description: 'CloudFront distribution domain — point your custom DNS at this',
     });
-    new CfnOutput(this, 'EcrRepositoryUri', {
+    new cdk.CfnOutput(this, 'EcrRepositoryUri', {
       value: repo.repositoryUri,
       description: 'Push Docker images here',
     });
     if (domain) {
-      new CfnOutput(this, 'CustomDomain', {
+      new cdk.CfnOutput(this, 'CustomDomain', {
         value: `https://${domain}/wisp/`,
         description: 'The public Wisp endpoint once DNS points at CloudFront',
       });
@@ -285,12 +279,12 @@ export class WispServerStack extends Stack {
 
 // ─── CDK app entry point ──────────────────────────────────────────────
 
-const app = new App();
+const app = new cdk.App();
 
 new WispServerStack(app, 'WispServerStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    // CloudFront + WAF for CloudFront must be in us-east-1
+    // CloudFront + CloudFront-scoped WAF must live in us-east-1
     region: 'us-east-1',
   },
   domainName: process.env.WISP_DOMAIN_NAME || '',

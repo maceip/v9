@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "AWS CDK stack for the v9 hosted Wisp server.",
-  "type": "module",
   "scripts": {
     "bootstrap": "cdk bootstrap",
     "diff": "cdk diff",
