@@ -257,35 +257,39 @@
     }
     :root.light .bg-icon { opacity: 0.3; }
 
-    /* ── Terminal pair container (split-screen) ── */
+    /* ── Terminal pair container (split-screen via absolute positioning) ── */
     #terminal-pair {
       position: absolute;
       inset: 0;
-      display: flex;
-      flex-direction: row;
-      gap: 12px;
-      padding: 6px;
       z-index: 20;
-    }
-    @media (max-width: 899px) {
-      #terminal-pair {
-        flex-direction: column;
-        gap: 8px;
-        padding: 4px;
-      }
     }
 
     /* ── Terminal container ── */
+    /* Each terminal is explicitly positioned to its half of the viewport.
+       This way, when one becomes zoomed (filling the viewport), the other
+       stays put and can be dimmed as "backgrounded". */
     .terminal-wrap {
-      position: relative;
-      flex: 1 1 0;
-      min-width: 0;
-      min-height: 0;
+      position: absolute;
+      top: 6px;
+      bottom: 6px;
+      width: calc(50% - 12px);
       z-index: 20;
       cursor: pointer;
       transform-origin: center center;
       transition: none; /* JS handles animation */
       touch-action: manipulation;
+    }
+    #terminal-wrap { left: 6px; }
+    #terminal-wrap-2 { right: 6px; }
+
+    @media (max-width: 899px) {
+      /* Stack vertically on mobile */
+      .terminal-wrap {
+        left: 4px; right: 4px; width: auto;
+        height: calc(50% - 6px);
+      }
+      #terminal-wrap { top: 4px; bottom: auto; }
+      #terminal-wrap-2 { top: auto; bottom: 4px; }
     }
     .terminal-wrap.zoomed { cursor: default; }
 
@@ -496,9 +500,34 @@
     }
     .cli-frame.visible { opacity: 1; pointer-events: auto; }
 
-    /* ── Idle state: terminal in distance ── */
+    /* ── Idle state: terminal in distance (glass shader visible) ── */
     .terminal-wrap.idle {
-      transform: scale(0.88) translateY(2%);
+      transform: scale(0.72) translateY(5%);
+    }
+
+    /* ── Backgrounded: when the OTHER terminal is zoomed, dim this one ── */
+    .terminal-wrap.backgrounded {
+      opacity: 0.2;
+      filter: blur(4px);
+      transition: opacity 0.4s ease, filter 0.4s ease;
+      pointer-events: none;
+    }
+
+    /* ── Zoomed: expand to fill the entire pair container ── */
+    .terminal-wrap.zoomed {
+      top: 6px;
+      bottom: 6px;
+      left: 6px;
+      right: 6px;
+      width: auto;
+      height: auto;
+      z-index: 30;
+      transition: top 0.3s ease, bottom 0.3s ease, left 0.3s ease, right 0.3s ease;
+    }
+    @media (max-width: 899px) {
+      .terminal-wrap.zoomed {
+        top: 4px; bottom: 4px; left: 4px; right: 4px;
+      }
     }
 
     /* ── Swipe dismiss (physics in swipe.js) ── */
@@ -543,7 +572,7 @@
       .nav-name { font-size: 14px; letter-spacing: 1px; }
       .nav-vent, .nav-seam, .nav-light, .nav-icon { display: none; }
       #viewport { top: 36px; }
-      .terminal-wrap.idle { transform: scale(0.92) translateY(1%); }
+      .terminal-wrap.idle { transform: scale(0.8) translateY(3%); }
       .terminal-frame { border-radius: 8px; border-width: 1.5px; }
       .terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
       .frame-icon { display: none; }
@@ -559,13 +588,13 @@
     @media (min-width: 381px) and (max-width: 899px) {
       #navbar { height: 40px; }
       #viewport { top: 40px; }
-      .terminal-wrap.idle { transform: scale(0.9) translateY(2%); }
+      .terminal-wrap.idle { transform: scale(0.76) translateY(4%); }
       .boot-text { font-size: 13px; }
     }
 
     /* ── Responsive: Desktop (≥ 900px) ── */
     @media (min-width: 900px) {
-      .terminal-wrap.idle { transform: scale(0.88) translateY(2%); }
+      .terminal-wrap.idle { transform: scale(0.72) translateY(5%); }
     }
 
     /* ── Mobile D-Pad — game controller overlay ── */

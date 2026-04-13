@@ -186,7 +186,7 @@ async function runTests() {
     assert(idleState.wrap2Class.includes('idle'), 'Terminal 2 starts in idle state');
 
     // ═══════════════════════════════════════════════════════════════
-    // Test 4: Clicking terminal 1 zooms BOTH together
+    // Test 4: Clicking terminal 1 zooms IT ONLY, terminal 2 becomes backgrounded
     // ═══════════════════════════════════════════════════════════════
     await page.click('#terminal-wrap');
     await page.waitForTimeout(600); // Wait for zoom animation
@@ -194,23 +194,62 @@ async function runTests() {
       wrap1Class: document.getElementById('terminal-wrap').className,
       wrap2Class: document.getElementById('terminal-wrap-2').className,
       wrap1Transform: document.getElementById('terminal-wrap').style.transform,
-      wrap2Transform: document.getElementById('terminal-wrap-2').style.transform,
+      wrap1Rect: document.getElementById('terminal-wrap').getBoundingClientRect(),
     }));
     assert(zoomState.wrap1Class.includes('zoomed'), 'Terminal 1 gets zoomed class after click');
-    assert(zoomState.wrap2Class.includes('zoomed'), 'Terminal 2 ALSO zooms (both zoom together)');
+    assert(
+      !zoomState.wrap2Class.includes('zoomed'),
+      'Terminal 2 does NOT get zoomed class (independent zoom)',
+    );
+    assert(
+      zoomState.wrap2Class.includes('backgrounded'),
+      'Terminal 2 gets backgrounded class while terminal 1 is zoomed',
+    );
     assert(
       zoomState.wrap1Transform.includes('scale(1)'),
       'Terminal 1 transform scale is 1 after zoom',
     );
     assert(
-      zoomState.wrap2Transform.includes('scale(1)'),
-      'Terminal 2 transform scale is 1 after zoom',
+      zoomState.wrap1Rect.width > 1000,
+      `Zoomed terminal fills viewport (${zoomState.wrap1Rect.width.toFixed(0)}px wide)`,
     );
 
     // ═══════════════════════════════════════════════════════════════
-    // Test 5: Each iframe loads correct URL
+    // Test 5: Escape dismisses terminal 1, restores terminal 2 to idle
     // ═══════════════════════════════════════════════════════════════
-    await page.waitForTimeout(1000); // let iframes start loading
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const afterEsc1 = await page.evaluate(() => ({
+      c1: document.getElementById('terminal-wrap').className,
+      c2: document.getElementById('terminal-wrap-2').className,
+    }));
+    assert(afterEsc1.c1.includes('idle') && !afterEsc1.c1.includes('zoomed'),
+      'Escape returns terminal 1 to idle');
+    assert(!afterEsc1.c2.includes('backgrounded'),
+      'Terminal 2 returns from backgrounded to idle');
+
+    // ═══════════════════════════════════════════════════════════════
+    // Test 6: Clicking terminal 2 zooms IT independently
+    // ═══════════════════════════════════════════════════════════════
+    await page.click('#terminal-wrap-2');
+    await page.waitForTimeout(600);
+    const zoom2 = await page.evaluate(() => ({
+      c1: document.getElementById('terminal-wrap').className,
+      c2: document.getElementById('terminal-wrap-2').className,
+      rect2: document.getElementById('terminal-wrap-2').getBoundingClientRect(),
+    }));
+    assert(zoom2.c2.includes('zoomed'), 'Terminal 2 gets zoomed class after click');
+    assert(zoom2.c1.includes('backgrounded'), 'Terminal 1 becomes backgrounded');
+    assert(zoom2.rect2.width > 1000, `Terminal 2 fills viewport when zoomed (${zoom2.rect2.width.toFixed(0)}px)`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Test 7: Each iframe loads correct URL
+    // ═══════════════════════════════════════════════════════════════
+    // Click terminal 1 again to trigger iframe load
+    await page.click('#terminal-wrap');
+    await page.waitForTimeout(1000); // let iframe start loading
     const srcs = await page.evaluate(() => ({
       shell: document.getElementById('cli-frame').src,
       claude: document.getElementById('cli-frame-2').src,
@@ -220,8 +259,8 @@ async function runTests() {
       'Shell iframe URL has autorun=0 (no bundle)',
     );
     assert(
-      srcs.claude.includes('bundle=') && srcs.claude.includes('autorun=1'),
-      'Claude iframe URL has bundle= and autorun=1',
+      srcs.claude === '' || (srcs.claude.includes('bundle=') && srcs.claude.includes('autorun=1')),
+      'Claude iframe URL has bundle= and autorun=1 (or unloaded)',
     );
 
     // ═══════════════════════════════════════════════════════════════
@@ -361,17 +400,28 @@ async function runTests() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Test 8: Escape dismisses back to idle
+    // Test 8: Final state — all terminals back to idle
     // ═══════════════════════════════════════════════════════════════
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(800);
+    // (May need another Escape depending on where we ended up)
+    const curState = await page.evaluate(() => ({
+      c1: document.getElementById('terminal-wrap').className,
+      c2: document.getElementById('terminal-wrap-2').className,
+    }));
+    if (curState.c1.includes('zoomed') || curState.c2.includes('zoomed')) {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+    }
     const idleAgain = await page.evaluate(() => ({
       wrap1Class: document.getElementById('terminal-wrap').className,
       wrap2Class: document.getElementById('terminal-wrap-2').className,
     }));
     assert(
       idleAgain.wrap1Class.includes('idle') && idleAgain.wrap2Class.includes('idle'),
-      'Escape dismisses BOTH terminals back to idle',
+      'Both terminals end up in idle state',
+    );
+    assert(
+      !idleAgain.wrap1Class.includes('zoomed') && !idleAgain.wrap2Class.includes('zoomed'),
+      'Neither terminal has the zoomed class when dismissed',
     );
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

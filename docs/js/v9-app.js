@@ -126,6 +126,7 @@ function createTerminal({ wrapId, frameId, screenId, glassCanvasId, overlayId, b
     glass: null,
     zoom: null,
     loaded: false,
+    state: 'IDLE', // per-terminal state: IDLE | ZOOMING | RUNNING | UNAVAILABLE
     urlBuilder,
     title,
   };
@@ -260,59 +261,54 @@ setProgress(75);
 initIcons();
 setProgress(100);
 
-// ── Click/tap to zoom in — both terminals zoom together ──
+// ── Click/tap to zoom in — EACH terminal zooms independently ──
 let _activatedByTouch = false;
 function bindActivate(term) {
   term.wrap.addEventListener('touchend', (e) => {
     _activatedByTouch = true;
-    handleActivate(e);
+    handleActivate(term, e);
     setTimeout(() => { _activatedByTouch = false; }, 400);
   }, true);
   term.wrap.addEventListener('click', (e) => {
     if (_activatedByTouch) return;
-    handleActivate(e);
+    handleActivate(term, e);
   }, true);
 }
 for (const t of terminals) bindActivate(t);
 
-function handleActivate(e) {
-  if (pairState !== 'IDLE') return;
+function handleActivate(term, e) {
+  if (term.state !== 'IDLE') return;
   e.preventDefault();
   e.stopPropagation();
 
-  pairState = 'ZOOMING';
-  for (const t of terminals) {
-    t.wrap.classList.remove('idle');
-    t.wrap.classList.add('zoomed');
+  term.state = 'ZOOMING';
+  term.wrap.classList.remove('idle');
+  term.wrap.classList.add('zoomed');
+
+  // While one terminal is zoomed, dim/shrink the other slightly
+  const other = terminals.find(t => t !== term);
+  if (other && other.state === 'IDLE') {
+    other.wrap.classList.add('backgrounded');
   }
 
-  // Preload URLs (but don't wait)
-  for (const t of terminals) {
-    if (!t.loaded && !t.iframe.src) {
-      urlReachable(t.urlBuilder()).then(ok => {
-        if (ok) t.iframe.src = t.urlBuilder();
-      });
-    }
+  // Preload the iframe URL for this terminal
+  if (!term.loaded && !term.iframe.src) {
+    urlReachable(term.urlBuilder()).then(ok => {
+      if (ok) term.iframe.src = term.urlBuilder();
+    });
   }
 
-  // Start zoom animations on both simultaneously
-  let completed = 0;
-  const onOneComplete = () => {
-    completed++;
-    if (completed === terminals.length) {
+  const origComplete = term.zoom.onComplete;
+  term.zoom.onComplete = (dir) => {
+    origComplete(dir);
+    if (dir === 'in') {
+      term.state = 'RUNNING';
       pairState = 'RUNNING';
       if (window.innerWidth < 900) dpad.show();
     }
+    term.zoom.onComplete = origComplete;
   };
-  for (const t of terminals) {
-    const origComplete = t.zoom.onComplete;
-    t.zoom.onComplete = (dir) => {
-      origComplete(dir);
-      if (dir === 'in') onOneComplete();
-      t.zoom.onComplete = origComplete;
-    };
-    t.zoom.zoomIn();
-  }
+  term.zoom.zoomIn();
 }
 
 // ── Mouse/touch warp for glass shader (both terminals) ──
@@ -329,26 +325,38 @@ document.addEventListener('touchmove', (e) => {
   if (e.touches[0]) updateGlassMouse(e.touches[0].clientX, e.touches[0].clientY);
 }, { passive: true });
 
-// ── Minimize — both terminals back to idle pair ──
+// ── Minimize — only the currently-zoomed terminal goes back to idle ──
 let dismissCount = 0;
 
-function resetToIdle() {
-  for (const t of terminals) {
-    t.wrap.classList.remove('zoomed');
-    if (t.glass) { t.glass.fog = 0.12; t.glass.glassBlur = 0.4; t.glass.start(); }
-  }
+function resetTerminalToIdle(term) {
+  if (!term || term.state === 'IDLE') return;
+
+  term.wrap.classList.remove('zoomed');
+  if (term.glass) { term.glass.fog = 0.12; term.glass.glassBlur = 0.4; term.glass.start(); }
 
   dismissCount++;
-  const shrink = Math.min(dismissCount * 0.02, 0.08);
-  for (const t of terminals) {
-    t.zoom.setShrink(shrink);
-    t.zoom.zoomOut();
-  }
+  const shrink = Math.min(dismissCount * 0.01, 0.05);
+  term.zoom.setShrink(shrink);
+  term.zoom.zoomOut();
+  term.state = 'IDLE';
 
-  pairState = 'IDLE';
-  if (fog) fog.style.opacity = '1';
-  if (spotlight) spotlight.style.opacity = '0.6';
-  dpad.hide();
+  // Restore the other terminal to idle foreground
+  const other = terminals.find(t => t !== term);
+  if (other) other.wrap.classList.remove('backgrounded');
+
+  // If neither terminal is still zoomed, update pairState
+  if (!terminals.some(t => t.state === 'RUNNING' || t.state === 'ZOOMING')) {
+    pairState = 'IDLE';
+    if (fog) fog.style.opacity = '1';
+    if (spotlight) spotlight.style.opacity = '0.6';
+    dpad.hide();
+  }
+}
+
+function resetToIdle() {
+  // Back-compat: dismiss whichever terminal is currently zoomed
+  const running = terminals.find(t => t.state === 'RUNNING' || t.state === 'ZOOMING');
+  if (running) resetTerminalToIdle(running);
 }
 
 // ── Swipe-to-dismiss (on the pair container — either terminal triggers) ──
@@ -356,29 +364,36 @@ const dismissedTray = document.getElementById('dismissed-tray');
 
 for (const t of terminals) {
   new SwipeDismiss(t.wrap, {
-    canSwipe: () => pairState === 'RUNNING' || pairState === 'UNAVAILABLE',
-    onDismiss: () => { addDismissedTile(); resetToIdle(); },
+    canSwipe: () => t.state === 'RUNNING' || t.state === 'UNAVAILABLE',
+    onDismiss: () => { addDismissedTile(t); resetTerminalToIdle(t); },
     onSnapBack: () => {},
   });
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && (pairState === 'RUNNING' || pairState === 'UNAVAILABLE')) {
-    addDismissedTile();
-    resetToIdle();
+  if (e.key === 'Escape') {
+    const running = terminals.find(t => t.state === 'RUNNING' || t.state === 'UNAVAILABLE');
+    if (running) {
+      addDismissedTile(running);
+      resetTerminalToIdle(running);
+    }
   }
 });
 
 let dismissedCount = 0;
-function addDismissedTile() {
+function addDismissedTile(term) {
   dismissedCount++;
   const tile = document.createElement('div');
   tile.className = 'dismissed-tile';
-  tile.textContent = 'v9';
-  tile.title = `Session ${dismissedCount}`;
+  // Label by which terminal was dismissed
+  tile.textContent = term?.title === 'shell' ? 'sh' : 'cc';
+  tile.title = `${term?.title || 'v9'} session ${dismissedCount}`;
   tile.addEventListener('click', () => {
     tile.remove();
-    if (pairState === 'IDLE') handleActivate(new Event('click'));
+    // Re-activate the dismissed terminal
+    if (term && term.state === 'IDLE') {
+      handleActivate(term, new Event('click'));
+    }
   });
   dismissedTray.appendChild(tile);
   tile.style.transform = 'scale(0.3)';
