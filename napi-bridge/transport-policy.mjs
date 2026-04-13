@@ -4,7 +4,7 @@
  * Four-tier transport chain, tried in order of preference:
  *
  *   [1] LOCAL v9-net       — NODEJS_GVISOR_WS_URL — raw TCP via local gvisor-tap-vsock
- *   [2] HOSTED CHISEL      — NODEJS_CHISEL_WS_URL — raw TCP via remote tunnel
+ *   [2] HOSTED WISP        — NODEJS_WISP_WS_URL   — raw TCP via remote Wisp tunnel
  *   [3] HOSTED FETCH PROXY — NODEJS_IN_TAB_FETCH_PROXY — HTTP(S) via JSON POST proxy
  *   [4] DIRECT BROWSER FETCH — native fetch(), CORS-restricted (works for npm etc.)
  *
@@ -13,10 +13,9 @@
  *
  * Env (process.env on host; globalThis.process.env in tab):
  *   NODEJS_GVISOR_WS_URL        — tier 1: local v9-net WebSocket URL
- *   NODEJS_CHISEL_WS_URL        — tier 2: hosted chisel TCP tunnel URL
+ *   NODEJS_WISP_WS_URL          — tier 2: hosted Wisp v1 tunnel URL
  *   NODEJS_IN_TAB_FETCH_PROXY   — tier 3: POST JSON { url, init } → JSON { ok, status, headers, body64 }
  *   NODEJS_HTTP_TRANSPORT       — fetch | fetch-proxy | auto (default auto)
- *   NODEJS_WISP_WS_URL          — reserved: Wisp relay expectation
  */
 
 const _env = () =>
@@ -51,12 +50,11 @@ export function getHttpTransportMode() {
  * Raw TCP/TLS transport mode.
  *
  *   embedder  — host provided a __NODE_TAB_WISP_TCP_CONNECT hook
- *   gvisor    — local v9-net (NODEJS_GVISOR_WS_URL is set; probe may or may not have succeeded)
- *   chisel    — hosted chisel tunnel (NODEJS_CHISEL_WS_URL is set)
- *   wisp-expected — caller expects Wisp but client isn't bundled
+ *   gvisor    — local v9-net (NODEJS_GVISOR_WS_URL is set)
+ *   wisp      — hosted Wisp v1 tunnel (NODEJS_WISP_WS_URL is set)
  *   none      — no raw-socket transport available (HTTP-only)
  *
- * @returns {'none'|'wisp-expected'|'embedder'|'gvisor'|'chisel'}
+ * @returns {'none'|'embedder'|'gvisor'|'wisp'}
  */
 export function getRawSocketTransportMode() {
   const e = _env();
@@ -64,11 +62,8 @@ export function getRawSocketTransportMode() {
   if (e.NODEJS_GVISOR_WS_URL && e.NODEJS_GVISOR_WS_URL !== '' && e.NODEJS_GVISOR_WS_URL !== '0') {
     return 'gvisor';
   }
-  if (e.NODEJS_CHISEL_WS_URL && e.NODEJS_CHISEL_WS_URL !== '' && e.NODEJS_CHISEL_WS_URL !== '0') {
-    return 'chisel';
-  }
   if (e.NODEJS_WISP_WS_URL && e.NODEJS_WISP_WS_URL !== '' && e.NODEJS_WISP_WS_URL !== '0') {
-    return 'wisp-expected';
+    return 'wisp';
   }
   return 'none';
 }

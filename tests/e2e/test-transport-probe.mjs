@@ -4,7 +4,7 @@
  *  1. Runs exactly once (no duplicate probes)
  *  2. Prints informational messages (no "FAILED" / console.warn / console.error
  *     for the normal "v9-net not running" case)
- *  3. Announces all four tiers (v9-net / chisel / fetch-proxy / direct)
+ *  3. Announces all four tiers (v9-net / wisp / fetch-proxy / direct)
  *  4. Does not block the page or throw
  */
 
@@ -132,12 +132,12 @@ async function runTests() {
     // ═══════════════════════════════════════════════════════════════
     // Test 1: Probe announces all four tiers
     // ═══════════════════════════════════════════════════════════════
-    const tier1Header = v9netMsgs.find(m => m.text.includes('tier-1 v9-net  ='));
-    const tier2Header = v9netMsgs.find(m => m.text.includes('tier-2 chisel  ='));
-    const tier3Header = v9netMsgs.find(m => m.text.includes('tier-3 proxy   ='));
+    const tier1Header = v9netMsgs.find(m => /tier-1 v9-net\s+=/.test(m.text));
+    const tier2Header = v9netMsgs.find(m => /tier-2 wisp\s+=/.test(m.text));
+    const tier3Header = v9netMsgs.find(m => /tier-3 proxy\s+=/.test(m.text));
     const tier4Header = v9netMsgs.find(m => m.text.includes('tier-4 direct'));
     assert(!!tier1Header, 'Tier 1 (v9-net) announced at boot');
-    assert(!!tier2Header, 'Tier 2 (chisel) announced at boot');
+    assert(!!tier2Header, 'Tier 2 (wisp) announced at boot');
     assert(!!tier3Header, 'Tier 3 (fetch proxy) announced at boot');
     assert(!!tier4Header, 'Tier 4 (direct fetch) announced at boot');
 
@@ -145,7 +145,7 @@ async function runTests() {
     // Test 2: Probe results logged as info (log), not warn or error
     // ═══════════════════════════════════════════════════════════════
     const tier1Result = v9netMsgs.find(m => m.text.match(/tier-1 v9-net (not )?reachable/));
-    const tier2Result = v9netMsgs.find(m => m.text.match(/tier-2 chisel (not )?reachable/));
+    const tier2Result = v9netMsgs.find(m => m.text.match(/tier-2 wisp (not )?reachable/));
     const tier3Result = v9netMsgs.find(m => m.text.match(/tier-3 fetch proxy (not )?reachable/));
     assert(!!tier1Result, 'Tier 1 probe result logged');
     assert(!!tier2Result, 'Tier 2 probe result logged');
@@ -175,8 +175,8 @@ async function runTests() {
     // ═══════════════════════════════════════════════════════════════
     // Test 5: No duplicate probes — each tier header should appear exactly once
     // ═══════════════════════════════════════════════════════════════
-    const tier1HeaderCount = v9netMsgs.filter(m => m.text.includes('tier-1 v9-net  =')).length;
-    const tier2HeaderCount = v9netMsgs.filter(m => m.text.includes('tier-2 chisel  =')).length;
+    const tier1HeaderCount = v9netMsgs.filter(m => /tier-1 v9-net\s+=/.test(m.text)).length;
+    const tier2HeaderCount = v9netMsgs.filter(m => /tier-2 wisp\s+=/.test(m.text)).length;
     assert(tier1HeaderCount === 1, `Tier 1 header appears exactly once (got ${tier1HeaderCount})`);
     assert(tier2HeaderCount === 1, `Tier 2 header appears exactly once (got ${tier2HeaderCount})`);
 

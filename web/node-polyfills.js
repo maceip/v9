@@ -767,36 +767,37 @@
   //
   // v9 supports four transport tiers, tried in order:
   //
-  //   [1] LOCAL v9-net        — ws://localhost:8765/__v9net/forward
-  //                             Real raw TCP via user's local gvisor-tap-vsock.
-  //                             All headers preserved, all sockets, server + client.
+  //   [1] LOCAL v9-net         — ws://localhost:8765/__v9net/forward
+  //                              Real raw TCP via user's local gvisor-tap-vsock.
+  //                              All headers preserved, server + client sockets.
   //
-  //   [2] HOSTED CHISEL       — wss://fetch.stare.network/chisel
-  //                             Remote TCP tunnel (v9-net-as-a-service).
-  //                             Same capabilities as tier 1 but hosted.
+  //   [2] HOSTED WISP v1       — wss://fetch.stare.network/wisp/
+  //                              Remote multiplexed TCP tunnel (Wisp protocol).
+  //                              Clean-room implementation from CC-BY-4.0 spec.
+  //                              Same client/server TCP as tier 1 but hosted.
   //
-  //   [3] HOSTED FETCH PROXY  — https://fetch.stare.network/proxy
-  //                             JSON { url, init } → JSON { ok, status, headers, body64 }.
-  //                             HTTP(S) only, full headers, no raw sockets.
+  //   [3] HOSTED FETCH PROXY   — https://fetch.stare.network/proxy
+  //                              JSON { url, init } → JSON { ok, status, headers, body64 }.
+  //                              HTTP(S) only, full headers, no raw sockets.
   //
   //   [4] DIRECT BROWSER FETCH — native fetch()
   //                              CORS-restricted (works for npm, CORS-enabled APIs).
   //                              Header restrictions apply, no raw sockets.
   //
-  // Probes run in parallel and are purely informational. The first two set
+  // Probes run in parallel and are purely informational. The first three set
   // env vars that other modules check later; no module is blocked by the
   // probe outcome. All messages print like normal init events, not errors.
   //
   // Overrides:
   //   ?gvisor=ws://host:port     — point tier 1 at a custom v9-net instance
-  //   ?chisel=wss://host/path    — override tier 2 URL
+  //   ?wisp=wss://host/wisp/     — override tier 2 URL
   //   ?fetchProxy=https://host   — override tier 3 URL
   //   NODEJS_IN_TAB_FETCH_PROXY  — already set via env, respected if present
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
 
     const gvisorWs     = params.get('gvisor')     || 'ws://localhost:8765';
-    const chiselWs     = params.get('chisel')     || 'wss://fetch.stare.network/chisel';
+    const wispWs       = params.get('wisp')       || 'wss://fetch.stare.network/wisp/';
     const fetchProxy   = params.get('fetchProxy') || 'https://fetch.stare.network/proxy';
     const probeTimeout = 3000;
 
@@ -806,17 +807,15 @@
     if (globalThis.process?.env) globalThis.process.env.NODEJS_GVISOR_WS_URL = gvisorWs;
 
     console.log('[v9-net] transport probe: tier-1 v9-net  = ' + gvisorWs);
-    console.log('[v9-net] transport probe: tier-2 chisel  = ' + chiselWs);
+    console.log('[v9-net] transport probe: tier-2 wisp    = ' + wispWs);
     console.log('[v9-net] transport probe: tier-3 proxy   = ' + fetchProxy);
     console.log('[v9-net] transport probe: tier-4 direct  = browser fetch()');
 
-    // ── Tier 1: Local v9-net probe ────────────────────────────────────
-    const probeV9Net = () => new Promise((resolve) => {
+    // Generic WebSocket reachability probe (used by tier 1 and 2).
+    const probeWs = (url) => new Promise((resolve) => {
       let done = false;
       try {
-        const url = new URL(gvisorWs);
-        url.pathname = '/__v9net/forward';
-        const ws = new WebSocket(url.toString());
+        const ws = new WebSocket(url);
         const t = setTimeout(() => {
           if (done) return;
           done = true;
@@ -839,32 +838,17 @@
       } catch { resolve(false); }
     });
 
-    // ── Tier 2: Hosted chisel probe ───────────────────────────────────
-    const probeChisel = () => new Promise((resolve) => {
-      let done = false;
+    // ── Tier 1: Local v9-net probe ────────────────────────────────────
+    const probeV9Net = () => {
       try {
-        const ws = new WebSocket(chiselWs);
-        const t = setTimeout(() => {
-          if (done) return;
-          done = true;
-          try { ws.close(); } catch {}
-          resolve(false);
-        }, probeTimeout);
-        ws.onopen = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(t);
-          try { ws.close(); } catch {}
-          resolve(true);
-        };
-        ws.onerror = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(t);
-          resolve(false);
-        };
-      } catch { resolve(false); }
-    });
+        const url = new URL(gvisorWs);
+        url.pathname = '/__v9net/forward';
+        return probeWs(url.toString());
+      } catch { return Promise.resolve(false); }
+    };
+
+    // ── Tier 2: Hosted Wisp probe ─────────────────────────────────────
+    const probeWisp = () => probeWs(wispWs);
 
     // ── Tier 3: Hosted fetch proxy probe ──────────────────────────────
     const probeFetchProxy = () => {
@@ -883,14 +867,14 @@
       }
     });
 
-    probeChisel().then((ok) => {
+    probeWisp().then((ok) => {
       if (ok) {
-        console.log('[v9-net] tier-2 chisel reachable — hosted TCP tunnel available');
-        if (globalThis.process?.env && !globalThis.process.env.NODEJS_CHISEL_WS_URL) {
-          globalThis.process.env.NODEJS_CHISEL_WS_URL = chiselWs;
+        console.log('[v9-net] tier-2 wisp reachable — hosted TCP tunnel available');
+        if (globalThis.process?.env && !globalThis.process.env.NODEJS_WISP_WS_URL) {
+          globalThis.process.env.NODEJS_WISP_WS_URL = wispWs;
         }
       } else {
-        console.log('[v9-net] tier-2 chisel not reachable');
+        console.log('[v9-net] tier-2 wisp not reachable');
       }
     });
 

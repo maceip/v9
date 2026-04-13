@@ -11,6 +11,7 @@
 import { EventEmitter } from './eventemitter.js';
 import { getRawSocketTransportMode } from './transport-policy.mjs';
 import { isGvisorAvailable, GvisorSocket, GvisorServer, getGvisorStack } from './gvisor-net.js';
+import { isWispAvailable, wispConnect } from './wisp-client.js';
 import { createTlsConnection } from './wolfssl-tls.js';
 
 function notAvailable(mod, method) {
@@ -25,19 +26,17 @@ function _rawSocketUnavailable(modDotMethod) {
     // Should not reach here — gvisor path handled before this is called.
     throw new Error(`${modDotMethod}: gvisor transport failed to initialize. Check NODEJS_GVISOR_WS_URL.`);
   }
+  if (mode === 'wisp') {
+    // Should not reach here — wisp path handled before this is called.
+    throw new Error(`${modDotMethod}: wisp transport failed to initialize. Check NODEJS_WISP_WS_URL.`);
+  }
   if (mode === 'embedder') {
     throw new Error(
       `${modDotMethod}: provide tcp via globalThis.__NODE_TAB_WISP_TCP_CONNECT (see docs/TRANSPORT.md).`,
     );
   }
-  if (mode === 'wisp-expected') {
-    throw new Error(
-      `${modDotMethod}: NODEJS_WISP_WS_URL is set but this build does not bundle a Wisp client (AGPL). ` +
-        'Register globalThis.__NODE_TAB_WISP_TCP_CONNECT or clear NODEJS_WISP_WS_URL. See docs/TRANSPORT.md.',
-    );
-  }
   throw new Error(`${modDotMethod} is not available in the browser environment. ` +
-    'Set NODEJS_GVISOR_WS_URL to a local gvisor-tap-vsock binary. See docs/TRANSPORT.md.');
+    'Set NODEJS_GVISOR_WS_URL (local v9-net) or NODEJS_WISP_WS_URL (hosted Wisp tunnel). See docs/TRANSPORT.md.');
 }
 
 function _invalidIp(address) {
@@ -285,56 +284,115 @@ class Socket extends EventEmitter {
     super();
     this.writable = false;
     this.readable = false;
-    this._gvs = null; // GvisorSocket delegate (Duplex stream)
+    this._opts = opts;
+    // _delegate is a Duplex-shaped object: either a GvisorSocket (sync connect)
+    // or a WispStream (async connect via wispConnect()). Both share the same
+    // interface that the Socket class forwards to.
+    /** @type {any} */
+    this._delegate = null;
+    this._transport = 'none'; // 'gvisor' | 'wisp' | 'none'
+    // Pending writes queued until async delegate (Wisp) is ready
+    this._pendingWrites = [];
+
     if (isGvisorAvailable()) {
-      this._gvs = new GvisorSocket(null, opts);
-      for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout',
-                         'finish', 'pipe', 'unpipe', 'readable']) {
-        this._gvs.on(ev, (...args) => this.emit(ev, ...args));
-      }
+      this._delegate = new GvisorSocket(null, opts);
+      this._transport = 'gvisor';
+      this._forwardEvents();
       this.writable = true;
       this.readable = true;
+    } else if (isWispAvailable()) {
+      // Wisp delegate is created lazily inside connect() since it's async.
+      this._transport = 'wisp';
     }
   }
-  // ─── POSIX socket properties ────────────────────────────────────
-  get remoteAddress() { return this._gvs?.remoteAddress; }
-  get remotePort() { return this._gvs?.remotePort; }
-  get remoteFamily() { return this._gvs?.remoteFamily ?? 'IPv4'; }
-  get localAddress() { return this._gvs?.localAddress; }
-  get localPort() { return this._gvs?.localPort; }
-  get connecting() { return this._gvs?.connecting ?? false; }
-  get pending() { return this._gvs?.pending ?? true; }
-  get readyState() { return this._gvs?.readyState ?? 'closed'; }
-  get bytesRead() { return this._gvs?.bytesRead ?? 0; }
-  get bytesWritten() { return this._gvs?.bytesWritten ?? 0; }
-  get allowHalfOpen() { return this._gvs?.allowHalfOpen ?? false; }
-  set allowHalfOpen(v) { if (this._gvs) this._gvs.allowHalfOpen = v; }
 
-  // ─── Duplex stream methods (delegate to GvisorSocket) ───────────
+  _forwardEvents() {
+    if (!this._delegate) return;
+    for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout',
+                       'finish', 'pipe', 'unpipe', 'readable']) {
+      this._delegate.on(ev, (...args) => this.emit(ev, ...args));
+    }
+  }
+
+  // ─── POSIX socket properties ────────────────────────────────────
+  get remoteAddress() { return this._delegate?.remoteAddress; }
+  get remotePort() { return this._delegate?.remotePort; }
+  get remoteFamily() { return this._delegate?.remoteFamily ?? 'IPv4'; }
+  get localAddress() { return this._delegate?.localAddress; }
+  get localPort() { return this._delegate?.localPort; }
+  get connecting() { return this._delegate?.connecting ?? false; }
+  get pending() { return this._delegate?.pending ?? true; }
+  get readyState() { return this._delegate?.readyState ?? 'closed'; }
+  get bytesRead() { return this._delegate?.bytesRead ?? 0; }
+  get bytesWritten() { return this._delegate?.bytesWritten ?? 0; }
+  get allowHalfOpen() { return this._delegate?.allowHalfOpen ?? false; }
+  set allowHalfOpen(v) { if (this._delegate) this._delegate.allowHalfOpen = v; }
+
+  // ─── Duplex stream methods ──────────────────────────────────────
   connect(...args) {
-    if (this._gvs) return this._gvs.connect(...args);
+    // Parse net.Socket.connect() args: (port, host?, cb?) or (options, cb?)
+    let host, port, cb;
+    if (typeof args[0] === 'object') {
+      port = args[0].port;
+      host = args[0].host || '127.0.0.1';
+      if (typeof args[1] === 'function') cb = args[1];
+    } else {
+      port = args[0];
+      if (typeof args[1] === 'string') { host = args[1]; cb = args[2]; }
+      else { host = '127.0.0.1'; cb = args[1]; }
+    }
+    if (cb) this.once('connect', cb);
+
+    if (this._transport === 'gvisor') {
+      return this._delegate.connect(...args);
+    }
+    if (this._transport === 'wisp') {
+      // Async: resolve the Wisp stream, then forward events and flush writes.
+      wispConnect(host, port).then((stream) => {
+        this._delegate = stream;
+        this._forwardEvents();
+        this.writable = true;
+        this.readable = true;
+        this.emit('connect');
+        this.emit('ready');
+        // Flush any queued writes
+        for (const { chunk, encoding, cb: wcb } of this._pendingWrites) {
+          this._delegate.write(chunk, encoding, wcb);
+        }
+        this._pendingWrites = [];
+      }).catch((err) => {
+        this.emit('error', err);
+      });
+      return this;
+    }
     throw new Error('net.Socket.connect() is not available in the browser environment');
   }
-  write(...args) {
-    if (this._gvs) return this._gvs.write(...args);
+
+  write(chunk, encoding, cb) {
+    if (this._delegate) return this._delegate.write(chunk, encoding, cb);
+    if (this._transport === 'wisp') {
+      // Queue until the async connect resolves
+      this._pendingWrites.push({ chunk, encoding, cb });
+      return true;
+    }
     throw new Error('net.Socket.write() is not available in the browser environment');
   }
-  end(...args) { if (this._gvs) { this._gvs.end(...args); return this; } return this; }
-  destroy(...args) { if (this._gvs) { this._gvs.destroy(...args); return this; } return this; }
-  pipe(dest, opts) { if (this._gvs) return this._gvs.pipe(dest, opts); return dest; }
-  unpipe(dest) { if (this._gvs) this._gvs.unpipe(dest); return this; }
-  read(size) { return this._gvs?.read(size) ?? null; }
-  cork() { this._gvs?.cork(); }
-  uncork() { this._gvs?.uncork(); }
-  setEncoding(enc) { this._gvs?.setEncoding(enc); return this; }
+  end(...args) { if (this._delegate) { this._delegate.end(...args); return this; } return this; }
+  destroy(...args) { if (this._delegate) { this._delegate.destroy(...args); return this; } return this; }
+  pipe(dest, opts) { if (this._delegate) return this._delegate.pipe(dest, opts); return dest; }
+  unpipe(dest) { if (this._delegate) this._delegate.unpipe(dest); return this; }
+  read(size) { return this._delegate?.read(size) ?? null; }
+  cork() { this._delegate?.cork?.(); }
+  uncork() { this._delegate?.uncork?.(); }
+  setEncoding(enc) { this._delegate?.setEncoding?.(enc); return this; }
   setKeepAlive() { return this; }
   setNoDelay() { return this; }
-  setTimeout(ms, cb) { this._gvs?.setTimeout(ms, cb); return this; }
+  setTimeout(ms, cb) { this._delegate?.setTimeout?.(ms, cb); return this; }
   ref() { return this; }
   unref() { return this; }
-  pause() { this._gvs?.pause(); return this; }
-  resume() { this._gvs?.resume(); return this; }
-  address() { return this._gvs?.address() ?? null; }
+  pause() { this._delegate?.pause?.(); return this; }
+  resume() { this._delegate?.resume?.(); return this; }
+  address() { return this._delegate?.address?.() ?? null; }
 }
 
 class Server extends EventEmitter {
