@@ -103,7 +103,12 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # gomobile@latest requires Go 1.25+. Using 1.22 worked by accident
+          # via auto-toolchain download during `go install`, but `go mod tidy`
+          # inside pkg/v9net after `go get golang.org/x/mobile/bind` bumps the
+          # module's required go to 1.25, and subsequent commands need a
+          # real 1.25 toolchain on PATH.
+          go-version: '1.25'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -151,6 +156,12 @@ jobs:
           fi
           export ANDROID_NDK_HOME="$NDK_DIR"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          # gomobile bind imports golang.org/x/mobile/bind from the TARGET
+          # module's go.mod. pkg/v9net doesn't depend on it (it's only needed
+          # for the Android binding, not the Linux binary) — add it at CI
+          # time. The tool's own error message literally says "run go get
+          # golang.org/x/mobile/bind" when this is missing.
+          go get golang.org/x/mobile/bind
           go mod tidy
           mkdir -p ../../android/app/libs
           gomobile bind \
