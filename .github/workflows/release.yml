@@ -53,11 +53,9 @@ jobs:
           name: v9-net-${{ matrix.suffix }}
           path: cmd/v9-net/v9-net-${{ matrix.suffix }}
 
-  # ── v9-net Android binary (cross-compiled Go) ────────────────────
-  # Plain static binary for Android ARM64 — runs via Termux or adb shell.
-  # gomobile AAR/APK approach kept in android/ for future use but not
-  # built in CI until the toolchain issues are resolved.
-  build-android:
+  # ── v9-net Android CLI binary (Go static, cross-compiled) ───────
+  # Plain ELF binary for Termux / adb shell users. Not an APK.
+  build-android-cli:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +64,7 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Build v9-net for Android ARM64
+      - name: Build v9-net for Android ARM64 (static binary)
         working-directory: cmd/v9-net
         env:
           GOOS: android
@@ -82,6 +80,89 @@ jobs:
         with:
           name: v9-net-android-arm64
           path: cmd/v9-net/v9-net-android-arm64
+
+  # ── v9-net Android APK (gomobile + Gradle) ──────────────────────
+  # Produces a real installable Android app that wraps the gvisor-tap-vsock
+  # virtual network in a foreground service. Users can install the APK
+  # directly on their phone (no root, no Termux), tap the icon, and the
+  # browser at maceip.github.io/v9 connects to ws://localhost:8765.
+  #
+  # Reliability: every tool version is pinned explicitly. Previous
+  # attempts with @latest kept breaking when upstream tools moved.
+  # continue-on-error keeps a failing APK build from blocking the rest
+  # of the release (CLI binaries will still ship).
+  build-android-apk:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
+
+      - name: Install gomobile (pinned)
+        run: |
+          # Pin to a specific gomobile version that we've tested.
+          # Bump this deliberately if gomobile changes break CI.
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20240916200853-a30babe4fe06
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20240916200853-a30babe4fe06
+          gomobile init
+          gomobile version
+
+      - name: Build v9net.aar with gomobile bind
+        working-directory: pkg/v9net
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+        run: |
+          go mod tidy
+          mkdir -p ../../android/app/libs
+          gomobile bind \
+            -target=android/arm64,android/arm \
+            -androidapi 26 \
+            -o ../../android/app/libs/v9net.aar \
+            .
+          ls -lh ../../android/app/libs/v9net.aar
+
+      - name: Build debug APK with Gradle
+        working-directory: android
+        run: |
+          # Debug build is auto-signed with the default debug keystore,
+          # so Android will install it. Release builds need a keystore
+          # secret which we don't ship. The debug APK is fine for demo
+          # use — users will see the "debug build" marker but it works.
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          find app/build/outputs/apk -name '*.apk' -exec ls -lh {} \;
+
+      - name: Rename and stage APK with proper extension
+        run: |
+          mkdir -p out
+          # Gradle produces app/build/outputs/apk/debug/app-debug.apk
+          APK_SRC="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_SRC" ]; then
+            echo "FATAL: APK not found at $APK_SRC"
+            find android -name '*.apk' -type f
+            exit 1
+          fi
+          cp "$APK_SRC" out/v9-net-android-arm64.apk
+          ls -lh out/v9-net-android-arm64.apk
+          file out/v9-net-android-arm64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v9-net-android-arm64-apk
+          path: out/v9-net-android-arm64.apk
 
   # ── v9 Node.js CLI (npm pack) ───────────────────────────────────
   build-v9-cli:
@@ -109,8 +190,10 @@ jobs:
 
   # ── Create GitHub Release ───────────────────────────────────────
   release:
-    needs: [build-v9-net, build-android, build-v9-cli]
+    needs: [build-v9-net, build-android-cli, build-android-apk, build-v9-cli]
     runs-on: ubuntu-latest
+    # Don't block the release if only the APK job failed (it's allowed to fail).
+    if: always() && needs.build-v9-net.result == 'success' && needs.build-android-cli.result == 'success' && needs.build-v9-cli.result == 'success'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,6 +239,13 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "v9 ${{ steps.tag.outputs.tag }}"
           generate_release_notes: true
+          # The APK job may fail (continue-on-error: true); use fail_on_unmatched_files: false
+          # so a missing .apk doesn't block the release.
+          fail_on_unmatched_files: false
           files: |
-            artifacts/v9-net-*
+            artifacts/v9-net-linux-*
+            artifacts/v9-net-darwin-*
+            artifacts/v9-net-windows-*
+            artifacts/v9-net-android-arm64
+            artifacts/v9-net-android-arm64.apk
             artifacts/v9-cli.tgz
