@@ -117,6 +117,20 @@ def public_v6(droplet):
     return None
 
 
+# ─── Tag ───────────────────────────────────────────────────────────────
+def ensure_tag(token, name):
+    """DO tags must exist before firewalls / LBs can reference them.
+    POST /tags is idempotent-ish: returns 201 on create, 422 if exists."""
+    try:
+        api("POST", "/tags", token, {"name": name})
+        print(f"  tag {name!r} created")
+    except RuntimeError as e:
+        if "already exists" in str(e).lower() or "422" in str(e):
+            print(f"  tag {name!r} already exists")
+        else:
+            raise
+
+
 # ─── Firewall ──────────────────────────────────────────────────────────
 def ensure_firewall(token):
     r = api("GET", "/firewalls?per_page=200", token)
@@ -153,6 +167,7 @@ def firewall_set_lb_source(token, fw_id, lb_id):
     """Replace the :8080 rule's source with the newly-created LB's UID so
     the firewall only accepts traffic from our specific LB."""
     body = {
+        "name": FIREWALL_NAME,
         "inbound_rules": [
             {
                 "protocol": "tcp",
@@ -168,10 +183,9 @@ def firewall_set_lb_source(token, fw_id, lb_id):
             {"protocol": "icmp",
              "destinations": {"addresses": ["0.0.0.0/0", "::/0"]}},
         ],
+        "tags": [TAG],
     }
-    api("PUT", f"/firewalls/{fw_id}/rules", token, {
-        "inbound_rules": body["inbound_rules"],
-    })
+    api("PUT", f"/firewalls/{fw_id}", token, body)
 
 
 # ─── Global Load Balancer ──────────────────────────────────────────────
@@ -182,25 +196,13 @@ def find_lb(token, name):
 
 def ensure_glb(token, domain):
     existing = find_lb(token, LB_NAME)
+    # DO Global LB uses glb_settings instead of forwarding_rules. The
+    # GLB itself terminates TLS (target_protocol: http to the backend).
+    # CDN caching is enabled via glb_settings.cdn.is_enabled.
     body = {
         "name": LB_NAME,
         "type": "GLOBAL",
         "tag": TAG,                       # auto-enrol any droplet with tag
-        "forwarding_rules": [
-            {
-                "entry_protocol": "http",
-                "entry_port": 80,
-                "target_protocol": "http",
-                "target_port": 8080,
-            },
-            {
-                "entry_protocol": "https",
-                "entry_port": 443,
-                "target_protocol": "http",
-                "target_port": 8080,
-                "tls_passthrough": False,  # terminate TLS at the LB
-            },
-        ],
         "health_check": {
             "protocol": "http",
             "port": 8080,
@@ -218,13 +220,9 @@ def ensure_glb(token, domain):
         "domains": [
             {
                 "name": domain,
-                "is_managed": False,       # user will point DNS manually
+                "is_managed": False,       # user manages DNS on their Knot server
             },
         ],
-        "redirect_http_to_https": False,
-        "enable_proxy_protocol": False,
-        "enable_backend_keepalive": True,
-        "disable_lets_encrypt_dns_records": True,
     }
     if existing:
         print(f"  load balancer {LB_NAME!r} exists (id={existing['id']}), updating")
@@ -233,6 +231,67 @@ def ensure_glb(token, domain):
     print(f"  creating Global LB with CDN + domain={domain}")
     r = api("POST", "/load_balancers", token, body)
     return r["load_balancer"]["id"]
+
+
+def extract_glb_anycast_ips(token, lb_id):
+    """Unwedge DO's GLB custom-domain chicken-and-egg: the API won't tell
+    you the anycast IPs until a DO-managed domain is attached to the LB,
+    but the user's real domain is on Knot, not DO. Workaround:
+
+      1. POST /domains with a disposable scratch zone name
+      2. PUT /load_balancers/{id} with the scratch domain attached as
+         is_managed=true (alongside the real unmanaged one)
+      3. Poll /domains/{scratch}/records — DO auto-writes A/AAAA records
+         into the zone once provisioning completes
+      4. Remove the scratch from the LB and DELETE the scratch zone
+
+    Returns (ipv4_list, ipv6_list)."""
+    scratch = f"v9glbscratch-{lb_id[:8]}.dev"
+    print(f"  [trick] creating scratch zone {scratch} to read back anycast IPs")
+    try:
+        api("POST", "/domains", token, {"name": scratch})
+    except RuntimeError as e:
+        if "422" not in str(e):
+            raise
+
+    # Get current LB state so we can PUT the full body with scratch added
+    lb = api("GET", f"/load_balancers/{lb_id}", token)["load_balancer"]
+    domains = list(lb.get("domains") or [])
+    if not any(d["name"] == scratch for d in domains):
+        domains.append({"name": scratch, "is_managed": True})
+    body = {
+        "name": lb["name"],
+        "type": "GLOBAL",
+        "tag": lb.get("tag") or TAG,
+        "glb_settings": lb["glb_settings"],
+        "health_check": lb["health_check"],
+        "domains": domains,
+    }
+    api("PUT", f"/load_balancers/{lb_id}", token, body)
+
+    v4, v6 = [], []
+    deadline = time.time() + 240
+    # Poll until we have BOTH A and AAAA, or the deadline hits. DO writes
+    # them in two passes and exiting on the first-populated set leaves us
+    # missing the other family.
+    while time.time() < deadline:
+        r = api("GET", f"/domains/{scratch}/records?per_page=200", token)
+        v4 = [rr["data"] for rr in r["domain_records"] if rr["type"] == "A"]
+        v6 = [rr["data"] for rr in r["domain_records"] if rr["type"] == "AAAA"]
+        if v4 and v6:
+            break
+        time.sleep(10)
+
+    # Clean up: detach scratch from LB, delete scratch zone
+    remaining = [d for d in domains if d["name"] != scratch]
+    body["domains"] = remaining
+    api("PUT", f"/load_balancers/{lb_id}", token, body)
+    try:
+        api("DELETE", f"/domains/{scratch}", token)
+    except Exception:
+        pass
+
+    return v4, v6
 
 
 def wait_lb_active(token, lb_id, timeout=600):
@@ -294,8 +353,9 @@ def main():
         print(f"  would create: Global LB {LB_NAME!r} with domain {args.domain}")
         return
 
-    # ── [1/5] firewall (initially open to any LB — we'll lock it to ours later)
-    print("\n[1/5] firewall")
+    # ── [1/5] tag + firewall (initially open to any LB)
+    print("\n[1/5] tag + firewall")
+    ensure_tag(token, TAG)
     fw_id = ensure_firewall(token)
 
     # ── [2/5] droplets
@@ -331,6 +391,7 @@ def main():
             results.append((name, region, continent, did, None, None))
 
     # ── [4/5] load balancer
+    anycast_v4, anycast_v6 = [], []
     if args.skip_lb:
         print("\n[4/5] --skip-lb: not touching load balancer")
         lb_id = None
@@ -340,8 +401,13 @@ def main():
         print("  waiting for LB to become active (up to 10 min)")
         try:
             lb = wait_lb_active(token, lb_id)
-            print(f"  LB active: ip={lb.get('ip')}")
-            # Lock the firewall to only this LB as source
+            print(f"  LB active id={lb_id}")
+            # DO's GLB API doesn't expose anycast IPs directly — we use a
+            # scratch managed domain to have DO write them into a zone we
+            # can read. See extract_glb_anycast_ips for details.
+            anycast_v4, anycast_v6 = extract_glb_anycast_ips(token, lb_id)
+            print(f"  anycast A:    {anycast_v4}")
+            print(f"  anycast AAAA: {anycast_v6}")
             print("  locking firewall inbound :8080 to this LB's UID")
             firewall_set_lb_source(token, fw_id, lb_id)
         except Exception as e:
@@ -363,17 +429,17 @@ def main():
         print(f"  id:             {lb['id']}")
         print(f"  name:           {lb['name']}")
         print(f"  status:         {lb['status']}")
-        print(f"  public IPv4:    {lb.get('ip', '(pending)')}")
-        print(f"  public IPv6:    {lb.get('ipv6', '(pending)')}")
         print(f"  domain:         {args.domain}")
         print(f"  cdn caching:    enabled")
         print(f"  backends:       by tag '{TAG}' ({len(results)} droplets)")
         print()
         print("DNS to set on your authoritative Knot nameserver:")
         print()
-        print(f"  {args.domain}.  300  IN  A     {lb.get('ip', '<pending>')}")
-        if lb.get("ipv6"):
-            print(f"  {args.domain}.  300  IN  AAAA  {lb['ipv6']}")
+        print(f"  ; {args.domain}  —  DO Global LB anycast (SNI-routed)")
+        for ip in anycast_v4:
+            print(f"  {args.domain}.  300  IN  A     {ip}")
+        for ip in anycast_v6:
+            print(f"  {args.domain}.  300  IN  AAAA  {ip}")
         print()
         print("Once the A/AAAA records resolve, DO's Let's Encrypt integration will")
         print("issue a cert for the custom domain within ~60s. Until then, wss://")
