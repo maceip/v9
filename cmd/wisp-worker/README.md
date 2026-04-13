@@ -1,74 +1,118 @@
 # wisp-worker
 
-A minimal Wisp v1 server that runs on Cloudflare Workers and bridges browser
-Wisp streams to real outbound TCP via `cloudflare:sockets`.
-
-This is the hosted backend for v9's **tier-2 transport** — when a user doesn't
-have `v9-net` running locally, the browser can still make raw TCP connections
-by tunneling through this Worker.
+Hardened Wisp v1 server that runs on Cloudflare Workers. This is an
+alternative to `cmd/wisp-server-node/` for the tier-2 hosted transport —
+choose this one if you prefer CF Workers, choose the other if you prefer
+AWS or any other container host.
 
 ## Protocol
 
-Implements Wisp v1 from the
+Clean-room implementation of Wisp v1 from the
 [CC-BY-4.0 specification](https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md).
-This is a clean-room implementation — no code is copied from `wisp-js`
-(which is AGPL). Both the client (`napi-bridge/wisp-client.js`) and this
-server were written purely from the spec.
+No code from `wisp-js` (which is AGPL) is reproduced.
 
-The wire format is trivially simple — every packet is:
-
+Wire format:
 ```
 uint8  type        (CONNECT=0x01, DATA=0x02, CONTINUE=0x03, CLOSE=0x04)
 uint32 stream_id   (little-endian, 0 = connection control)
 ...    payload
 ```
 
-Stream multiplexing is credit-based: the server advertises a buffer size via
-a CONTINUE on stream 0 at connect time, and decrements per DATA packet. When
-the client's credit reaches zero it waits for a per-stream CONTINUE.
+## Anti-abuse protection
 
-## Deployment
+See `guard.js`. Same policy as `cmd/wisp-server-node/guard.js`, adapted for
+the Workers runtime (no `node:net`/`node:dns`):
+
+**Hard blocks** (destination):
+- RFC 1918 private ranges, loopback, link-local (covers AWS/GCP/Azure
+  metadata at `169.254.169.254`), IPv6 ULA, multicast
+- SMTP ports: 25, 465, 587
+- Telnet 23, IRC 6667/6697
+- Extra ports via `EXTRA_BLOCKED_PORTS` env var
+
+**Hostname pre-resolve** defeats DNS rebinding:
+- Resolves via DNS-over-HTTPS to `1.1.1.1/dns-query`
+- If ANY returned address is in a blocked range, the connection is rejected
+
+**Origin check**:
+- WebSocket upgrades are rejected unless the `Origin` header matches
+  `ORIGIN_ALLOWLIST` (default `https://maceip.github.io`)
+- `localhost` / `127.*` origins always allowed (dev)
+- Set `ORIGIN_ALLOWLIST=*` to disable (not recommended for public deployment)
+
+**Per-IP rate limiting**: not implemented in this file because Workers are
+ephemeral (no shared state). Use Cloudflare's native Rate Limiting binding —
+there's a commented example in `wrangler.toml`.
+
+**Structured logging**: every CONNECT/CLOSE/blocked attempt is logged as a
+single line of JSON to the Worker log. Viewable via `wrangler tail`.
+
+## Deploy
 
 ```bash
-# 1. Install wrangler
-npm install -g wrangler
-
-# 2. Deploy this directory
 cd cmd/wisp-worker
-wrangler deploy
-
-# 3. Point v9 at your Worker
-open 'https://maceip.github.io/v9/?wisp=wss://your-worker.workers.dev/wisp/'
+npx wrangler deploy
 ```
 
-No database, no secrets, no persistent state. Every TCP stream is a
-fresh `connect()` call.
+Configure via `wrangler.toml [vars]` section:
 
-## Adding authentication
+```toml
+[vars]
+ORIGIN_ALLOWLIST = "https://maceip.github.io"
+MAX_STREAMS_PER_SESSION = "32"
+EXTRA_BLOCKED_PORTS = ""
+```
 
-The Worker ships with zero auth. For public deployment you probably want
-to gate access by URL-path shared secret or a signed token. Browsers can't
-set the `Authorization` header on a `WebSocket`, so the common pattern is
-to put the token in the URL.
+After deploy, your Wisp endpoint is at:
+```
+wss://wisp-worker.<your-subdomain>.workers.dev/wisp/
+```
 
-Example (in `worker.js`'s `fetch`):
+Point v9 at it:
+```
+https://maceip.github.io/v9/?wisp=wss://wisp-worker.<your-subdomain>.workers.dev/wisp/
+```
+
+## Custom domain
+
+Add a CNAME in the Cloudflare dashboard or via `wrangler.toml routes`. The
+Worker can serve at any path as long as it ends in `/wisp/` or `/wisp`.
+
+## Authentication
+
+Zero auth by default. For public deployment you probably want a shared
+secret in the URL path (browsers can't set `Authorization` headers on
+WebSocket upgrade):
 
 ```js
+// Uncomment in worker.js fetch():
 const token = url.searchParams.get('token');
-if (token !== env.WISP_SECRET) {
+if (!token || token !== env.WISP_SECRET) {
   return new Response('forbidden', { status: 403 });
 }
 ```
 
-Then set `WISP_SECRET` via `wrangler secret put WISP_SECRET`.
+Then set the secret:
+```bash
+wrangler secret put WISP_SECRET
+```
 
 ## Limitations
 
-- **TCP only** — Cloudflare `connect()` is TCP. UDP Wisp streams return error.
-- **Single Worker instance per WebSocket** — no cross-instance state. Each
-  browser tab gets its own Worker invocation.
-- **Fixed buffer** — 128 packets per stream. Enough for most HTTP/HTTPS
-  workloads; large file transfers will pause briefly on credit exhaustion.
-- **No binding** — client-side `net.createServer()` / `server.listen()` is
-  not supported. Only outbound connections. For server sockets, use the
-  local `v9-net` binary (tier 1).
+- **TCP only** — CF Workers `connect()` is TCP only. UDP streams are rejected.
+- **One invocation per WebSocket** — no cross-invocation state.
+- **Per-IP limits require the native rate limiter** — see wrangler.toml.
+
+## Testing locally
+
+```bash
+cd cmd/wisp-worker
+npx wrangler dev
+```
+
+Run the unit tests from the repo root (tests the pure policy logic — doesn't
+hit the network):
+
+```bash
+node tests/test-wisp-worker-guard.mjs
+```

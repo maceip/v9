@@ -113,90 +113,99 @@ async function runTests() {
     else { console.log(`  FAIL: ${name}`); failed++; }
   }
 
-  try {
-    console.log('\n=== Transport Probe Tests ===\n');
+  async function runProbeScenario(label, urlSuffix, expectations) {
+    console.log(`\n── Scenario: ${label} ──`);
+    consoleMessages.length = 0;
+    pageErrors.length = 0;
 
-    // Load web/index.html directly (the iframe target). This is where
-    // node-polyfills.js runs and the transport probe executes.
-    await page.goto(`${baseUrl}/docs/web/index.html?autorun=0`, {
+    await page.goto(`${baseUrl}/docs/web/index.html?autorun=0${urlSuffix}`, {
       timeout: TIMEOUT,
       waitUntil: 'domcontentloaded',
     });
-
-    // Wait for the probes to run (they have 3s timeout each, so allow 4s)
     await page.waitForTimeout(4500);
 
-    // Extract v9-net-related messages
     const v9netMsgs = consoleMessages.filter(m => m.text.includes('[v9-net]'));
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 1: Probe announces all four tiers
-    // ═══════════════════════════════════════════════════════════════
+    // All four tiers announced at boot (headers)
     const tier1Header = v9netMsgs.find(m => /tier-1 v9-net\s+=/.test(m.text));
     const tier2Header = v9netMsgs.find(m => /tier-2 wisp\s+=/.test(m.text));
     const tier3Header = v9netMsgs.find(m => /tier-3 proxy\s+=/.test(m.text));
     const tier4Header = v9netMsgs.find(m => m.text.includes('tier-4 direct'));
-    assert(!!tier1Header, 'Tier 1 (v9-net) announced at boot');
-    assert(!!tier2Header, 'Tier 2 (wisp) announced at boot');
-    assert(!!tier3Header, 'Tier 3 (fetch proxy) announced at boot');
-    assert(!!tier4Header, 'Tier 4 (direct fetch) announced at boot');
+    assert(!!tier1Header, `[${label}] tier-1 header printed`);
+    assert(!!tier2Header, `[${label}] tier-2 header printed`);
+    assert(!!tier3Header, `[${label}] tier-3 header printed`);
+    assert(!!tier4Header, `[${label}] tier-4 header printed`);
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 2: Probe results logged as info (log), not warn or error
-    // ═══════════════════════════════════════════════════════════════
-    const tier1Result = v9netMsgs.find(m => m.text.match(/tier-1 v9-net (not )?reachable/));
-    const tier2Result = v9netMsgs.find(m => m.text.match(/tier-2 wisp (not )?reachable/));
-    const tier3Result = v9netMsgs.find(m => m.text.match(/tier-3 fetch proxy (not )?reachable/));
-    assert(!!tier1Result, 'Tier 1 probe result logged');
-    assert(!!tier2Result, 'Tier 2 probe result logged');
-    assert(!!tier3Result, 'Tier 3 probe result logged');
+    // Tier-2 and tier-3 content expectations (configured vs not-configured)
+    if (expectations.tier2Configured) {
+      assert(!tier2Header.text.includes('(not configured)'),
+        `[${label}] tier-2 shows a URL, not "(not configured)"`);
+      const tier2Result = v9netMsgs.find(m => /tier-2 wisp (not )?reachable/.test(m.text));
+      assert(!!tier2Result, `[${label}] tier-2 probe result logged`);
+    } else {
+      assert(tier2Header.text.includes('(not configured)'),
+        `[${label}] tier-2 shows "(not configured)"`);
+      const tier2NotConfig = v9netMsgs.find(m => /tier-2 wisp not configured/.test(m.text));
+      assert(!!tier2NotConfig, `[${label}] tier-2 "not configured" message printed`);
+    }
 
-    if (tier1Result) assert(tier1Result.type === 'log',
-      `Tier 1 result is console.log (got ${tier1Result.type})`);
-    if (tier2Result) assert(tier2Result.type === 'log',
-      `Tier 2 result is console.log (got ${tier2Result.type})`);
-    if (tier3Result) assert(tier3Result.type === 'log',
-      `Tier 3 result is console.log (got ${tier3Result.type})`);
+    if (expectations.tier3Configured) {
+      assert(!tier3Header.text.includes('(not configured)'),
+        `[${label}] tier-3 shows a URL, not "(not configured)"`);
+    } else {
+      assert(tier3Header.text.includes('(not configured)'),
+        `[${label}] tier-3 shows "(not configured)"`);
+    }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 3: No "FAILED" messages from the probe
-    // ═══════════════════════════════════════════════════════════════
+    // No error-style messages regardless of scenario
     const failMessages = v9netMsgs.filter(m => m.text.includes('FAILED'));
     assert(failMessages.length === 0,
-      `No probe messages contain "FAILED" (got ${failMessages.length})`);
+      `[${label}] no "FAILED" messages (got ${failMessages.length})`);
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 4: No console.warn from the transport probe
-    // ═══════════════════════════════════════════════════════════════
     const warnMessages = v9netMsgs.filter(m => m.type === 'warning');
     assert(warnMessages.length === 0,
-      `No v9-net probe messages use console.warn (got ${warnMessages.length})`);
+      `[${label}] no console.warn from probe (got ${warnMessages.length})`);
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 5: No duplicate probes — each tier header should appear exactly once
-    // ═══════════════════════════════════════════════════════════════
-    const tier1HeaderCount = v9netMsgs.filter(m => /tier-1 v9-net\s+=/.test(m.text)).length;
-    const tier2HeaderCount = v9netMsgs.filter(m => /tier-2 wisp\s+=/.test(m.text)).length;
-    assert(tier1HeaderCount === 1, `Tier 1 header appears exactly once (got ${tier1HeaderCount})`);
-    assert(tier2HeaderCount === 1, `Tier 2 header appears exactly once (got ${tier2HeaderCount})`);
-
-    // ═══════════════════════════════════════════════════════════════
-    // Test 6: Page didn't throw any errors from probe code
-    // ═══════════════════════════════════════════════════════════════
     const probeErrors = pageErrors.filter(e => e.includes('v9-net') || e.includes('transport'));
     assert(probeErrors.length === 0,
-      `No page errors from probe code (got ${probeErrors.length})`);
+      `[${label}] no page errors from probe`);
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 7: Env var NODEJS_GVISOR_WS_URL is set for import-time consumers
-    // ═══════════════════════════════════════════════════════════════
+    // Single-probe guarantee
+    const tier1Count = v9netMsgs.filter(m => /tier-1 v9-net\s+=/.test(m.text)).length;
+    assert(tier1Count === 1, `[${label}] tier-1 header appears exactly once (got ${tier1Count})`);
+
+    // Tier-1 always set
     const gvisorUrl = await page.evaluate(() => globalThis.__V9_GVISOR_WS_URL__);
     assert(typeof gvisorUrl === 'string' && gvisorUrl.startsWith('ws'),
-      `__V9_GVISOR_WS_URL__ set to "${gvisorUrl}"`);
+      `[${label}] __V9_GVISOR_WS_URL__ set to "${gvisorUrl}"`);
+  }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Test 8: Page loads successfully (no catastrophic failure)
-    // ═══════════════════════════════════════════════════════════════
+  try {
+    console.log('\n=== Transport Probe Tests ===');
+
+    // ─── Scenario 1: Clean slate (self-hoster default) ───────────────
+    // 127.0.0.1 doesn't match .github.io and no query param, so no hosted
+    // defaults activate. Tier 2/3 should show "(not configured)".
+    await runProbeScenario('clean slate (self-hoster)', '', {
+      tier2Configured: false,
+      tier3Configured: false,
+    });
+
+    // ─── Scenario 2: Opt-in via ?enableStareTransport=1 ──────────────
+    // This query param makes transport-defaults-stare.js activate even
+    // off github.io, so tier 2/3 URLs get configured.
+    await runProbeScenario('opt-in via query param', '&enableStareTransport=1', {
+      tier2Configured: true,
+      tier3Configured: true,
+    });
+
+    // ─── Scenario 3: Opt-in via ?wisp= query param directly ──────────
+    await runProbeScenario('explicit wisp URL via ?wisp=',
+      '&wisp=' + encodeURIComponent('wss://example.test/wisp/'),
+      { tier2Configured: true, tier3Configured: false },
+    );
+
+    // ─── Scenario 4: process polyfill loaded ─────────────────────────
     const pageReady = await page.evaluate(() => ({
       hasProcess: typeof globalThis.process !== 'undefined',
       hasBuffer: typeof globalThis.Buffer !== 'undefined',

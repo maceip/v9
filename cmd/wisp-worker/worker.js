@@ -1,5 +1,5 @@
 /**
- * wisp-worker — A minimal Wisp v1 server running on Cloudflare Workers.
+ * wisp-worker — Hardened Wisp v1 server running on Cloudflare Workers.
  *
  * Deploys to wss://<your-domain>/wisp/ and bridges browser-originated Wisp
  * streams to real outbound TCP using Cloudflare's `cloudflare:sockets` API.
@@ -9,26 +9,39 @@
  *   (CC-BY-4.0 specification — this is a clean-room implementation that does
  *    NOT reproduce code from wisp-js which is AGPL.)
  *
+ * ANTI-ABUSE:
+ *   See guard.js. Blocks RFC 1918 / cloud metadata / SMTP ports by default,
+ *   resolves hostnames via DoH before connect to defeat DNS rebinding, and
+ *   checks the Origin header against ORIGIN_ALLOWLIST.
+ *
  * DEPLOYMENT:
- *   1. npm create cloudflare@latest wisp-worker
- *      (choose: Hello World worker, TypeScript No, git No)
- *   2. Copy this file over src/index.js
- *   3. Add "node_compat = true" or "compatibility_flags = [\"nodejs_compat\"]" to wrangler.toml
- *   4. npx wrangler deploy
- *   5. Point v9 at wss://<your-worker>.workers.dev/wisp/ via ?wisp= or env
+ *   cd cmd/wisp-worker
+ *   npx wrangler deploy
+ *
+ *   Configure via wrangler.toml [vars]:
+ *     ORIGIN_ALLOWLIST       = "https://maceip.github.io,https://example.com"
+ *     MAX_STREAMS_PER_SESSION = "32"
+ *     EXTRA_BLOCKED_PORTS    = "9000,9001"
+ *
+ *   For per-IP rate limiting in production, add a [[unsafe.bindings]] rate
+ *   limit binding (Cloudflare Workers Rate Limiting API) and check it in
+ *   fetch() before accepting the WebSocket upgrade.
  *
  * LIMITATIONS:
- *   - Cloudflare Workers connect() is TCP-only (no UDP) — UDP streams return error.
- *   - One Worker instance per WebSocket; no cross-worker state.
- *   - Buffer size fixed at 128 packets per stream (reasonable for most workloads).
- *
- * SECURITY:
- *   - No authentication by default. For public deployment, add a URL-path
- *     shared secret or signed token check in fetch(). Browsers can't set
- *     WebSocket Authorization headers.
+ *   - Cloudflare Workers connect() is TCP-only — UDP streams return error.
+ *   - One Worker invocation per WebSocket; no cross-invocation state.
+ *   - Per-IP limits require CF's native rate limiter (this file doesn't ship
+ *     one to keep the Worker simple). Pair with wrangler.toml bindings.
  */
 
 import { connect } from 'cloudflare:sockets';
+import {
+  resolveAndCheck,
+  checkPort,
+  isAllowedOrigin,
+  getLimits,
+  GuardError,
+} from './guard.js';
 
 // ─── Wisp v1 constants ────────────────────────────────────────────────
 
@@ -151,11 +164,20 @@ class Stream {
 /**
  * Handles one browser WebSocket, multiplexing many Wisp streams over it.
  */
-function handleSession(ws) {
+function handleSession(ws, env, clientInfo) {
   /** @type {Map<number, Stream>} */
   const streams = new Map();
+  const limits = getLimits(env);
+  const sessionId = crypto.randomUUID().slice(0, 8);
 
   ws.accept();
+
+  console.log(JSON.stringify({
+    type: 'session_open',
+    session: sessionId,
+    client_ip: clientInfo.ip,
+    origin: clientInfo.origin,
+  }));
 
   // Send initial CONTINUE on stream 0 with the per-stream buffer size.
   try {
@@ -176,7 +198,7 @@ function handleSession(ws) {
     if (!pkt) return;
 
     if (pkt.type === PKT_CONNECT) {
-      await handleConnect(ws, streams, pkt);
+      await handleConnect(ws, streams, pkt, env, sessionId, limits);
     } else if (pkt.type === PKT_DATA) {
       const stream = streams.get(pkt.streamId);
       if (stream) await stream.writeUpstream(pkt.payload);
@@ -187,12 +209,12 @@ function handleSession(ws) {
         streams.delete(pkt.streamId);
       }
     }
-    // CONTINUE is unused server-side (we don't rate-limit ingress from server)
   });
 
   ws.addEventListener('close', () => {
     for (const stream of streams.values()) stream.closeFromClient();
     streams.clear();
+    console.log(JSON.stringify({ type: 'session_close', session: sessionId }));
   });
 
   ws.addEventListener('error', () => {
@@ -202,36 +224,72 @@ function handleSession(ws) {
 }
 
 /**
- * Handle a Wisp CONNECT packet by opening a real TCP socket via
- * cloudflare:sockets and wiring both ends.
+ * Handle a Wisp CONNECT packet. Runs through the guard, opens a real TCP
+ * socket via cloudflare:sockets, and wires both ends.
  */
-async function handleConnect(ws, streams, pkt) {
+async function handleConnect(ws, streams, pkt, env, sessionId, limits) {
   if (pkt.payload.length < 3) {
     try { ws.send(buildClose(pkt.streamId, 0x41)); } catch {}
     return;
   }
   const streamType = pkt.payload[0];
-  const port = (pkt.payload[1] | (pkt.payload[2] << 8)); // little-endian
-  const hostBytes = pkt.payload.subarray(3);
-  const host = new TextDecoder().decode(hostBytes);
+  const port = (pkt.payload[1] | (pkt.payload[2] << 8));
+  const host = new TextDecoder().decode(pkt.payload.subarray(3));
 
   if (streamType !== STREAM_TYPE_TCP) {
-    // UDP not supported on CF Workers
     try { ws.send(buildClose(pkt.streamId, 0x42)); } catch {}
     return;
   }
 
+  if (streams.size >= limits.maxStreamsPerSession) {
+    console.log(JSON.stringify({ type: 'stream_limit', session: sessionId, dest: `${host}:${port}` }));
+    try { ws.send(buildClose(pkt.streamId, 0x48)); } catch {}
+    return;
+  }
+
+  // Run the guard — port check first (cheap), then hostname resolution.
   try {
-    const socket = connect({ hostname: host, port });
-    // Wait for the socket to be ready
+    checkPort(port, env);
+  } catch (err) {
+    console.log(JSON.stringify({ type: 'blocked', session: sessionId, dest: `${host}:${port}`, reason: err.code }));
+    try { ws.send(buildClose(pkt.streamId, 0x48)); } catch {}
+    return;
+  }
+
+  let resolvedIp;
+  try {
+    resolvedIp = await resolveAndCheck(host);
+  } catch (err) {
+    const code = err instanceof GuardError ? err.code : 'unknown';
+    console.log(JSON.stringify({ type: 'blocked', session: sessionId, dest: `${host}:${port}`, reason: code }));
+    try {
+      ws.send(buildClose(pkt.streamId, code === 'dns_failure' ? 0x42 : 0x48));
+    } catch {}
+    return;
+  }
+
+  try {
+    const socket = connect({ hostname: resolvedIp, port });
     await socket.opened;
     const stream = new Stream(ws, pkt.streamId, socket);
     streams.set(pkt.streamId, stream);
 
-    // Give the new stream its initial credit
     try { ws.send(buildContinue(pkt.streamId, BUFFER_SIZE)); } catch {}
+
+    console.log(JSON.stringify({
+      type: 'connect',
+      session: sessionId,
+      stream: pkt.streamId,
+      dest: `${host}:${port}`,
+      resolved: resolvedIp,
+    }));
   } catch (err) {
-    // Connect failed — tell the client
+    console.log(JSON.stringify({
+      type: 'connect_error',
+      session: sessionId,
+      dest: `${host}:${port}`,
+      error: String(err?.message || err),
+    }));
     try { ws.send(buildClose(pkt.streamId, 0x43)); } catch {}
   }
 }
@@ -242,7 +300,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Simple health check
+    // Health check
     if (url.pathname === '/' || url.pathname === '/health') {
       return new Response('wisp-worker ok\n', {
         headers: { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' },
@@ -259,19 +317,28 @@ export default {
       return new Response('expected WebSocket upgrade', { status: 426 });
     }
 
-    // OPTIONAL AUTH: check URL path shared secret, signed token, etc.
-    // Example:
+    // Origin check (runs BEFORE accepting the upgrade)
+    const origin = request.headers.get('Origin') || '';
+    if (!isAllowedOrigin(origin, env)) {
+      console.log(JSON.stringify({ type: 'origin_rejected', origin }));
+      return new Response('origin not allowed', { status: 403 });
+    }
+
+    // OPTIONAL AUTH HOOK: uncomment to add a shared-secret check.
     //   const token = url.searchParams.get('token');
-    //   if (!verifyToken(token, env.WISP_SECRET)) {
+    //   if (!token || token !== env.WISP_SECRET) {
     //     return new Response('forbidden', { status: 403 });
     //   }
 
-    // Create a WebSocket pair: one end to the client, one for us to handle
+    // Get the client IP (Cloudflare sets this header on every request)
+    const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
+
+    // Create the WebSocket pair
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
 
-    handleSession(server);
+    handleSession(server, env, { ip: clientIp, origin });
 
     return new Response(null, {
       status: 101,

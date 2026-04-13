@@ -85,19 +85,99 @@ Node CLIs often start **`http.createServer`** on **`localhost:<port>`** and open
 
 For redirects that must be **world-reachable** (some IdPs require a public HTTPS URL), set **`NODEJS_IN_TAB_HTTP_RELAY`** / **`NODEJS_IN_TAB_HTTP_PUBLIC_BASE`** so **`FakeServer`** exposes a **`publicUrl`** (see **`napi-bridge/http.js`**). That is orthogonal to popup **`postMessage`** completion.
 
-## Environment variables
+## Four-tier transport chain
+
+v9 supports four transport tiers, probed in order of capability. Each tier
+is independent — a deployment can enable any subset. The GitHub Pages demo
+opts into tiers 2 and 3 via our hosted infra at `fetch.stare.network`;
+self-hosted deployments get a clean slate by default and configure what
+they need.
+
+| Tier | What | Capability | Who runs the server |
+|---|---|---|---|
+| **1** | Local **v9-net** (gvisor-tap-vsock) via `ws://localhost:8765` | Full raw TCP, client + server sockets, all headers preserved | The developer, locally |
+| **2** | Hosted **Wisp v1** tunnel over WebSocket | Full raw TCP (client only), all headers preserved | Someone you trust (or you) |
+| **3** | Hosted **JSON fetch proxy** | HTTP(S) client only, full headers preserved | Someone you trust (or you) |
+| **4** | **Direct browser `fetch()`** | HTTP(S) client only, browser-forbidden headers stripped, CORS required | No one — the browser itself |
+
+Tier 1 and 2 are equivalent in capability; tier 1 is just local. Tier 3 is
+a fallback for HTTP-only workloads when raw sockets aren't available. Tier
+4 always works but is the most restricted.
+
+## Configuration (for developers embedding v9)
+
+The probe in `web/node-polyfills.js` resolves each tier's URL from this
+precedence chain, highest wins:
+
+1. **URL query param** — `?gvisor=`, `?wisp=`, `?fetchProxy=`
+2. **Pre-set global** (set BEFORE `node-polyfills.js` loads):
+   - `globalThis.__V9_GVISOR_WS_URL__`
+   - `globalThis.__V9_WISP_WS_URL__`
+   - `globalThis.__V9_FETCH_PROXY_URL__`
+3. **Environment variable** (`process.env.*`, for host-mode):
+   - `NODEJS_GVISOR_WS_URL`
+   - `NODEJS_WISP_WS_URL`
+   - `NODEJS_IN_TAB_FETCH_PROXY`
+4. **Built-in default**: only tier 1 defaults to `ws://localhost:8765`.
+   **Tier 2 and 3 have NO built-in hosted defaults.** Self-hosters get a
+   clean slate — the probe will print `tier-2 wisp = (not configured)`
+   and skip it unless the developer opts in explicitly.
+
+### Self-hoster: configure your own hosted infra
+
+If you're running your own Wisp server or fetch proxy, set the globals
+before loading `node-polyfills.js`:
+
+```html
+<script>
+  globalThis.__V9_WISP_WS_URL__ = 'wss://your-wisp.example.com/wisp/';
+  globalThis.__V9_FETCH_PROXY_URL__ = 'https://your-proxy.example.com/proxy';
+</script>
+<script src="node-polyfills.js"></script>
+```
+
+Or at runtime:
+```
+https://your-app.example.com/?wisp=wss://your-wisp.example.com/wisp/
+```
+
+Or via env vars if you're running v9 on a host (not in a tab):
+```bash
+NODEJS_WISP_WS_URL=wss://your-wisp.example.com/wisp/ node your-app.js
+```
+
+### GitHub Pages demo: opts into `fetch.stare.network`
+
+The file `web/transport-defaults-stare.js` sets the hosted defaults to
+point at `fetch.stare.network`. It is hostname-guarded — activates only
+on `*.github.io` or when `?enableStareTransport=1` is passed — so
+self-hosters who fork the repo don't accidentally route traffic through
+our shared infra.
+
+### Env var reference
 
 | Variable | Effect |
 |----------|--------|
-| **`NODEJS_IN_TAB_FETCH_PROXY`** | If set (URL), HTTP(S) from the tab uses a **POST JSON proxy** instead of calling `fetch()` on the target URL. Payload: `{ url, init: { method, headers, body64?, duplex? } }`. Response JSON: `{ ok: true, status, statusText, headers, body64? }`. Use for **same-origin** relays when **CORS** (or COOP / related constraints) blocks direct calls. |
-| **`NODEJS_HTTP_TRANSPORT`** | `fetch` \| `auto`. In a **real Node** host only: `fetch` forces `fetch()` for outbound HTTP (no CONNECT proxy). In-tab, transport is always fetch-policy–based. |
-| **`NODEJS_GVISOR_WS_URL`** | WebSocket URL of a locally-running **gvisor-tap-vsock** binary (e.g. `ws://localhost:8765`). When set, `net.connect`, `tls.connect`, `net.createServer`, and `http.createServer().listen()` route through a userspace TCP/IP stack over the virtual network. The binary must be started with `-listen-ws` and optional `-p host:guest` for port forwarding. |
-| **`NODEJS_WISP_WS_URL`** | Reserved: indicates a **Wisp** (or compatible) WebSocket URL is expected for raw sockets; without **`__NODE_TAB_WISP_TCP_CONNECT`**, connect calls fail fast with this doc referenced. |
+| **`NODEJS_GVISOR_WS_URL`** | Tier 1: WebSocket URL of a locally-running **gvisor-tap-vsock** binary (e.g. `ws://localhost:8765`). Full raw TCP via userspace TCP/IP stack. |
+| **`NODEJS_WISP_WS_URL`** | Tier 2: WebSocket URL of a **Wisp v1** server. Used by `napi-bridge/wisp-client.js` for raw TCP through a remote multiplexed tunnel. |
+| **`NODEJS_IN_TAB_FETCH_PROXY`** | Tier 3: HTTP(S) URL of a JSON fetch proxy. Payload: `{ url, init }` → `{ ok, status, statusText, headers, body64 }`. Use when CORS blocks direct calls. |
+| **`NODEJS_HTTP_TRANSPORT`** | Real-Node-host-only: `fetch` forces `fetch()` for outbound HTTP. In-tab, transport is always policy-based. |
+
+## Running the Wisp server yourself
+
+v9 includes two production-ready implementations of the tier-2 Wisp server:
+
+- **`cmd/wisp-server-node/`** — Node.js + Docker. Deploys to **AWS App Runner + CloudFront + WAF** (CDK stack included), Fargate, Fly.io, Railway, or any Docker host. Fully hardened: blocks RFC 1918, cloud metadata, SMTP ports; pre-resolves DNS to defeat rebinding; origin-checks; per-IP concurrent session limits; per-session bandwidth caps.
+- **`cmd/wisp-worker/`** — Cloudflare Workers. Same hardening policy (minus per-IP limits, which need CF's native rate limiter). Minimal ops, scales automatically.
+
+Both use the same Wisp v1 wire protocol and both read from a shared client
+in `napi-bridge/wisp-client.js`.
 
 ## Detection rules
 
 - **Tab vs Node:** `transport-policy.isNodeHost()` is `false` when `globalThis.document` exists, so in-tab **polyfilled `process.versions.node`** does not send `http.js` down the Node `CONNECT` proxy path.
 - **`http.js`:** Uses **`document`** presence to choose **`browserHttpFetch`** vs Node stack.
+- **`getRawSocketTransportMode()`**: returns `'gvisor'` if tier 1 is configured, `'wisp'` if tier 2 is configured, `'embedder'` if `__NODE_TAB_WISP_TCP_CONNECT` is set, else `'none'`.
 
 ## Related
 
