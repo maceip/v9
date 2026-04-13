@@ -1,14 +1,22 @@
 /**
  * Central transport policy for Node-shaped APIs in browser / Wasm bridge hosts.
  *
- * - HTTP(S) client: prefer native fetch (browser TLS). Optional JSON POST proxy when
- *   NODEJS_IN_TAB_FETCH_PROXY is set (same-origin or COOP-safe relay).
- * - Raw TCP / tls.connect: no stock implementation; optional embedder hook or future Wisp.
+ * Four-tier transport chain, tried in order of preference:
+ *
+ *   [1] LOCAL v9-net       — NODEJS_GVISOR_WS_URL — raw TCP via local gvisor-tap-vsock
+ *   [2] HOSTED CHISEL      — NODEJS_CHISEL_WS_URL — raw TCP via remote tunnel
+ *   [3] HOSTED FETCH PROXY — NODEJS_IN_TAB_FETCH_PROXY — HTTP(S) via JSON POST proxy
+ *   [4] DIRECT BROWSER FETCH — native fetch(), CORS-restricted (works for npm etc.)
+ *
+ * Raw sockets (net.connect, net.createServer) need tier 1 or tier 2.
+ * HTTP client (fetch, http.request) can use any tier, picked by preference order.
  *
  * Env (process.env on host; globalThis.process.env in tab):
- *   NODEJS_IN_TAB_FETCH_PROXY   — POST JSON { url, init } → JSON { ok, status, statusText, headers, body64 } (see docs/TRANSPORT.md)
- *   NODEJS_HTTP_TRANSPORT       — fetch | auto  (default auto; auto = fetch in tab, Node keeps existing behavior)
- *   NODEJS_WISP_WS_URL          — reserved: when set, raw-socket path documents expectation of Wisp relay (client not bundled here)
+ *   NODEJS_GVISOR_WS_URL        — tier 1: local v9-net WebSocket URL
+ *   NODEJS_CHISEL_WS_URL        — tier 2: hosted chisel TCP tunnel URL
+ *   NODEJS_IN_TAB_FETCH_PROXY   — tier 3: POST JSON { url, init } → JSON { ok, status, headers, body64 }
+ *   NODEJS_HTTP_TRANSPORT       — fetch | fetch-proxy | auto (default auto)
+ *   NODEJS_WISP_WS_URL          — reserved: Wisp relay expectation
  */
 
 const _env = () =>
@@ -40,15 +48,24 @@ export function getHttpTransportMode() {
 }
 
 /**
- * Raw TCP/TLS: bridge does not ship a tunnel client (AGPL wisp-js is optional / external).
- * gvisor-tap-vsock: local Go binary provides full TCP/IP via WebSocket (NODEJS_GVISOR_WS_URL).
- * @returns {'none'|'wisp-expected'|'embedder'|'gvisor'}
+ * Raw TCP/TLS transport mode.
+ *
+ *   embedder  — host provided a __NODE_TAB_WISP_TCP_CONNECT hook
+ *   gvisor    — local v9-net (NODEJS_GVISOR_WS_URL is set; probe may or may not have succeeded)
+ *   chisel    — hosted chisel tunnel (NODEJS_CHISEL_WS_URL is set)
+ *   wisp-expected — caller expects Wisp but client isn't bundled
+ *   none      — no raw-socket transport available (HTTP-only)
+ *
+ * @returns {'none'|'wisp-expected'|'embedder'|'gvisor'|'chisel'}
  */
 export function getRawSocketTransportMode() {
   const e = _env();
   if (typeof globalThis.__NODE_TAB_WISP_TCP_CONNECT === 'function') return 'embedder';
   if (e.NODEJS_GVISOR_WS_URL && e.NODEJS_GVISOR_WS_URL !== '' && e.NODEJS_GVISOR_WS_URL !== '0') {
     return 'gvisor';
+  }
+  if (e.NODEJS_CHISEL_WS_URL && e.NODEJS_CHISEL_WS_URL !== '' && e.NODEJS_CHISEL_WS_URL !== '0') {
+    return 'chisel';
   }
   if (e.NODEJS_WISP_WS_URL && e.NODEJS_WISP_WS_URL !== '' && e.NODEJS_WISP_WS_URL !== '0') {
     return 'wisp-expected';

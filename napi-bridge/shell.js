@@ -14,7 +14,7 @@
  */
 
 import { executeCommandString } from './shell-parser.js';
-import { withCwd, getMemfs } from './shell-commands.js';
+import { withCwd } from './shell-commands.js';
 
 /**
  * Create an interactive shell instance.
@@ -80,9 +80,6 @@ export function createShell(opts = {}) {
     }
     historyIdx = -1;
 
-    // Handle cd specially to update our cwd
-    // (the shell parser returns cwd changes via result.cwd)
-
     busy = true;
     try {
       const result = withCwd(cwd, () => {
@@ -140,12 +137,8 @@ export function createShell(opts = {}) {
         return;
       }
 
-      // Ctrl+D (EOF)
+      // Ctrl+D — ignored (nothing to exit into from a tab)
       if (ch === '\x04') {
-        if (line.length === 0) {
-          write('\r\nexit\r\n');
-          return;
-        }
         continue;
       }
 
@@ -199,7 +192,6 @@ export function createShell(opts = {}) {
           let start = cursorPos - 1;
           while (start > 0 && line[start - 1] === ' ') start--;
           while (start > 0 && line[start - 1] !== ' ') start--;
-          const deleted = cursorPos - start;
           line = line.slice(0, start) + line.slice(cursorPos);
           cursorPos = start;
           redrawLine();

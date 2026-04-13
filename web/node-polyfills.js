@@ -167,61 +167,6 @@
       // Example: route vendor APIs through local dev proxy when needed
       ANTHROPIC_BASE_URL: 'http://localhost:8081',
     };
-    // Enable HTTP relay on GitHub Pages — tunnels real TCP listeners
-    // through a WebSocket so localhost:<port> actually works in-tab.
-    try {
-      const host = globalThis.location?.hostname || '';
-      if (host.endsWith('.github.io') || _env.NODEJS_IN_TAB_HTTP_RELAY) {
-        _env.NODEJS_IN_TAB_HTTP_RELAY = '1';
-        if (!_env.NODEJS_IN_TAB_HTTP_RELAY_WS) {
-          _env.NODEJS_IN_TAB_HTTP_RELAY_WS = 'wss://relay.stare.network/__in-tab-http-ws';
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Auto-detect v9-net — enables gvisor TCP networking.
-    // Override with ?gvisor=ws://host:port query param.
-    // Set env var OPTIMISTICALLY so modules see it at import time.
-    // If the probe fails, clear it (but by then modules already loaded
-    // and will get gvisor — if v9-net isn't running, connect() will
-    // fail gracefully with WS error).
-    try {
-      const params = new URLSearchParams(globalThis.location?.search || '');
-      const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
-      console.log('[v9-net:probe] setting NODEJS_GVISOR_WS_URL=' + wsUrl);
-      // Set immediately — modules check this synchronously at import time
-      _env.NODEJS_GVISOR_WS_URL = wsUrl;
-      // Also set on globalThis.process.env directly in case it's a different object
-      if (globalThis.process && globalThis.process.env && globalThis.process.env !== _env) {
-        globalThis.process.env.NODEJS_GVISOR_WS_URL = wsUrl;
-      }
-      console.log('[v9-net:probe] env set on _env and process.env');
-      // Keep relay vars intact until probe succeeds — modules may need them
-      // if v9-net turns out to not be running
-      const probeUrl = new URL(wsUrl);
-      probeUrl.pathname = '/__v9net/forward';
-      console.log('[v9-net:probe] connecting to ' + probeUrl.toString());
-      const probe = new WebSocket(probeUrl.toString());
-      probe.onopen = () => {
-        probe.close();
-        // v9-net confirmed running — disable relay, gvisor handles everything
-        delete _env.NODEJS_IN_TAB_HTTP_RELAY;
-        delete _env.NODEJS_IN_TAB_HTTP_RELAY_WS;
-        if (globalThis.process?.env) {
-          delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY;
-          delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY_WS;
-        }
-        console.log('[v9-net:probe] SUCCESS — v9-net is running, TCP networking enabled, relay disabled');
-      };
-      probe.onerror = (e) => {
-        // v9-net not running. Leave NODEJS_GVISOR_WS_URL set —
-        // gvisor-net.js handles connection failures gracefully with
-        // timeouts and error events. Deleting the env var here causes
-        // a race condition where modules may or may not see it depending
-        // on how fast the WS refusal comes back.
-        console.warn('[v9-net:probe] FAILED — v9-net not reachable. Networking will fall back gracefully.', e);
-      };
-    } catch { /* ignore */ }
 
     const _cwd = '/';
     // Minimal EventEmitter for signal handling (signal-exit library needs this)
@@ -818,31 +763,151 @@
     globalThis.structuredClone = (obj) => JSON.parse(JSON.stringify(obj));
   }
 
-  // ─── v9-net gvisor detection (runs ALWAYS, even if process was pre-defined) ──
-  // Store on a dedicated global that no module system can overwrite.
+  // ─── Transport probe: discover available networking tiers ──────────
+  //
+  // v9 supports four transport tiers, tried in order:
+  //
+  //   [1] LOCAL v9-net        — ws://localhost:8765/__v9net/forward
+  //                             Real raw TCP via user's local gvisor-tap-vsock.
+  //                             All headers preserved, all sockets, server + client.
+  //
+  //   [2] HOSTED CHISEL       — wss://fetch.stare.network/chisel
+  //                             Remote TCP tunnel (v9-net-as-a-service).
+  //                             Same capabilities as tier 1 but hosted.
+  //
+  //   [3] HOSTED FETCH PROXY  — https://fetch.stare.network/proxy
+  //                             JSON { url, init } → JSON { ok, status, headers, body64 }.
+  //                             HTTP(S) only, full headers, no raw sockets.
+  //
+  //   [4] DIRECT BROWSER FETCH — native fetch()
+  //                              CORS-restricted (works for npm, CORS-enabled APIs).
+  //                              Header restrictions apply, no raw sockets.
+  //
+  // Probes run in parallel and are purely informational. The first two set
+  // env vars that other modules check later; no module is blocked by the
+  // probe outcome. All messages print like normal init events, not errors.
+  //
+  // Overrides:
+  //   ?gvisor=ws://host:port     — point tier 1 at a custom v9-net instance
+  //   ?chisel=wss://host/path    — override tier 2 URL
+  //   ?fetchProxy=https://host   — override tier 3 URL
+  //   NODEJS_IN_TAB_FETCH_PROXY  — already set via env, respected if present
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
-    const wsUrl = params.get('gvisor') || 'ws://localhost:8765';
-    // Set on a dedicated global — immune to process.env replacement
-    globalThis.__V9_GVISOR_WS_URL__ = wsUrl;
-    // Also try process.env for anything that checks it directly
-    if (globalThis.process?.env) globalThis.process.env.NODEJS_GVISOR_WS_URL = wsUrl;
-    console.log('[v9-net] gvisor URL set: ' + wsUrl);
 
-    const probeUrl = new URL(wsUrl);
-    probeUrl.pathname = '/__v9net/forward';
-    const probe = new WebSocket(probeUrl.toString());
-    probe.onopen = () => {
-      probe.close();
-      if (globalThis.process?.env) {
-        delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY;
-        delete globalThis.process.env.NODEJS_IN_TAB_HTTP_RELAY_WS;
+    const gvisorWs     = params.get('gvisor')     || 'ws://localhost:8765';
+    const chiselWs     = params.get('chisel')     || 'wss://fetch.stare.network/chisel';
+    const fetchProxy   = params.get('fetchProxy') || 'https://fetch.stare.network/proxy';
+    const probeTimeout = 3000;
+
+    // Always set the tier-1 URL so modules that check at import time find it.
+    // gvisor-net.js will handle connection failures gracefully.
+    globalThis.__V9_GVISOR_WS_URL__ = gvisorWs;
+    if (globalThis.process?.env) globalThis.process.env.NODEJS_GVISOR_WS_URL = gvisorWs;
+
+    console.log('[v9-net] transport probe: tier-1 v9-net  = ' + gvisorWs);
+    console.log('[v9-net] transport probe: tier-2 chisel  = ' + chiselWs);
+    console.log('[v9-net] transport probe: tier-3 proxy   = ' + fetchProxy);
+    console.log('[v9-net] transport probe: tier-4 direct  = browser fetch()');
+
+    // ── Tier 1: Local v9-net probe ────────────────────────────────────
+    const probeV9Net = () => new Promise((resolve) => {
+      let done = false;
+      try {
+        const url = new URL(gvisorWs);
+        url.pathname = '/__v9net/forward';
+        const ws = new WebSocket(url.toString());
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { ws.close(); } catch {}
+          resolve(false);
+        }, probeTimeout);
+        ws.onopen = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          try { ws.close(); } catch {}
+          resolve(true);
+        };
+        ws.onerror = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          resolve(false);
+        };
+      } catch { resolve(false); }
+    });
+
+    // ── Tier 2: Hosted chisel probe ───────────────────────────────────
+    const probeChisel = () => new Promise((resolve) => {
+      let done = false;
+      try {
+        const ws = new WebSocket(chiselWs);
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { ws.close(); } catch {}
+          resolve(false);
+        }, probeTimeout);
+        ws.onopen = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          try { ws.close(); } catch {}
+          resolve(true);
+        };
+        ws.onerror = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(t);
+          resolve(false);
+        };
+      } catch { resolve(false); }
+    });
+
+    // ── Tier 3: Hosted fetch proxy probe ──────────────────────────────
+    const probeFetchProxy = () => {
+      // A HEAD to the proxy root should return something (405 ok).
+      return fetch(fetchProxy, { method: 'HEAD', mode: 'cors' })
+        .then((r) => r.ok || r.status === 405 || r.status === 404)
+        .catch(() => false);
+    };
+
+    // Run all three probes in parallel; log results as they arrive.
+    probeV9Net().then((ok) => {
+      if (ok) {
+        console.log('[v9-net] tier-1 v9-net reachable — raw TCP available');
+      } else {
+        console.log('[v9-net] tier-1 v9-net not reachable (local binary not running)');
       }
-      console.log('[v9-net] SUCCESS — connected, relay disabled');
-    };
-    probe.onerror = () => {
-      console.warn('[v9-net] v9-net not reachable — falls back gracefully');
-    };
-  } catch { /* ignore */ }
+    });
+
+    probeChisel().then((ok) => {
+      if (ok) {
+        console.log('[v9-net] tier-2 chisel reachable — hosted TCP tunnel available');
+        if (globalThis.process?.env && !globalThis.process.env.NODEJS_CHISEL_WS_URL) {
+          globalThis.process.env.NODEJS_CHISEL_WS_URL = chiselWs;
+        }
+      } else {
+        console.log('[v9-net] tier-2 chisel not reachable');
+      }
+    });
+
+    probeFetchProxy().then((ok) => {
+      if (ok) {
+        console.log('[v9-net] tier-3 fetch proxy reachable — HTTP(S) with full headers available');
+        if (globalThis.process?.env && !globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY) {
+          globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY = fetchProxy;
+        }
+      } else {
+        console.log('[v9-net] tier-3 fetch proxy not reachable');
+      }
+    });
+
+    console.log('[v9-net] tier-4 direct fetch always available (CORS-restricted)');
+  } catch (probeErr) {
+    console.log('[v9-net] transport probe skipped:', probeErr?.message || probeErr);
+  }
 
 })();

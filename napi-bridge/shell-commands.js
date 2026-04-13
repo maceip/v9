@@ -1420,12 +1420,12 @@ function nodeCmd(args, options) {
       const _log = (...a) => stdout.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
       const _err = (...a) => stderr.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
       const scriptConsole = { log: _log, error: _err, warn: _err, info: _log, debug: _log, dir: _log };
+      let exitCode = 0;
       const mod = { exports: {} };
-      const scriptArgs = vals.slice(1);
       const scriptDir = resolved.replace(/\/[^/]+$/, '') || '/';
       const fn = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', 'process', src);
       const fakeProcess = {
-        argv: ['node', resolved, ...scriptArgs],
+        argv: ['node', resolved, ...vals.slice(1)],
         env: options?.env || {},
         cwd: () => options?.cwd || '/',
         exit: (code) => { throw { __nodeExit: true, code: code || 0 }; },
@@ -1453,14 +1453,16 @@ function nodeCmd(args, options) {
         fn(mod, mod.exports, scriptRequire, scriptConsole, resolved, scriptDir, fakeProcess);
       } catch (e) {
         if (e?.__nodeExit) {
-          return { stdout: stdout.join('\n') + (stdout.length ? '\n' : ''), stderr: stderr.join('\n') + (stderr.length ? '\n' : ''), exitCode: e.code };
+          exitCode = e.code;
+        } else {
+          stderr.push(e.message);
+          exitCode = 1;
         }
-        stderr.push(e.message);
       }
       return {
         stdout: stdout.join('\n') + (stdout.length ? '\n' : ''),
         stderr: stderr.join('\n') + (stderr.length ? '\n' : ''),
-        exitCode: stderr.length > 0 ? 1 : 0,
+        exitCode,
       };
     } catch (err) {
       if (err.code === 'ENOENT' || err.message?.includes('ENOENT')) {

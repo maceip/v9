@@ -301,16 +301,14 @@ async function installPackage(packageName, range, baseDir, memfs, opts = {}) {
   }
   installed.add(installKey);
 
-  // Check if already exists in MEMFS
+  // Skip if already installed and the existing version satisfies the range
   try {
     const existing = memfs.readFile(destDir + '/package.json');
-    if (existing) {
-      const pkg = JSON.parse(_decoder.decode(existing));
-      if (pkg.version && versionSatisfies(pkg.version, range)) {
-        return { name: packageName, version: pkg.version, count: 0 };
-      }
+    const pkg = JSON.parse(_decoder.decode(existing));
+    if (pkg.version && versionSatisfies(pkg.version, range)) {
+      return { name: packageName, version: pkg.version, count: 0 };
     }
-  } catch {}
+  } catch { /* not installed yet */ }
 
   // Fetch metadata
   onStatus(`  fetching ${packageName}${range && range !== 'latest' ? '@' + range : ''}`);
@@ -338,15 +336,13 @@ async function installPackage(packageName, range, baseDir, memfs, opts = {}) {
   try { memfs.mkdir(nodeModulesDir, true); } catch {}
   extractTgzToMemfs(tgzData, destDir, memfs);
 
-  // Recurse into dependencies
+  // Recurse into dependencies.
+  // All installs are flat at baseDir/node_modules/ (no hoisting / no conflict
+  // resolution). Depth is only used as a recursion limit.
   let count = 1;
   const deps = resolved.dependencies;
   if (deps && depth < MAX_DEPTH) {
-    const depNames = Object.keys(deps);
-    for (const depName of depNames) {
-      // Install dependency into the package's own node_modules if deep,
-      // or into the top-level node_modules (flat) if depth == 0
-      const depRange = deps[depName];
+    for (const [depName, depRange] of Object.entries(deps)) {
       try {
         const result = await installPackage(depName, depRange, baseDir, memfs, {
           onStatus,

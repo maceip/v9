@@ -20,9 +20,6 @@ import { TacticalHUD } from './hud.js';
 import { initThemeSwitcher } from './theme.js';
 import { DPad } from './dpad.js';
 
-// ── Shared state ──
-let pairState = 'IDLE'; // IDLE | ZOOMING | RUNNING | UNAVAILABLE
-
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
 const navFluidCanvas = document.getElementById('nav-fluid');
@@ -208,7 +205,7 @@ async function loadIframe(term) {
 }
 
 function showRuntimeUnavailable(term) {
-  pairState = 'UNAVAILABLE';
+  term.state = 'UNAVAILABLE';
   const panel = document.createElement('div');
   panel.className = 'boot-line visible';
   panel.style.cssText = 'margin-top:16px;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,120,120,0.45);background:rgba(80,10,10,0.22);max-width:560px';
@@ -303,7 +300,6 @@ function handleActivate(term, e) {
     origComplete(dir);
     if (dir === 'in') {
       term.state = 'RUNNING';
-      pairState = 'RUNNING';
       if (window.innerWidth < 900) dpad.show();
     }
     term.zoom.onComplete = origComplete;
@@ -344,19 +340,12 @@ function resetTerminalToIdle(term) {
   const other = terminals.find(t => t !== term);
   if (other) other.wrap.classList.remove('backgrounded');
 
-  // If neither terminal is still zoomed, update pairState
+  // When no terminal is zoomed, restore background and hide d-pad
   if (!terminals.some(t => t.state === 'RUNNING' || t.state === 'ZOOMING')) {
-    pairState = 'IDLE';
     if (fog) fog.style.opacity = '1';
     if (spotlight) spotlight.style.opacity = '0.6';
     dpad.hide();
   }
-}
-
-function resetToIdle() {
-  // Back-compat: dismiss whichever terminal is currently zoomed
-  const running = terminals.find(t => t.state === 'RUNNING' || t.state === 'ZOOMING');
-  if (running) resetTerminalToIdle(running);
 }
 
 // ── Swipe-to-dismiss (on the pair container — either terminal triggers) ──
@@ -406,20 +395,23 @@ function addDismissedTile(term) {
 }
 
 // ── Swipe-dismiss from iframe (touch events can't cross iframe boundary) ──
+// Identify which terminal the message came from by matching contentWindow.
 window.addEventListener('message', (e) => {
-  if (e.data?.type === 'v9:swipe-dismiss') {
-    if (pairState === 'RUNNING' || pairState === 'UNAVAILABLE') {
-      addDismissedTile();
-      resetToIdle();
-    }
+  if (e.data?.type !== 'v9:swipe-dismiss') return;
+  const source = e.source;
+  const term = terminals.find(t => t.iframe.contentWindow === source);
+  if (term && (term.state === 'RUNNING' || term.state === 'UNAVAILABLE')) {
+    addDismissedTile(term);
+    resetTerminalToIdle(term);
   }
 });
 
 // ── Resize / orientation change ──
 function handleViewportChange() {
   if (fluid && fluid.active) fluid.resize();
-  if (pairState === 'RUNNING') {
-    for (const t of terminals) {
+  // Refit whichever terminals are running
+  for (const t of terminals) {
+    if (t.state === 'RUNNING') {
       try { t.iframe.contentWindow?.postMessage({ type: 'v9:refit' }, '*'); } catch {}
     }
   }
