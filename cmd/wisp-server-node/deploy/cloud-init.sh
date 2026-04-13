@@ -1,38 +1,39 @@
 #!/usr/bin/env bash
 #
-# cloud-init for a geo-distributed Wisp node on DigitalOcean.
+# cloud-init for a DO droplet backing the Wisp Global Load Balancer.
 #
-# Philosophy: immutable substrate. Nothing about this script is idempotent
-# on a running box — if you want to change something, destroy the droplet
-# and recreate it. The only things that change after bootstrap are:
+# Philosophy: immutable substrate. The droplet is a target behind a DO
+# Global LB — TLS termination, custom domain, and CDN caching all live
+# on the LB. The droplet just runs Node on :8080 and is firewalled so
+# only DO load balancers can reach it.
 #
-#   1. App code, via cron pulling maceip/v9 main and restarting systemd
-#   2. OS kernel, via weekly reboot cron (no package upgrades otherwise)
+# The only mutations after bootstrap are:
+#   1. App code, via cron pulling maceip/v9 main every 5 min
+#   2. OS kernel, via weekly reboot cron
 #
-# No SSH, no remote login, no mutable config. Emergency access is the DO
-# web console only.
-#
-# Placeholders replaced at droplet-create time by deploy.py:
-#   __FQDN__  — this node's public hostname (e.g. fra.edge.stare.network)
+# No SSH, no remote login, no mutable config. Emergency access = DO
+# web console only. To change anything else: destroy + recreate.
 #
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# ─── Lock the box down BEFORE installing anything ──────────────────────
+# ─── Lock the box down ─────────────────────────────────────────────────
 systemctl disable --now ssh || true
 systemctl mask ssh || true
-# Keep UFW open only for ACME + wss. Nothing else is ever reachable.
+# UFW as a last-line defense. The DO Cloud Firewall does the real
+# filtering (only "load_balancer" source is allowed on :8080), but UFW
+# on the box closes everything just in case the cloud firewall ever
+# misconfigures.
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 80/tcp   comment 'ACME HTTP-01'
-ufw allow 443/tcp  comment 'Wisp wss'
+ufw allow 8080/tcp comment 'Wisp http (LB source only via cloud firewall)'
 ufw --force enable
 
 # ─── Base packages ─────────────────────────────────────────────────────
 apt-get update
 apt-get install -y --no-install-recommends \
-  ca-certificates curl git nodejs npm caddy
+  ca-certificates curl git nodejs npm unattended-upgrades
 
 # ─── Clone the v9 repo (public, read-only) ────────────────────────────
 install -d -o root -g root /opt/v9
@@ -63,7 +64,7 @@ Environment=WISP_STREAM_IDLE_MS=60000
 Environment=WISP_STREAM_MAX_LIFETIME_MS=1800000
 Restart=always
 RestartSec=3
-# Security sandboxing — what root does on this box is very narrow
+# Sandboxing
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -77,34 +78,6 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable --now wisp.service
-
-# ─── Caddy reverse-proxy with automatic HTTPS ─────────────────────────
-# Caddy will attempt Let's Encrypt HTTP-01 validation. Until DNS for
-# __FQDN__ points at this droplet, validation will fail and Caddy will
-# retry with exponential backoff. Once DNS is live, the next retry
-# succeeds and a cert is issued without any action on the box.
-cat > /etc/caddy/Caddyfile <<CADDY
-{
-    email ops@stare.network
-    # Shorter retry window while waiting for DNS to propagate
-    storage file_system /var/lib/caddy
-}
-
-__FQDN__ {
-    reverse_proxy localhost:8080 {
-        # WebSocket passthrough
-        header_up Host {host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-    }
-    encode gzip
-    header {
-        Strict-Transport-Security "max-age=31536000"
-    }
-}
-CADDY
-
-systemctl enable --now caddy
 
 # ─── Self-update cron: pull maceip/v9 main every 5 min ────────────────
 cat > /usr/local/bin/v9-selfupdate.sh <<'UPDATE'
@@ -128,15 +101,13 @@ cat > /etc/cron.d/v9-selfupdate <<'CRON'
 */5 * * * * root /usr/local/bin/v9-selfupdate.sh >/dev/null 2>&1
 CRON
 
-# ─── Weekly kernel-reboot cron (applies pending kernel updates) ───────
+# ─── Weekly kernel-reboot cron ────────────────────────────────────────
 cat > /etc/cron.d/v9-weekly-reboot <<'CRON'
 0 4 * * 0 root /sbin/shutdown -r now "weekly kernel reboot"
 CRON
 
 # ─── Unattended security upgrades ─────────────────────────────────────
-apt-get install -y unattended-upgrades
 dpkg-reconfigure -f noninteractive unattended-upgrades
 
-# ─── Bootstrap done marker ────────────────────────────────────────────
 install -d /var/lib/v9
-echo "$(date -Is) bootstrap complete on __FQDN__" > /var/lib/v9/bootstrap-complete
+echo "$(date -Is) bootstrap complete" > /var/lib/v9/bootstrap-complete
