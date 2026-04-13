@@ -256,9 +256,15 @@ export class WispServerStack extends cdk.Stack {
       defaultBehavior: {
         origin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        // WebSocket-friendly: disable caching, forward all headers
+        // WebSocket-friendly: disable caching, forward everything EXCEPT
+        // the Host header. ALL_VIEWER (which we had first) forwards the
+        // viewer's Host — i.e. `d22zszje61hvd6.cloudfront.net` — to App
+        // Runner, which enforces host-header routing against its auto-
+        // assigned domain and returns 404. Using the "except host" policy
+        // lets CloudFront send its own Host (the App Runner domain) while
+        // still forwarding everything else the WS client needs.
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         compress: false,
       },
