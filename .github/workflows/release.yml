@@ -87,10 +87,9 @@ jobs:
   # directly on their phone (no root, no Termux), tap the icon, and the
   # browser at maceip.github.io/v9 connects to ws://localhost:8765.
   #
-  # Reliability: every tool version is pinned explicitly. Previous
-  # attempts with @latest kept breaking when upstream tools moved.
-  # continue-on-error keeps a failing APK build from blocking the rest
-  # of the release (CLI binaries will still ship).
+  # Reliability: continue-on-error keeps a failing APK build from blocking
+  # the rest of the release (CLI binaries will still ship). Every step
+  # logs its tool versions so a failure mode is diagnosable from the run log.
   build-android-apk:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -111,28 +110,58 @@ jobs:
         with:
           packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
 
-      - name: Install gomobile (pinned)
+      - name: Log Android SDK / NDK state
         run: |
-          # Pin to a specific gomobile version that we've tested.
-          # Bump this deliberately if gomobile changes break CI.
-          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20240916200853-a30babe4fe06
-          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20240916200853-a30babe4fe06
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -la "$ANDROID_HOME/ndk/" || true
+          ls -la "$ANDROID_HOME/platforms/" || true
+          ls -la "$ANDROID_HOME/build-tools/" || true
+          java -version
+          go version
+
+      - name: Install gomobile
+        run: |
+          # Use @latest — previous attempts to pin to a specific pseudo-version
+          # failed because the pinned hash didn't exist in the proxy. We log
+          # the resolved version below so failures are diagnosable, and the
+          # whole job is continue-on-error so a breaking upstream change in
+          # gomobile doesn't block the rest of the release.
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "--- gomobile init ---"
           gomobile init
-          gomobile version
+          echo "--- gomobile version ---"
+          gomobile version || true
+          echo "--- which gomobile ---"
+          which gomobile
+          ls -la "$(go env GOPATH)/bin/"
 
       - name: Build v9net.aar with gomobile bind
         working-directory: pkg/v9net
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
         run: |
+          # Export ANDROID_NDK_HOME from shell — the ${{ env.ANDROID_HOME }}
+          # context variable isn't reliably set by setup-android@v3 at the
+          # step-env level, so we resolve it at runtime from the shell env.
+          # Pick the first NDK that setup-android actually installed.
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1)
+          if [ -z "$NDK_DIR" ]; then
+            echo "FATAL: no NDK found under $ANDROID_HOME/ndk/"
+            exit 1
+          fi
+          export ANDROID_NDK_HOME="$NDK_DIR"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           go mod tidy
           mkdir -p ../../android/app/libs
           gomobile bind \
+            -v \
             -target=android/arm64,android/arm \
             -androidapi 26 \
             -o ../../android/app/libs/v9net.aar \
             .
           ls -lh ../../android/app/libs/v9net.aar
+          echo "AAR contents:"
+          unzip -l ../../android/app/libs/v9net.aar | head -30 || true
 
       - name: Build debug APK with Gradle
         working-directory: android
@@ -142,17 +171,16 @@ jobs:
           # secret which we don't ship. The debug APK is fine for demo
           # use — users will see the "debug build" marker but it works.
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tail -200
           find app/build/outputs/apk -name '*.apk' -exec ls -lh {} \;
 
       - name: Rename and stage APK with proper extension
         run: |
           mkdir -p out
-          # Gradle produces app/build/outputs/apk/debug/app-debug.apk
           APK_SRC="android/app/build/outputs/apk/debug/app-debug.apk"
           if [ ! -f "$APK_SRC" ]; then
             echo "FATAL: APK not found at $APK_SRC"
-            find android -name '*.apk' -type f
+            find android -name '*.apk' -type f || true
             exit 1
           fi
           cp "$APK_SRC" out/v9-net-android-arm64.apk
