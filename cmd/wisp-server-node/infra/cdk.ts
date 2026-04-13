@@ -2,11 +2,17 @@
  * AWS CDK stack for the hardened Wisp server.
  *
  * Deploys:
- *   1. ECR repo (holds the Docker image)
- *   2. App Runner service (runs the container, scales to zero)
- *   3. CloudFront distribution (TLS, custom domain, DDoS, global PoPs)
- *   4. AWS WAF (rate limiting + managed rules)
- *   5. ACM certificate (for the custom domain, us-east-1)
+ *   1. App Runner service (runs the container, scales to zero)
+ *   2. CloudFront distribution (TLS, custom domain, DDoS, global PoPs)
+ *   3. AWS WAF (rate limiting + managed rules)
+ *   4. ACM certificate (for the custom domain, us-east-1)
+ *
+ * The ECR repository is created OUT OF BAND by `build-and-push.sh`.
+ * This matters because App Runner refuses to reach a stable state if the
+ * image it's pointed at doesn't exist — the service spins for ~4 minutes
+ * then fails with HandlerErrorCode: NotStabilized, and CloudFormation
+ * rolls the whole stack back. So the image MUST be present in ECR before
+ * `cdk deploy` runs. The stack imports the existing repo by name.
  *
  * Architecture:
  *
@@ -25,13 +31,18 @@
  *     ▼
  *   destination TCP (public internet, filtered by guard.js)
  *
- * Deploy:
- *   cd cmd/wisp-server-node/infra
+ * Deploy (first time):
+ *   cd cmd/wisp-server-node
+ *   aws configure                          # set creds, region us-east-1
+ *   ./build-and-push.sh                    # creates ECR repo, pushes image
+ *   cd infra
  *   npm install
- *   npx cdk bootstrap           # once per account/region
- *   npx cdk deploy              # initial deploy (will log ECR URI)
- *   ../build-and-push.sh        # builds Docker image, pushes to ECR
- *   # then trigger a redeploy:
+ *   npx cdk bootstrap                      # once per account/region
+ *   npx cdk deploy                         # App Runner + CloudFront + WAF
+ *
+ * Deploy (subsequent image updates):
+ *   cd cmd/wisp-server-node
+ *   ./build-and-push.sh
  *   aws apprunner start-deployment --service-arn $(aws apprunner \
  *     list-services --query \
  *     "ServiceSummaryList[?ServiceName=='wisp-server'].ServiceArn | [0]" \
@@ -86,15 +97,18 @@ export class WispServerStack extends cdk.Stack {
     const maxSessionsPerIp = props.maxSessionsPerIp ?? 10;
     const bandwidthBps = props.bandwidthBps ?? 10 * 1024 * 1024;
 
-    // ─── ECR repository ─────────────────────────────────────────────
-    const repo = new ecr.Repository(this, 'WispEcr', {
-      repositoryName: 'wisp-server-node',
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      imageScanOnPush: true,
-      lifecycleRules: [
-        { maxImageCount: 10, description: 'Keep last 10 images' },
-      ],
-    });
+    // ─── ECR repository (imported, not created) ─────────────────────
+    //
+    // The repo is created by build-and-push.sh BEFORE `cdk deploy` ever
+    // runs, because App Runner needs an image present at create time.
+    // Creating the repo inside this stack caused first-deploy to fail:
+    // App Runner would CREATE_IN_PROGRESS for ~4 minutes against an empty
+    // repo, then fail with HandlerErrorCode: NotStabilized and roll back.
+    //
+    // By importing, the stack no longer manages the repo's lifecycle.
+    // If you want to delete everything, delete the stack AND then run
+    // `aws ecr delete-repository --repository-name wisp-server-node --force`.
+    const repo = ecr.Repository.fromRepositoryName(this, 'WispEcr', 'wisp-server-node');
 
     // ─── IAM roles for App Runner ───────────────────────────────────
 
