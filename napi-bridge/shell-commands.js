@@ -1385,23 +1385,63 @@ function statCmd(args) {
 function chmod() { return { stdout: '', stderr: '', exitCode: 0 }; }
 function chown() { return { stdout: '', stderr: '', exitCode: 0 }; }
 
+// ─── Runtime bridge ─────────────────────────────────────────────────
+// When the Wasm Node runtime is booted by terminal.js it sets
+// globalThis.__edgeRuntime. We route `node` and, where useful, `npm`
+// through the real runtime so installed packages, async I/O and
+// the full CJS/ESM module graph all work.
+
+function _getRuntime() {
+  return (typeof globalThis !== 'undefined' && globalThis.__edgeRuntime) || null;
+}
+
 // ─── npm ────────────────────────────────────────────────────────────
 
 function npmCmd(args, options) {
   return _npmRun(args, { ...options, memfs: _activeMemfs });
 }
 
-// ─── node / npx stubs ───────────────────────────────────────────────
+// ─── node ───────────────────────────────────────────────────────────
+//
+// Two execution paths:
+//   1. Wasm runtime available → runtime.runNodeEntry({entry, cwd, argv, env})
+//      runs the real Node with full module graph, async I/O, installed
+//      packages, etc. stdout/stderr are already wired to xterm via the
+//      initEdgeJS onStdout/onStderr callbacks, so we return empty streams
+//      and let the async promise resolve with the exit code.
+//   2. Runtime not booted yet → fall back to the mini in-JS sandbox below
+//      (just `new Function` + a tiny synchronous require for `path`/`fs`
+//      and the currently-installed node_modules). This path only works
+//      for trivial scripts that don't use Node built-ins beyond path/fs.
 
 function nodeCmd(args, options) {
   const vals = args.map(a => typeof a === 'string' ? a : a.value);
-  if (vals.length === 0) return { stdout: '', stderr: 'node: interactive REPL not supported\n', exitCode: 1 };
+  if (vals.length === 0) {
+    return { stdout: '', stderr: 'node: interactive REPL not supported\n', exitCode: 1 };
+  }
+
+  // node --version / -v
+  if (vals[0] === '-v' || vals[0] === '--version') {
+    const runtime = _getRuntime();
+    const version = runtime?.version || 'v20.0.0-edgejs';
+    return { stdout: version + '\n', stderr: '', exitCode: 0 };
+  }
 
   // node -e "code" / node --eval "code"
   const eIdx = vals.indexOf('-e') >= 0 ? vals.indexOf('-e') : vals.indexOf('--eval');
   if (eIdx >= 0 && vals[eIdx + 1]) {
+    const runtime = _getRuntime();
+    const code = vals[eIdx + 1];
+    if (runtime && typeof runtime.eval === 'function') {
+      try {
+        const result = runtime.eval(code);
+        return { stdout: (result !== undefined ? String(result) : '') + '\n', stderr: '', exitCode: 0 };
+      } catch (err) {
+        return { stdout: '', stderr: (err?.message || String(err)) + '\n', exitCode: 1 };
+      }
+    }
     try {
-      const result = (new Function('return (' + vals[eIdx + 1] + ')'))();
+      const result = (new Function('return (' + code + ')'))();
       return { stdout: (result !== undefined ? String(result) : '') + '\n', stderr: '', exitCode: 0 };
     } catch (err) {
       return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
@@ -1410,69 +1450,128 @@ function nodeCmd(args, options) {
 
   // node <script.js> [args...] — run a script from MEMFS
   const scriptPath = vals[0];
-  if (scriptPath && !scriptPath.startsWith('-')) {
-    const resolved = normalizePath(scriptPath);
-    try {
-      const src = _decoder.decode(_activeMemfs.readFile(resolved));
-      const stdout = [];
-      const stderr = [];
-      // Minimal script sandbox: capture console.log/error output
-      const _log = (...a) => stdout.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
-      const _err = (...a) => stderr.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
-      const scriptConsole = { log: _log, error: _err, warn: _err, info: _log, debug: _log, dir: _log };
-      let exitCode = 0;
-      const mod = { exports: {} };
-      const scriptDir = resolved.replace(/\/[^/]+$/, '') || '/';
-      const fn = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', 'process', src);
-      const fakeProcess = {
-        argv: ['node', resolved, ...vals.slice(1)],
-        env: options?.env || {},
-        cwd: () => options?.cwd || '/',
-        exit: (code) => { throw { __nodeExit: true, code: code || 0 }; },
-        stdout: { write: (d) => stdout.push(String(d)) },
-        stderr: { write: (d) => stderr.push(String(d)) },
-      };
-      // Minimal require for scripts
-      const scriptRequire = (name) => {
-        if (name === 'path') return { join: (...p) => p.join('/').replace(/\/+/g, '/'), resolve: (...p) => normalizePath(p.join('/')) };
-        if (name === 'fs') return fsModule;
-        // Try node_modules
-        const nmPath = normalizePath(scriptDir + '/node_modules/' + name + '/package.json');
-        try {
-          const pkg = JSON.parse(_decoder.decode(_activeMemfs.readFile(nmPath)));
-          const mainFile = pkg.main || 'index.js';
-          const mainPath = normalizePath(scriptDir + '/node_modules/' + name + '/' + mainFile);
-          const mainSrc = _decoder.decode(_activeMemfs.readFile(mainPath));
-          const m2 = { exports: {} };
-          const f2 = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', mainSrc);
-          f2(m2, m2.exports, scriptRequire, scriptConsole, mainPath, mainPath.replace(/\/[^/]+$/, ''));
-          return m2.exports;
-        } catch { throw new Error(`Cannot find module '${name}'`); }
-      };
-      try {
-        fn(mod, mod.exports, scriptRequire, scriptConsole, resolved, scriptDir, fakeProcess);
-      } catch (e) {
-        if (e?.__nodeExit) {
-          exitCode = e.code;
-        } else {
-          stderr.push(e.message);
-          exitCode = 1;
-        }
-      }
-      return {
-        stdout: stdout.join('\n') + (stdout.length ? '\n' : ''),
-        stderr: stderr.join('\n') + (stderr.length ? '\n' : ''),
-        exitCode,
-      };
-    } catch (err) {
-      if (err.code === 'ENOENT' || err.message?.includes('ENOENT')) {
-        return { stdout: '', stderr: `node: ${scriptPath}: No such file or directory\n`, exitCode: 1 };
-      }
-      return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
-    }
+  if (!scriptPath || scriptPath.startsWith('-')) {
+    return { stdout: '', stderr: 'Usage: node <script.js> or node -e "code"\n', exitCode: 1 };
+  }
+  const resolved = normalizePath(scriptPath);
+  const cwd = options?.cwd || (_cwdOverride || '/workspace');
+
+  if (!fileExists(resolved)) {
+    return { stdout: '', stderr: `node: ${scriptPath}: No such file or directory\n`, exitCode: 1 };
   }
 
-  return { stdout: '', stderr: 'Usage: node <script.js> or node -e "code"\n', exitCode: 1 };
+  // ── Path 1: real Wasm Node runtime ────────────────────────────────
+  const runtime = _getRuntime();
+  if (runtime && typeof runtime.runNodeEntry === 'function') {
+    const argvRest = vals.slice(1);
+    const work = (async () => {
+      try {
+        const res = await runtime.runNodeEntry({
+          entry: resolved,
+          cwd,
+          argv: argvRest,
+          env: options?.env || {},
+        });
+        // Runtime streams stdout/stderr straight to xterm via onStdout/onStderr,
+        // so we return empty buffers and let the exit code drive the prompt.
+        return { stdout: '', stderr: '', exitCode: res?.status ?? 0 };
+      } catch (err) {
+        return { stdout: '', stderr: (err?.message || String(err)) + '\n', exitCode: 1 };
+      }
+    })();
+    return { stdout: '', stderr: '', exitCode: 0, _async: work };
+  }
+
+  // ── Path 2: tiny in-JS sandbox (pre-Wasm fallback) ────────────────
+  try {
+    const src = _decoder.decode(_activeMemfs.readFile(resolved));
+    const stdout = [];
+    const stderr = [];
+    const _log = (...a) => stdout.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+    const _err = (...a) => stderr.push(a.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' '));
+    const scriptConsole = { log: _log, error: _err, warn: _err, info: _log, debug: _log, dir: _log };
+    let exitCode = 0;
+    const mod = { exports: {} };
+    const scriptDir = resolved.replace(/\/[^/]+$/, '') || '/';
+    const fn = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', 'process', src);
+    const fakeProcess = {
+      argv: ['node', resolved, ...vals.slice(1)],
+      env: options?.env || {},
+      cwd: () => cwd,
+      exit: (code) => { throw { __nodeExit: true, code: code || 0 }; },
+      stdout: { write: (d) => stdout.push(String(d)) },
+      stderr: { write: (d) => stderr.push(String(d)) },
+    };
+    // Node.js module resolution walks up parent directories looking for
+    // node_modules/<name>/package.json. We mirror that minimal behavior.
+    const _nodeModulesDirs = (fromDir) => {
+      const dirs = [];
+      let cur = fromDir || '/';
+      while (true) {
+        dirs.push(cur === '/' ? '/node_modules' : cur + '/node_modules');
+        if (cur === '/' || cur === '') break;
+        const slash = cur.lastIndexOf('/');
+        cur = slash <= 0 ? '/' : cur.substring(0, slash);
+      }
+      return dirs;
+    };
+    const _loadModule = (pkgDir) => {
+      let pkgMainPath = pkgDir + '/index.js';
+      try {
+        const pkgSrc = _decoder.decode(_activeMemfs.readFile(pkgDir + '/package.json'));
+        const pkgJson = JSON.parse(pkgSrc);
+        if (typeof pkgJson.main === 'string' && pkgJson.main) {
+          pkgMainPath = normalizePath(pkgDir + '/' + pkgJson.main);
+        }
+      } catch { /* no package.json — default to index.js */ }
+      const mainSrc = _decoder.decode(_activeMemfs.readFile(pkgMainPath));
+      const m2 = { exports: {} };
+      const f2 = new Function('module', 'exports', 'require', 'console', '__filename', '__dirname', 'process', mainSrc);
+      const mainDir = pkgMainPath.replace(/\/[^/]+$/, '') || '/';
+      const localRequire = (n) => scriptRequire(n, mainDir);
+      f2(m2, m2.exports, localRequire, scriptConsole, pkgMainPath, mainDir, fakeProcess);
+      return m2.exports;
+    };
+    const scriptRequire = (name, fromDir) => {
+      const base = fromDir || scriptDir;
+      // Built-ins — minimal set. Use real napi-bridge modules if the runtime
+      // has booted (they'll be available via globalThis.__edgeRuntime).
+      const rt = _getRuntime();
+      if (rt && typeof rt.require === 'function') {
+        try { return rt.require(name, base); } catch { /* fall through */ }
+      }
+      if (name === 'path') return { join: (...p) => p.join('/').replace(/\/+/g, '/'), resolve: (...p) => normalizePath(p.join('/')) };
+      if (name === 'fs') return fsModule;
+      // Walk parent dirs for node_modules/<name>
+      for (const nmDir of _nodeModulesDirs(base)) {
+        const pkgDir = nmDir + '/' + name;
+        if (fileExists(pkgDir + '/package.json') || fileExists(pkgDir + '/index.js')) {
+          return _loadModule(pkgDir);
+        }
+      }
+      throw new Error(`Cannot find module '${name}'`);
+    };
+    try {
+      fn(mod, mod.exports, (n) => scriptRequire(n, scriptDir), scriptConsole, resolved, scriptDir, fakeProcess);
+    } catch (e) {
+      if (e?.__nodeExit) {
+        exitCode = e.code;
+      } else {
+        stderr.push(e.message);
+        exitCode = 1;
+      }
+    }
+    return {
+      stdout: stdout.join('\n') + (stdout.length ? '\n' : ''),
+      stderr: stderr.join('\n') + (stderr.length ? '\n' : ''),
+      exitCode,
+    };
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.message?.includes('ENOENT')) {
+      return { stdout: '', stderr: `node: ${scriptPath}: No such file or directory\n`, exitCode: 1 };
+    }
+    return { stdout: '', stderr: err.message + '\n', exitCode: 1 };
+  }
 }
 
 

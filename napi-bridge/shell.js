@@ -52,18 +52,21 @@ export function createShell(opts = {}) {
     write(`${CWD_COLOR}${shortCwd()}${RESET} ${PROMPT_COLOR}$ ${RESET}`);
   }
 
-  function clearLine() {
-    // Move cursor to start of input, clear to end of line
-    if (cursorPos > 0) write(`\x1b[${cursorPos}D`);
-    write('\x1b[K');
-  }
-
-  function redrawLine() {
-    clearLine();
+  // Rewrite the input line in-place. `prevVisualCol` is the visual column of
+  // the cursor (relative to the start of the input area) BEFORE this rewrite
+  // — required when the caller has already mutated `cursorPos`.
+  // If omitted, `cursorPos` is assumed to still match the on-screen cursor.
+  function rewriteLine(prevVisualCol) {
+    const from = prevVisualCol !== undefined ? prevVisualCol : cursorPos;
+    // 1. Move cursor back to start of input area
+    if (from > 0) write(`\x1b[${from}D`);
+    // 2. Clear from cursor to end of screen (handles wrapped long lines)
+    write('\x1b[0J');
+    // 3. Redraw the full line
     write(line);
-    // Move cursor back to position if not at end
-    const diff = line.length - cursorPos;
-    if (diff > 0) write(`\x1b[${diff}D`);
+    // 4. Move cursor back to the desired position if not at EOL
+    const trailing = line.length - cursorPos;
+    if (trailing > 0) write(`\x1b[${trailing}D`);
   }
 
   async function execute(cmd) {
@@ -173,15 +176,16 @@ export function createShell(opts = {}) {
 
       // Ctrl+U (kill line)
       if (ch === '\x15') {
-        clearLine();
+        const prev = cursorPos;
         line = '';
         cursorPos = 0;
+        rewriteLine(prev);
         continue;
       }
 
       // Ctrl+K (kill to end of line)
       if (ch === '\x0b') {
-        write('\x1b[K');
+        write('\x1b[0J');
         line = line.slice(0, cursorPos);
         continue;
       }
@@ -189,22 +193,24 @@ export function createShell(opts = {}) {
       // Ctrl+W (delete word backward)
       if (ch === '\x17') {
         if (cursorPos > 0) {
+          const prev = cursorPos;
           let start = cursorPos - 1;
           while (start > 0 && line[start - 1] === ' ') start--;
           while (start > 0 && line[start - 1] !== ' ') start--;
           line = line.slice(0, start) + line.slice(cursorPos);
           cursorPos = start;
-          redrawLine();
+          rewriteLine(prev);
         }
         continue;
       }
 
-      // Backspace
+      // Backspace (DEL 0x7F from most terminals, BS 0x08 from some mobile kbs)
       if (ch === '\x7f' || ch === '\b') {
         if (cursorPos > 0) {
+          const prev = cursorPos;
           line = line.slice(0, cursorPos - 1) + line.slice(cursorPos);
           cursorPos--;
-          redrawLine();
+          rewriteLine(prev);
         }
         continue;
       }
@@ -216,6 +222,7 @@ export function createShell(opts = {}) {
           if (seq === 'A') { // Up arrow — history
             i += 2;
             if (history.length > 0) {
+              const prev = cursorPos;
               if (historyIdx === -1) {
                 historyTmp = line;
                 historyIdx = history.length - 1;
@@ -224,14 +231,14 @@ export function createShell(opts = {}) {
               }
               line = history[historyIdx];
               cursorPos = line.length;
-              clearLine();
-              write(line);
+              rewriteLine(prev);
             }
             continue;
           }
           if (seq === 'B') { // Down arrow — history
             i += 2;
             if (historyIdx >= 0) {
+              const prev = cursorPos;
               historyIdx++;
               if (historyIdx >= history.length) {
                 historyIdx = -1;
@@ -240,8 +247,7 @@ export function createShell(opts = {}) {
                 line = history[historyIdx];
               }
               cursorPos = line.length;
-              clearLine();
-              write(line);
+              rewriteLine(prev);
             }
             continue;
           }
@@ -282,7 +288,7 @@ export function createShell(opts = {}) {
             i += 3;
             if (cursorPos < line.length) {
               line = line.slice(0, cursorPos) + line.slice(cursorPos + 1);
-              redrawLine();
+              rewriteLine();
             }
             continue;
           }
@@ -303,11 +309,12 @@ export function createShell(opts = {}) {
 
       // Printable character
       if (ch >= ' ') {
+        const prev = cursorPos;
         line = line.slice(0, cursorPos) + ch + line.slice(cursorPos);
         cursorPos++;
         // If inserting in the middle, redraw the rest
         if (cursorPos < line.length) {
-          redrawLine();
+          rewriteLine(prev);
         } else {
           write(ch);
         }
@@ -323,10 +330,23 @@ export function createShell(opts = {}) {
     return cwd;
   }
 
+  function setCwd(next) {
+    if (typeof next === 'string' && next.length > 0) cwd = next;
+  }
+
+  function setHistory(entries) {
+    if (!Array.isArray(entries)) return;
+    history = entries.slice(-200);
+    historyIdx = -1;
+  }
+
   return {
     feed,
     prompt,
     getCwd,
+    setCwd,
+    setHistory,
+    get history() { return history.slice(); },
     get busy() { return busy; },
   };
 }

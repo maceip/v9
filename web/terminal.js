@@ -393,8 +393,10 @@ async function boot() {
   // and createShell runs. By the time Stage B actually needs them below,
   // they're usually already resolved and the `await` returns immediately.
   const napiRoot = new URL('../napi-bridge/', import.meta.url).href;
-  const _edgeImportTs = Date.now();
-  const edgeJsImport = import(`${napiRoot}index.js?t=${_edgeImportTs}`);
+  // NO cache-bust: index.js is ~176 KB — defeating the HTTP cache on every
+  // boot caused a multi-hundred-ms warm-load regression. Rev the URL at
+  // deploy-time instead (e.g. via query-param versioning on import-maps).
+  const edgeJsImport = import(`${napiRoot}index.js`);
   const browserBuiltinsImport = import(`${napiRoot}browser-builtins.js`);
 
   // ── Stage A: shell + prompt as fast as possible ────────────────────────
@@ -416,6 +418,21 @@ async function boot() {
     });
     globalThis.__edgeShell = shell;
     globalThis.__edgeTerm = term;
+
+    // Session persistence (IndexedDB): restore before the prompt paints
+    // so returning users see their last cwd/history and previously
+    // installed node_modules. Fire-and-forget on failure — the shell
+    // remains usable with an empty FS if IDB is unavailable.
+    // We don't await the MEMFS restore against the Wasm runtime here
+    // because Stage B is still booting; installSessionHooks() will
+    // re-restore against the runtime's fs once it's ready.
+    try {
+      const sp = await import('../napi-bridge/session-persistence.js');
+      await sp.installSessionHooks({ restore: true, autosave: true });
+    } catch (persistErr) {
+      _nativeError('[session] persistence unavailable:', persistErr);
+    }
+
     if (!config.appBundle || !config.autorun) {
       // No bundle — shell is the primary interface. Prompt NOW.
       globalThis._stdinPush = (data) => shell.feed(data);
