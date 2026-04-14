@@ -122,39 +122,41 @@ async function runTests() {
       timeout: TIMEOUT,
       waitUntil: 'domcontentloaded',
     });
-    await page.waitForTimeout(4500);
+    // Transport config logging is deferred via requestIdleCallback; it
+    // lands almost immediately but give it a small cushion.
+    await page.waitForTimeout(800);
 
     const v9netMsgs = consoleMessages.filter(m => m.text.includes('[v9-net]'));
 
-    // All four tiers announced at boot (headers)
-    const tier1Header = v9netMsgs.find(m => /tier-1 v9-net\s+=/.test(m.text));
-    const tier2Header = v9netMsgs.find(m => /tier-2 wisp\s+=/.test(m.text));
-    const tier3Header = v9netMsgs.find(m => /tier-3 proxy\s+=/.test(m.text));
-    const tier4Header = v9netMsgs.find(m => m.text.includes('tier-4 direct'));
-    assert(!!tier1Header, `[${label}] tier-1 header printed`);
-    assert(!!tier2Header, `[${label}] tier-2 header printed`);
-    assert(!!tier3Header, `[${label}] tier-3 header printed`);
-    assert(!!tier4Header, `[${label}] tier-4 header printed`);
+    // Config log format (current): "[v9-net] tier-N <name>   <value>"
+    //   tier-1 v9-net  ws://localhost:8765
+    //   tier-2 wisp    <url>  | "(disabled)" | (line absent if no URL)
+    //   tier-3 proxy   <url>  | (line absent if no URL)
+    //   tier-4 fetch   (browser native, CORS-restricted)
+    //
+    // No probing happens. Tier selection is lazy (at first use).
+    const tier1Line = v9netMsgs.find(m => /tier-1 v9-net\s/.test(m.text));
+    const tier2Line = v9netMsgs.find(m => /tier-2 wisp\s/.test(m.text));
+    const tier3Line = v9netMsgs.find(m => /tier-3 proxy\s/.test(m.text));
+    const tier4Line = v9netMsgs.find(m => /tier-4 fetch\s/.test(m.text));
 
-    // Tier-2 and tier-3 content expectations (configured vs not-configured)
+    assert(!!tier1Line, `[${label}] tier-1 line printed`);
+    assert(!!tier4Line, `[${label}] tier-4 line printed`);
+
     if (expectations.tier2Configured) {
-      assert(!tier2Header.text.includes('(not configured)'),
-        `[${label}] tier-2 shows a URL, not "(not configured)"`);
-      const tier2Result = v9netMsgs.find(m => /tier-2 wisp (not )?reachable/.test(m.text));
-      assert(!!tier2Result, `[${label}] tier-2 probe result logged`);
+      assert(!!tier2Line && /wss?:\/\//.test(tier2Line.text),
+        `[${label}] tier-2 shows a URL`);
     } else {
-      assert(tier2Header.text.includes('(not configured)'),
-        `[${label}] tier-2 shows "(not configured)"`);
-      const tier2NotConfig = v9netMsgs.find(m => /tier-2 wisp not configured/.test(m.text));
-      assert(!!tier2NotConfig, `[${label}] tier-2 "not configured" message printed`);
+      // When no URL is configured, the tier-2 line is simply absent.
+      assert(!tier2Line || tier2Line.text.includes('(disabled)'),
+        `[${label}] tier-2 line absent or disabled`);
     }
 
     if (expectations.tier3Configured) {
-      assert(!tier3Header.text.includes('(not configured)'),
-        `[${label}] tier-3 shows a URL, not "(not configured)"`);
+      assert(!!tier3Line && /https?:\/\//.test(tier3Line.text),
+        `[${label}] tier-3 shows a URL`);
     } else {
-      assert(tier3Header.text.includes('(not configured)'),
-        `[${label}] tier-3 shows "(not configured)"`);
+      assert(!tier3Line, `[${label}] tier-3 line absent`);
     }
 
     // No error-style messages regardless of scenario
@@ -164,20 +166,25 @@ async function runTests() {
 
     const warnMessages = v9netMsgs.filter(m => m.type === 'warning');
     assert(warnMessages.length === 0,
-      `[${label}] no console.warn from probe (got ${warnMessages.length})`);
+      `[${label}] no console.warn from transport init (got ${warnMessages.length})`);
 
     const probeErrors = pageErrors.filter(e => e.includes('v9-net') || e.includes('transport'));
     assert(probeErrors.length === 0,
-      `[${label}] no page errors from probe`);
+      `[${label}] no page errors from transport init`);
 
-    // Single-probe guarantee
-    const tier1Count = v9netMsgs.filter(m => /tier-1 v9-net\s+=/.test(m.text)).length;
-    assert(tier1Count === 1, `[${label}] tier-1 header appears exactly once (got ${tier1Count})`);
+    // Idempotence: tier-1 line appears exactly once (no duplicate firings)
+    const tier1Count = v9netMsgs.filter(m => /tier-1 v9-net\s/.test(m.text)).length;
+    assert(tier1Count === 1, `[${label}] tier-1 line appears exactly once (got ${tier1Count})`);
 
-    // Tier-1 always set
-    const gvisorUrl = await page.evaluate(() => globalThis.__V9_GVISOR_WS_URL__);
-    assert(typeof gvisorUrl === 'string' && gvisorUrl.startsWith('ws'),
-      `[${label}] __V9_GVISOR_WS_URL__ set to "${gvisorUrl}"`);
+    // Tier-1 URL was mirrored into the global + process.env
+    const state = await page.evaluate(() => ({
+      gvisor: globalThis.__V9_GVISOR_WS_URL__,
+      envGvisor: globalThis.process?.env?.NODEJS_GVISOR_WS_URL,
+    }));
+    assert(typeof state.gvisor === 'string' && state.gvisor.startsWith('ws'),
+      `[${label}] __V9_GVISOR_WS_URL__ set to "${state.gvisor}"`);
+    assert(state.envGvisor === state.gvisor,
+      `[${label}] NODEJS_GVISOR_WS_URL mirrors __V9_GVISOR_WS_URL__`);
   }
 
   try {
