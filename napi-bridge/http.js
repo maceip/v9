@@ -14,6 +14,7 @@ import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable } from './streams.js';
 import { browserHttpFetch } from './transport-policy.mjs';
 import { isGvisorAvailable, GvisorSocket, GvisorServer as _GvisorTcpServer } from './gvisor-net.js';
+import { isWispAvailable, wispConnect } from './wisp-client.js';
 
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
@@ -662,10 +663,10 @@ class ClientRequest extends Writable {
   }
 
   /**
-   * Send HTTP/1.1 request over gvisor raw TCP socket.
-   * All headers survive — no browser forbidden-header stripping.
+   * Build the raw HTTP/1.1 request head + body for a socket-based transport.
+   * Shared by the gvisor and wisp request paths.
    */
-  _doGvisorRequest(body) {
+  _buildRawHttpRequest(body) {
     const opts = this._options;
     const method = (opts.method || 'GET').toUpperCase();
     const path = opts.path || '/';
@@ -673,28 +674,26 @@ class ClientRequest extends Writable {
     const port = parseInt(opts.port || (opts.protocol === 'https:' ? 443 : 80), 10);
     const headers = this._buildAllHeaders();
 
-    // Ensure Host header
     if (!headers['Host'] && !headers['host']) {
       headers['Host'] = port === 80 || port === 443 ? hostname : `${hostname}:${port}`;
     }
-
-    // Set Content-Length for body
     if (body && !headers['Content-Length'] && !headers['content-length']) {
       headers['Content-Length'] = String(body.byteLength);
     }
 
-    // Build raw HTTP/1.1 request
     let head = `${method} ${path} HTTP/1.1\r\n`;
     for (const [k, v] of Object.entries(headers)) head += `${k}: ${v}\r\n`;
     head += 'Connection: close\r\n\r\n';
 
-    const sock = new GvisorSocket(null);
-    sock.connect(port, hostname, () => {
-      sock.write(head);
-      if (body && body.byteLength) sock.write(body);
-    });
+    return { head, hostname, port };
+  }
 
-    // Parse HTTP response from raw TCP stream
+  /**
+   * Wire a connected socket (gvisor or wisp) to an IncomingMessage response.
+   * Parses HTTP/1.1 status + headers + body from the raw TCP stream, emits
+   * 'response' on this request, and pushes body chunks to the IncomingMessage.
+   */
+  _wireSocketToResponse(sock) {
     let respBuf = new Uint8Array(0);
     let headersParsed = false;
     let respDone = false;
@@ -741,7 +740,6 @@ class ClientRequest extends Writable {
           }
         }
 
-        // Create IncomingMessage-like Readable
         incomingMsg = new Readable({ read() {} });
         incomingMsg.statusCode = statusCode;
         incomingMsg.statusMessage = statusMessage;
@@ -778,6 +776,51 @@ class ClientRequest extends Writable {
     });
 
     this.socket = sock;
+  }
+
+  /**
+   * Send HTTP/1.1 request over gvisor raw TCP socket.
+   * All headers survive — no browser forbidden-header stripping.
+   */
+  _doGvisorRequest(body) {
+    const { head, hostname, port } = this._buildRawHttpRequest(body);
+    const sock = new GvisorSocket(null);
+    sock.connect(port, hostname, () => {
+      sock.write(head);
+      if (body && body.byteLength) sock.write(body);
+    });
+    this._wireSocketToResponse(sock);
+  }
+
+  /**
+   * Send HTTP/1.1 request over a hosted Wisp v1 TCP stream.
+   *
+   * Tier-2 transport path: used when no local gvisor is available but
+   * NODEJS_WISP_WS_URL is set. wispConnect() is async (one round-trip to
+   * open the TCP stream through the Wisp mux), so we await it before
+   * writing the HTTP bytes. After that, the WispStream is a Node-Duplex
+   * with the same data/end/close/error contract as GvisorSocket, so the
+   * shared _wireSocketToResponse handles the rest.
+   */
+  _doWispRequest(body) {
+    const { head, hostname, port } = this._buildRawHttpRequest(body);
+    wispConnect(hostname, port).then((sock) => {
+      if (this._destroyed) {
+        try { sock.destroy(); } catch { /* ignore */ }
+        return;
+      }
+      this._wireSocketToResponse(sock);
+      try {
+        sock.write(head);
+        if (body && body.byteLength) sock.write(body);
+      } catch (err) {
+        this._clearTimeoutTimer();
+        if (!this._destroyed) this.emit('error', err);
+      }
+    }).catch((err) => {
+      this._clearTimeoutTimer();
+      if (!this._destroyed) this.emit('error', err);
+    });
   }
 
   // Start a streaming fetch with ReadableStream body.
@@ -893,9 +936,19 @@ class ClientRequest extends Writable {
         }
       }
 
-      // ── Route decision: gvisor TCP (all headers) → fetch (forbidden-stripped) ──
+      // ── Route decision (priority order, all headers preserved in tiers 1+2) ──
+      //   tier 1: gvisor TCP   (local v9-net, any Host)
+      //   tier 2: wisp TCP     (hosted wss:// tunnel to our GLB)
+      //   tier 3/4: browser fetch — forbidden-header stripped, but TLS-safe
+      // Raw-TCP tiers are preferred because they can send headers browsers
+      // block (Host, Cookie to arbitrary origins, Origin overrides, etc.)
+      // and because they bypass CORS entirely.
       if (_hasBrowsingContext && isGvisorAvailable()) {
         this._doGvisorRequest(body);
+        return;
+      }
+      if (_hasBrowsingContext && isWispAvailable()) {
+        this._doWispRequest(body);
         return;
       }
 

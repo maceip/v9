@@ -385,8 +385,27 @@ async function boot() {
   let runtime = null;
   let processBridge = null;
 
-  // ── Shell is resilient: initializes even if the Wasm runtime fails ──
-  // The shell only needs MEMFS and the shell parser, not EdgeJS.
+  // ── Kick off Stage B imports in parallel with Stage A ──────────────────
+  // The Stage B module graph (browser-builtins → http/net-stubs → gvisor-net
+  // → wisp-client → wolfssl-tls) is ~2700 lines of parse cost that we used
+  // to serialise behind the shell. Starting the dynamic imports here, BEFORE
+  // awaiting the shell, lets the browser parse+link them while xterm paints
+  // and createShell runs. By the time Stage B actually needs them below,
+  // they're usually already resolved and the `await` returns immediately.
+  const napiRoot = new URL('../napi-bridge/', import.meta.url).href;
+  const _edgeImportTs = Date.now();
+  const edgeJsImport = import(`${napiRoot}index.js?t=${_edgeImportTs}`);
+  const browserBuiltinsImport = import(`${napiRoot}browser-builtins.js`);
+
+  // ── Stage A: shell + prompt as fast as possible ────────────────────────
+  // The shell is pure JS (needs only MEMFS and the shell parser) and doesn't
+  // need the Wasm runtime. We initialise it, wire it as the current stdin
+  // owner, and print the prompt BEFORE starting the Wasm boot. That way the
+  // user can type as soon as xterm paints — Wasm finishes in the background.
+  //
+  // If a bundle is configured (config.appBundle + config.autorun), the shell
+  // is still shown first and the bundle then takes over once the runtime is
+  // ready; on bundle exit we route stdin back to the shell.
   let shell = null;
   try {
     const { createShell } = await import('../napi-bridge/shell.js');
@@ -397,16 +416,29 @@ async function boot() {
     });
     globalThis.__edgeShell = shell;
     globalThis.__edgeTerm = term;
+    if (!config.appBundle || !config.autorun) {
+      // No bundle — shell is the primary interface. Prompt NOW.
+      globalThis._stdinPush = (data) => shell.feed(data);
+      term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
+      term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
+      shell.prompt();
+    }
   } catch (shellErr) {
     _nativeError('[shell] Failed to load shell:', shellErr);
   }
 
-  try {
-    const ts = Date.now();
-    const napiRoot = new URL('../napi-bridge/', import.meta.url).href;
+  // ── Stage B: Wasm runtime boot, runs in background ─────────────────────
+  // Wraps the slow part of boot so Stage A never waits on it. Errors here
+  // do NOT take down the shell — they just mean the Wasm runtime isn't
+  // available for `node myscript.js`-style commands, and the shell prints
+  // a one-line notice when it's ready (or not).
+  //
+  // The two dynamic imports below were already kicked off at the top of
+  // boot() so by the time we await them here they're usually resolved.
+  const wasmBoot = (async () => {
     const [{ initEdgeJS }, bridgeModule] = await Promise.all([
-      import(`${napiRoot}index.js?t=${ts}`),
-      import(`${napiRoot}browser-builtins.js`),
+      edgeJsImport,
+      browserBuiltinsImport,
     ]);
 
     processBridge = bridgeModule.processBridge;
@@ -416,8 +448,6 @@ async function boot() {
       ? globalThis.__edgeInitialFiles
       : {};
 
-    // Resolve dist/ relative to this module so /web/index.html setups fetch
-    // /dist/edgejs.{js,wasm} (not /web/edgejs.wasm from fetch('./edgejs.wasm')).
     const moduleUrl = globalThis.__edgeModuleUrl || new URL('../dist/edgejs.js', import.meta.url).href;
     const wasmUrl = globalThis.__edgeWasmUrl || new URL('../dist/edgejs.wasm', import.meta.url).href;
 
@@ -448,17 +478,22 @@ async function boot() {
 
     const controller = createCliController({ term, runtime, processBridge, config });
     globalThis.__edgeCli = controller;
-    globalThis.__edgeTerm = term;
     globalThis.__edgeRuntime = runtime;
     globalThis.__edgeProcess = processBridge;
 
-    // Shell-first boot: the shell was already initialized above (resilient to Wasm failure).
-    // If a bundle is configured, launch it via the full Wasm runtime.
-    // When the app exits, stdin routes back to the shell for a prompt.
-    if (config.appBundle && config.autorun) {
+    return controller;
+  })();
+
+  // ── Post-boot wiring ───────────────────────────────────────────────────
+  // Attach to the background Wasm boot: if a bundle is configured, run it
+  // once Wasm is ready. Either way, errors never block Stage A.
+  wasmBoot.then((controller) => {
+    if (config.appBundle && config.autorun && controller) {
+      // Bundle takes over: clear the shell prompt, banner, launch app.
+      // Because shell.prompt() may have already painted above, clear first.
+      // (A bundle boot with autorun expects the full terminal.)
       term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser\r\n');
-      try {
-        await controller.start();
+      controller.start().then(() => {
         controller.waitForExit().then(() => {
           if (shell) {
             term.writeln('');
@@ -466,35 +501,29 @@ async function boot() {
             shell.prompt();
           }
         }).catch(() => {});
-      } catch (startErr) {
+      }).catch((startErr) => {
         _nativeError('[boot] Bundle failed, dropping to shell:', startErr);
         if (shell) {
           term.writeln(`\x1b[33m${_safe(startErr.message)}\x1b[0m\r\n`);
           globalThis._stdinPush = (data) => shell.feed(data);
           shell.prompt();
         }
-      }
-    } else {
-      // No bundle — shell is the primary interface
-      if (shell) {
-        globalThis._stdinPush = (data) => shell.feed(data);
-        term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
-        term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
-        shell.prompt();
-      }
+      });
     }
-  } catch (err) {
+    // Shell-only boot: runtime just becomes available for `node <script>`
+    // commands run from the shell. No banner update needed.
+  }).catch((err) => {
     _nativeError('[edgejs] Boot error:', err);
-    // Wasm runtime failed to load — fall back to shell only (resilient mode)
+    // Wasm runtime failed — Stage A already promoted the shell, so we just
+    // note it on the stream. The shell remains fully usable; only commands
+    // that need Wasm (like running a compiled Node bundle) will fail.
     if (shell) {
       term.writeln(`\x1b[33m[wasm] Runtime unavailable: ${_safe(err.message)}\x1b[0m`);
-      term.writeln('\x1b[90mShell is still available (pure JS, no Wasm needed).\x1b[0m\r\n');
-      globalThis._stdinPush = (data) => shell.feed(data);
-      shell.prompt();
+      term.writeln('\x1b[90mShell is still available (pure JS, no Wasm needed).\x1b[0m');
     } else {
       term.writeln(`\x1b[31m${_safe(err.message)}\x1b[0m`);
     }
-  }
+  });
 
   // Allow Ctrl+C to copy when there's a selection, Ctrl+V to paste
   term.attachCustomKeyEventHandler((e) => {
