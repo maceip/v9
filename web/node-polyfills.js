@@ -842,6 +842,21 @@
       }
     }
 
+    // Read the last-known-good network mode out of localStorage so we
+    // can surface it at boot time. Inlined (rather than importing
+    // runtime-cache.js) to keep this file zero-dep. Stale records (>1d)
+    // are ignored. See napi-bridge/runtime-cache.js for the writer side.
+    const readLastNetMode = () => {
+      try {
+        const raw = globalThis.localStorage?.getItem('v9:lastNetworkMode');
+        if (!raw) return null;
+        const rec = JSON.parse(raw);
+        if (!rec || typeof rec.mode !== 'string') return null;
+        if (Date.now() - (rec.ts || 0) > 24 * 60 * 60 * 1000) return null;
+        return rec;
+      } catch { return null; }
+    };
+
     // One info line, deferred so it never blocks first paint. Logs only
     // what's configured — no probing, no timeouts.
     const logTransports = () => {
@@ -850,6 +865,11 @@
       else if (wispWs)        console.log('[v9-net] tier-2 wisp     ' + wispWs);
       if (fetchProxy)         console.log('[v9-net] tier-3 proxy    ' + fetchProxy);
       console.log('[v9-net] tier-4 fetch    (browser native, CORS-restricted)');
+      const last = readLastNetMode();
+      if (last) {
+        const age = Math.round((Date.now() - last.ts) / 60000);
+        console.log('[v9-net] last-good    ' + last.mode + ' (' + age + 'm ago)');
+      }
     };
     if (typeof globalThis.requestIdleCallback === 'function') {
       globalThis.requestIdleCallback(logTransports, { timeout: 2000 });

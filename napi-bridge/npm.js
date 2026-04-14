@@ -23,6 +23,7 @@
  */
 
 import { gunzipSync } from './zlib.js';
+import { cacheGetPackage, cachePutPackage, cacheDeletePackage } from './runtime-cache.js';
 
 const REGISTRY = 'https://registry.npmjs.org';
 const _decoder = new TextDecoder();
@@ -328,13 +329,48 @@ async function installPackage(packageName, range, baseDir, memfs, opts = {}) {
     throw new Error(`No tarball URL for ${packageName}@${resolved.version}`);
   }
 
-  // Download and extract
-  onStatus(`  downloading ${packageName}@${resolved.version}`);
-  const tgzData = await fetchTarball(resolved.tarball);
+  // Cross-tab IndexedDB tarball cache, keyed by `${name}@${version}`. On
+  // hit we skip the network entirely and extract the stored bytes straight
+  // into MEMFS. On a corrupt cache entry (extract throws) we evict it and
+  // fall through to the normal fetch path.
+  let tgzData = null;
+  let fromCache = false;
+  try {
+    const cached = await cacheGetPackage(packageName, resolved.version);
+    if (cached && cached.byteLength > 0) {
+      tgzData = cached;
+      fromCache = true;
+    }
+  } catch { /* best-effort cache */ }
+
+  if (!tgzData) {
+    onStatus(`  downloading ${packageName}@${resolved.version}`);
+    tgzData = await fetchTarball(resolved.tarball);
+    // Fire-and-forget cache write; a failed put never blocks install.
+    cachePutPackage(packageName, resolved.version, tgzData).catch(() => {});
+  } else {
+    onStatus(`  cached ${packageName}@${resolved.version} (${(tgzData.length / 1024).toFixed(0)}KB)`);
+  }
+
   onStatus(`  extracting ${packageName}@${resolved.version} (${(tgzData.length / 1024).toFixed(0)}KB)`);
 
   try { memfs.mkdir(nodeModulesDir, true); } catch {}
-  extractTgzToMemfs(tgzData, destDir, memfs);
+  try {
+    extractTgzToMemfs(tgzData, destDir, memfs);
+  } catch (extractErr) {
+    // If extract failed on cached bytes, the cache entry is probably
+    // truncated/corrupt. Evict it and retry from the network — the
+    // caller will see at most one extra round trip as the failure cost.
+    if (fromCache) {
+      try { await cacheDeletePackage(packageName, resolved.version); } catch {}
+      onStatus(`  cache corrupt for ${packageName}@${resolved.version}, re-fetching`);
+      tgzData = await fetchTarball(resolved.tarball);
+      cachePutPackage(packageName, resolved.version, tgzData).catch(() => {});
+      extractTgzToMemfs(tgzData, destDir, memfs);
+    } else {
+      throw extractErr;
+    }
+  }
 
   // Recurse into dependencies.
   // All installs are flat at baseDir/node_modules/ (no hoisting / no conflict

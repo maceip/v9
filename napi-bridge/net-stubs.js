@@ -13,6 +13,7 @@ import { getRawSocketTransportMode } from './transport-policy.mjs';
 import { isGvisorAvailable, GvisorSocket, GvisorServer, getGvisorStack } from './gvisor-net.js';
 import { isWispAvailable, wispConnect } from './wisp-client.js';
 import { createTlsConnection } from './wolfssl-tls.js';
+import { recordNetworkMode } from './runtime-cache.js';
 
 function notAvailable(mod, method) {
   return function () {
@@ -342,6 +343,13 @@ class Socket extends EventEmitter {
       else { host = '127.0.0.1'; cb = args[1]; }
     }
     if (cb) this.once('connect', cb);
+
+    // Record the last-known-good transport on the first successful connect.
+    // Cross-tab via runtime-cache.js localStorage, fire-and-forget.
+    const transport = this._transport;
+    this.once('connect', () => {
+      try { recordNetworkMode(transport); } catch { /* ignore */ }
+    });
 
     if (this._transport === 'gvisor') {
       return this._delegate.connect(...args);

@@ -15,6 +15,7 @@ import { Readable, Writable } from './streams.js';
 import { browserHttpFetch } from './transport-policy.mjs';
 import { isGvisorAvailable, GvisorSocket, GvisorServer as _GvisorTcpServer } from './gvisor-net.js';
 import { isWispAvailable, wispConnect } from './wisp-client.js';
+import { recordNetworkMode } from './runtime-cache.js';
 
 const _encoder = new TextEncoder();
 const _decoder = new TextDecoder('utf-8');
@@ -788,6 +789,8 @@ class ClientRequest extends Writable {
     sock.connect(port, hostname, () => {
       sock.write(head);
       if (body && body.byteLength) sock.write(body);
+      // Cross-tab runtime cache: last-known-good transport is now gvisor.
+      try { recordNetworkMode('gvisor'); } catch { /* ignore */ }
     });
     this._wireSocketToResponse(sock);
   }
@@ -813,6 +816,8 @@ class ClientRequest extends Writable {
       try {
         sock.write(head);
         if (body && body.byteLength) sock.write(body);
+        // Cross-tab runtime cache: last-known-good transport is now wisp.
+        try { recordNetworkMode('wisp'); } catch { /* ignore */ }
       } catch (err) {
         this._clearTimeoutTimer();
         if (!this._destroyed) this.emit('error', err);
