@@ -218,6 +218,13 @@ function _serializeEnv(env) {
 /**
  * Restore a saved session, if present.
  *
+ * Files are written into whichever MEMFS is currently active (shell
+ * singleton pre-Wasm, runtime-owned memfs post-Wasm) AND mirrored into
+ * `globalThis.__edgeInitialFiles` so `initEdgeJS({files})` populates the
+ * runtime's fresh memfs at boot time. This is what closes the restore →
+ * Wasm-boot race: without it, a pre-Wasm restore writes into a singleton
+ * that `_setShellMemfs(_sharedMemfs)` will orphan a moment later.
+ *
  * @returns {Promise<{
  *   restored: boolean,
  *   files: number,
@@ -240,6 +247,22 @@ export async function restoreSession() {
     let filesRestored = 0;
     const active = await _getActiveMemfs();
     if (files && typeof files === 'object') {
+      // Seed the Wasm runtime's future memfs via initEdgeJS({files}).
+      // terminal.js reads globalThis.__edgeInitialFiles right before it
+      // calls initEdgeJS, and initEdgeJS populates the fresh per-runtime
+      // memfs from it — so any files we restore here survive the
+      // `_setShellMemfs` swap that happens when the Wasm boot completes.
+      if (typeof globalThis !== 'undefined') {
+        const existing = (globalThis.__edgeInitialFiles && typeof globalThis.__edgeInitialFiles === 'object')
+          ? globalThis.__edgeInitialFiles
+          : {};
+        const merged = { ...existing };
+        for (const [path, bytes] of Object.entries(files)) {
+          merged[path] = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        }
+        globalThis.__edgeInitialFiles = merged;
+      }
+
       if (active.kind === 'runtime') {
         const rfs = active.runtime.fs;
         for (const [path, bytes] of Object.entries(files)) {
@@ -259,6 +282,10 @@ export async function restoreSession() {
             filesRestored++;
           } catch {}
         }
+      } else {
+        // Neither runtime nor singleton available — but we still counted
+        // these files in __edgeInitialFiles, so report them as restored.
+        filesRestored = Object.keys(files).length;
       }
     }
 
