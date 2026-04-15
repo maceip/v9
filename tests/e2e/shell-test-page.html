@@ -88,15 +88,32 @@
         // Minimal require for testing installed packages
         const { NapiBridge } = globalThis.__napiBridge || {};
         if (NapiBridge) return NapiBridge.require(name, fromDir);
-        // Fallback: read and eval the package main
-        const pkgPath = (fromDir || '/workspace') + '/node_modules/' + name + '/package.json';
-        const pkg = JSON.parse(new TextDecoder().decode(defaultMemfs.readFile(pkgPath)));
-        const mainFile = pkg.main || 'index.js';
-        const mainPath = (fromDir || '/workspace') + '/node_modules/' + name + '/' + mainFile;
-        const src = new TextDecoder().decode(defaultMemfs.readFile(mainPath));
+        // Fallback: read and eval the package main. Real Node.js resolution
+        // handles leading ./ in pkg.main, missing .js extensions, and directory
+        // mains — emulate just enough of that for the test harness.
+        const pkgDir = (fromDir || '/workspace') + '/node_modules/' + name;
+        const pkg = JSON.parse(new TextDecoder().decode(
+          defaultMemfs.readFile(pkgDir + '/package.json')
+        ));
+        const rawMain = String(pkg.main || 'index.js').replace(/^\.\//, '');
+        const resolveMain = (base) => {
+          // 1. Exact file, 2. with .js, 3. index.js inside directory.
+          for (const candidate of [base, base + '.js', base + '/index.js']) {
+            try {
+              const src = defaultMemfs.readFile(candidate);
+              if (src) return { path: candidate, src };
+            } catch { /* try next */ }
+          }
+          return null;
+        };
+        const resolved = resolveMain(pkgDir + '/' + rawMain);
+        if (!resolved) {
+          throw new Error(`stub require: cannot resolve main for ${name} at ${pkgDir}/${rawMain}`);
+        }
+        const srcText = new TextDecoder().decode(resolved.src);
         const mod = { exports: {} };
-        const fn = new Function('module', 'exports', 'require', '__filename', '__dirname', src);
-        fn(mod, mod.exports, () => {}, mainPath, mainPath.replace(/\/[^/]+$/, ''));
+        const fn = new Function('module', 'exports', 'require', '__filename', '__dirname', srcText);
+        fn(mod, mod.exports, () => {}, resolved.path, resolved.path.replace(/\/[^/]+$/, ''));
         return mod.exports;
       },
     };

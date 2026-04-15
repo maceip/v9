@@ -582,7 +582,25 @@ async function handleFetchRequest(req, res, origin) {
     let bodyBytes = null;
     if (init.body64) bodyBytes = Buffer.from(String(init.body64), 'base64');
 
+    // Sensitive headers that must NOT leak across a cross-origin redirect.
+    // Matches what fetch() spec + browsers strip on cross-origin redirect.
+    const _SENSITIVE_HEADERS = new Set([
+      'authorization',
+      'cookie',
+      'cookie2',
+      'proxy-authorization',
+      'www-authenticate',
+    ]);
+    function _originOf(urlStr) {
+      const u = new URL(urlStr);
+      // Include scheme + host + port so a redirect from https://a.com to
+      // http://a.com still counts as cross-origin (port differs).
+      const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+      return `${u.protocol}//${u.hostname}:${port}`;
+    }
+
     let hop;
+    let prevOrigin = _originOf(currentUrl);
     for (let i = 0; i <= FETCH_MAX_REDIRECTS; i++) {
       const target = new URL(currentUrl);
       if (target.protocol !== 'http:' && target.protocol !== 'https:') {
@@ -607,15 +625,38 @@ async function handleFetchRequest(req, res, origin) {
           throw new GuardError('too_many_redirects',
             `redirect chain exceeded ${FETCH_MAX_REDIRECTS} hops`);
         }
-        currentUrl = new URL(hop.headers.location, currentUrl).toString();
-        // RFC 7231: 303 forces GET. 301/302 with non-GET historically
-        // downgrade to GET for most clients; match that behavior.
-        if (hop.status === 303 || (method !== 'GET' && method !== 'HEAD')) {
+        const nextUrl = new URL(hop.headers.location, currentUrl).toString();
+        const nextOrigin = _originOf(nextUrl);
+
+        // Cross-origin redirect: strip sensitive credential headers so they
+        // don't leak to the new origin. Matches fetch() spec + browsers.
+        if (nextOrigin !== prevOrigin) {
+          for (const k of Object.keys(headersIn)) {
+            if (_SENSITIVE_HEADERS.has(k.toLowerCase())) delete headersIn[k];
+          }
+        }
+
+        // RFC 7231: 303 forces GET and drops the body.
+        // RFC 7538 / 7231: 307 and 308 preserve method and body (whole point
+        //   of those status codes).
+        // 301/302 with non-GET/HEAD historically get downgraded to GET for
+        //   backwards-compat with the broken web.
+        if (hop.status === 303) {
+          method = 'GET';
+          bodyBytes = null;
+          delete headersIn['Content-Length'];
+          delete headersIn['content-length'];
+        } else if (hop.status !== 307 && hop.status !== 308
+                   && method !== 'GET' && method !== 'HEAD') {
           method = 'GET';
           bodyBytes = null;
           delete headersIn['Content-Length'];
           delete headersIn['content-length'];
         }
+        // 307/308: method + body preserved untouched. Nothing to do.
+
+        currentUrl = nextUrl;
+        prevOrigin = nextOrigin;
         continue;
       }
       break;

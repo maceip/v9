@@ -84,8 +84,14 @@ export function clearLastNetworkMode() {
 // ─── Package tarball cache (IndexedDB) ──────────────────────────────
 
 const DB_NAME = 'v9-runtime-cache';
-const DB_VERSION = 1;
+// Version 2 added the `session` store (owned by session-persistence.js).
+// Both modules share this DB, so whichever opens first must create BOTH
+// stores — otherwise the second one sees a half-populated schema and
+// session-persistence's upgrade handler never runs (it's at the same
+// version). Keep this upgrade handler in sync with session-persistence.js.
+const DB_VERSION = 2;
 const STORE_PACKAGES = 'packages';
+const STORE_SESSION = 'session';
 const DEFAULT_CACHE_CAP_BYTES = 128 * 1024 * 1024; // 128 MB
 
 /** @type {Promise<IDBDatabase>|null} */
@@ -109,6 +115,11 @@ function _openDb() {
         const store = db.createObjectStore(STORE_PACKAGES, { keyPath: 'key' });
         store.createIndex('name', 'name', { unique: false });
         store.createIndex('tsAccessed', 'tsAccessed', { unique: false });
+      }
+      // Session store is owned by session-persistence.js but we create it
+      // here too so opening order doesn't matter. Idempotent via contains().
+      if (!db.objectStoreNames.contains(STORE_SESSION)) {
+        db.createObjectStore(STORE_SESSION, { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
