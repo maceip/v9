@@ -14,6 +14,9 @@
   <!-- Goldman + IBM Plex Mono — loaded async to avoid blocking render -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Warm CDN connections for iframe dependencies (xterm.js, react/ink) -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://esm.sh" crossorigin>
   <link rel="preload" href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" as="style" crossorigin onload="this.onload=null;this.rel='stylesheet'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Goldman:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript>
 
@@ -1043,18 +1046,18 @@
   <!-- ── Main viewport ── -->
   <div id="viewport">
     <!-- Floating background icons -->
-    <img class="bg-icon" src="icons/Terminal.svg" alt="" style="top:8%;left:5%">
-    <img class="bg-icon" src="icons/Database.svg" alt="" style="top:15%;right:8%">
-    <img class="bg-icon" src="icons/Wifi.svg" alt="" style="top:60%;left:3%">
-    <img class="bg-icon" src="icons/Monitor.svg" alt="" style="top:75%;right:6%">
-    <img class="bg-icon" src="icons/Puzzle.svg" alt="" style="top:30%;left:88%">
-    <img class="bg-icon" src="icons/FlaskConical.svg" alt="" style="top:85%;left:45%">
-    <img class="bg-icon" src="icons/Layers.svg" alt="" style="top:5%;left:50%">
-    <img class="bg-icon" src="icons/Bug.svg" alt="" style="top:45%;left:92%">
-    <img class="bg-icon" src="icons/Radio.svg" alt="" style="top:50%;right:90%">
-    <img class="bg-icon" src="icons/GitBranch.svg" alt="" style="top:90%;left:15%">
-    <img class="bg-icon" src="icons/Wrench.svg" alt="" style="top:20%;left:30%">
-    <img class="bg-icon" src="icons/Play.svg" alt="" style="top:70%;right:25%">
+    <img class="bg-icon" src="icons/Terminal.svg" alt="" style="top:8%;left:5%" loading="lazy">
+    <img class="bg-icon" src="icons/Database.svg" alt="" style="top:15%;right:8%" loading="lazy">
+    <img class="bg-icon" src="icons/Wifi.svg" alt="" style="top:60%;left:3%" loading="lazy">
+    <img class="bg-icon" src="icons/Monitor.svg" alt="" style="top:75%;right:6%" loading="lazy">
+    <img class="bg-icon" src="icons/Puzzle.svg" alt="" style="top:30%;left:88%" loading="lazy">
+    <img class="bg-icon" src="icons/FlaskConical.svg" alt="" style="top:85%;left:45%" loading="lazy">
+    <img class="bg-icon" src="icons/Layers.svg" alt="" style="top:5%;left:50%" loading="lazy">
+    <img class="bg-icon" src="icons/Bug.svg" alt="" style="top:45%;left:92%" loading="lazy">
+    <img class="bg-icon" src="icons/Radio.svg" alt="" style="top:50%;right:90%" loading="lazy">
+    <img class="bg-icon" src="icons/GitBranch.svg" alt="" style="top:90%;left:15%" loading="lazy">
+    <img class="bg-icon" src="icons/Wrench.svg" alt="" style="top:20%;left:30%" loading="lazy">
+    <img class="bg-icon" src="icons/Play.svg" alt="" style="top:70%;right:25%" loading="lazy">
 
     <div id="fog"></div>
     <div id="spotlight"></div>

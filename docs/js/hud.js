@@ -206,6 +206,8 @@ export class TacticalHUD {
     if (this._visible) return;
     this._visible = true;
     this._el.classList.add('visible');
+    // Restart the memory meter rAF (it stops when hidden)
+    this._startMemMeter();
     requestAnimationFrame(() => this._layoutConnector());
   }
 
@@ -239,8 +241,8 @@ export class TacticalHUD {
 
   _startMemMeter() {
     const tick = () => {
+      if (!this._visible) return; // Don't request next frame when hidden
       this._memRAF = requestAnimationFrame(tick);
-      if (!this._visible) return;
       const mem = performance.memory;
       if (mem) {
         const used = mem.usedJSHeapSize;

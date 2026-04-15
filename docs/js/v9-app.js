@@ -55,12 +55,18 @@ try {
   setProgress(50);
 } catch (e) { setProgress(50); }
 
+let _fluidStopTimer = null;
 navbar.addEventListener('mouseenter', () => {
+  if (_fluidStopTimer) { clearTimeout(_fluidStopTimer); _fluidStopTimer = null; }
   if (fluid) { fluid.start(); navbar.classList.add('fluid-active'); }
 });
 navbar.addEventListener('mouseleave', () => {
   navbar.classList.remove('fluid-active');
-  setTimeout(() => { if (fluid && !navbar.classList.contains('fluid-active')) fluid.stop(); }, 2000);
+  if (_fluidStopTimer) clearTimeout(_fluidStopTimer);
+  _fluidStopTimer = setTimeout(() => {
+    _fluidStopTimer = null;
+    if (fluid && !navbar.classList.contains('fluid-active')) fluid.stop();
+  }, 1500);
 });
 navbar.addEventListener('mousemove', (e) => {
   if (!fluid || !fluid.active) return;

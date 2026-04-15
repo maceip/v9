@@ -30,8 +30,12 @@ export function initIcons() {
     targetMy = (e.clientY / window.innerHeight - 0.5) * 2;
   });
 
+  let _iconsPaused = false;
+  let _iconsRaf = null;
+
   function tick() {
-    requestAnimationFrame(tick);
+    if (_iconsPaused) { _iconsRaf = null; return; }
+    _iconsRaf = requestAnimationFrame(tick);
 
     // Lerp mouse for smooth movement (0.08 = gentle lag)
     smoothMx += (targetMx - smoothMx) * 0.08;
@@ -53,5 +57,21 @@ export function initIcons() {
       icon.el.style.transform = `translate(${px}px, ${py + floatY}px) rotate(${floatR}deg)`;
     });
   }
+
+  function resumeIcons() {
+    if (!_iconsPaused) return;
+    _iconsPaused = false;
+    if (!_iconsRaf) tick();
+  }
+  function pauseIcons() {
+    _iconsPaused = true;
+    if (_iconsRaf) { cancelAnimationFrame(_iconsRaf); _iconsRaf = null; }
+  }
+
+  // Pause when tab is hidden
+  document.addEventListener('visibilitychange', () => {
+    document.hidden ? pauseIcons() : resumeIcons();
+  });
+
   tick();
 }
