@@ -19,6 +19,7 @@ import { SwipeDismiss, swipeParams } from './swipe.js';
 import { TacticalHUD } from './hud.js';
 import { initThemeSwitcher } from './theme.js';
 import { DPad } from './dpad.js';
+import { showOnboarding, isFirstVisit, markVisited } from './onboarding.js';
 
 // ── DOM refs ──
 const navbar = document.getElementById('navbar');
@@ -263,6 +264,11 @@ const dpad = new DPad(claudeTerm.iframe);
 setProgress(75);
 initIcons();
 setProgress(100);
+
+// ── First-visit onboarding popover ──
+if (isFirstVisit()) {
+  showOnboarding().then(() => markVisited());
+}
 
 // ── Click/tap to zoom in — EACH terminal zooms independently ──
 let _activatedByTouch = false;
