@@ -182,16 +182,26 @@ export class GlassScene {
   constructor(canvas) {
     this.canvas = canvas;
     this._raf = null;
+    this._compiled = false;
     this.fog = 0.12;
     this.glassBlur = 0.4;
     this.isDark = true;
     this.mouse = { x: 0.5, y: 0.5 };
 
-    // Tunable shader params (live-editable via dial.js)
+    // Tunable shader params
     this.params = { ...DEFAULTS };
 
+    // Defer WebGL context + shader compilation to first start() call
+    this.gl = null;
+  }
+
+  /** Lazy-init: acquire WebGL context and compile shaders on first use. */
+  _ensureCompiled() {
+    if (this._compiled) return;
+    this._compiled = true;
+
     const p = { alpha: false, depth: false, stencil: false, antialias: false, preserveDrawingBuffer: false };
-    const gl = canvas.getContext('webgl2', p) || canvas.getContext('webgl', p);
+    const gl = this.canvas.getContext('webgl2', p) || this.canvas.getContext('webgl', p);
     if (!gl) return;
     this.gl = gl;
 
@@ -223,7 +233,7 @@ export class GlassScene {
     const s = gl.createShader(type);
     gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      console.warn('Glass shader error:', gl.getShaderInfoLog(s));
+      console.debug('Glass shader error:', gl.getShaderInfoLog(s));
     }
     return s;
   }
@@ -239,7 +249,9 @@ export class GlassScene {
   }
 
   start() {
-    if (this._running || !this.gl) return;
+    if (this._running) return;
+    this._ensureCompiled();
+    if (!this.gl) return;
     this._running = true;
     this.resize();
     this._t0 = performance.now();

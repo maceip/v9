@@ -55,22 +55,26 @@ export function initThemeSwitcher() {
   });
 
   // When iframe loads, send it the current theme
-  const cliFrame = document.getElementById('cli-frame');
-  if (cliFrame) {
-    const observer = new MutationObserver(() => {
-      if (cliFrame.classList.contains('visible')) {
-        sendTermTheme(THEMES[currentIdx]);
-      }
-    });
-    observer.observe(cliFrame, { attributes: true, attributeFilter: ['class'] });
+  for (const frameId of ['cli-frame', 'cli-frame-2']) {
+    const frame = document.getElementById(frameId);
+    if (frame) {
+      const observer = new MutationObserver(() => {
+        if (frame.classList.contains('visible')) {
+          sendTermTheme(THEMES[currentIdx]);
+        }
+      });
+      observer.observe(frame, { attributes: true, attributeFilter: ['class'] });
+    }
   }
 }
 
 function sendTermTheme(theme) {
-  const cliFrame = document.getElementById('cli-frame');
-  if (cliFrame?.contentWindow) {
-    try {
-      cliFrame.contentWindow.postMessage({ type: 'v9:set-theme', theme: theme.term }, '*');
-    } catch { /* cross-origin */ }
+  for (const id of ['cli-frame', 'cli-frame-2']) {
+    const frame = document.getElementById(id);
+    if (frame?.contentWindow) {
+      try {
+        frame.contentWindow.postMessage({ type: 'v9:set-theme', theme: theme.term }, '*');
+      } catch { /* cross-origin */ }
+    }
   }
 }

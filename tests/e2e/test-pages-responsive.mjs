@@ -113,6 +113,7 @@ async function runTests() {
     // ─── DESKTOP: top navbar, side-by-side terminals ──────────────
     console.log('\n── Scenario: desktop (1440x900, mouse pointer) ──');
     let ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: false });
+    await ctx.addInitScript(() => localStorage.setItem('v9-visited', '1'));
     let page = await ctx.newPage();
     await page.goto(`${baseUrl}/docs/index.html`, { timeout: TIMEOUT, waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
@@ -147,6 +148,7 @@ async function runTests() {
     // ─── PHONE PORTRAIT: bottom navbar, stacked terminals ─────────
     console.log('\n── Scenario: phone portrait (390x844, touch) ──');
     ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    await ctx.addInitScript(() => localStorage.setItem('v9-visited', '1'));
     page = await ctx.newPage();
     await page.goto(`${baseUrl}/docs/index.html`, { timeout: TIMEOUT, waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
@@ -188,6 +190,7 @@ async function runTests() {
     // ─── FOLD UNFOLDED LANDSCAPE: left side rail, side-by-side ────
     console.log('\n── Scenario: foldable unfolded landscape (2076x1080, touch) ──');
     ctx = await browser.newContext({ viewport: { width: 2076, height: 1080 }, hasTouch: true });
+    await ctx.addInitScript(() => localStorage.setItem('v9-visited', '1'));
     page = await ctx.newPage();
     await page.goto(`${baseUrl}/docs/index.html`, { timeout: TIMEOUT, waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
@@ -232,6 +235,7 @@ async function runTests() {
     // ─── v9 label vertical in foldable mode ──────────────────────
     console.log('\n── Scenario: v9 label rotates in foldable landscape ──');
     ctx = await browser.newContext({ viewport: { width: 2076, height: 1080 }, hasTouch: true });
+    await ctx.addInitScript(() => localStorage.setItem('v9-visited', '1'));
     page = await ctx.newPage();
     await page.goto(`${baseUrl}/docs/index.html`, { timeout: TIMEOUT, waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1000);

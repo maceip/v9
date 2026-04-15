@@ -111,6 +111,7 @@ async function runTests() {
   const context = await browser.newContext({
     viewport: { width: 1400, height: 900 },
   });
+  await context.addInitScript(() => localStorage.setItem('v9-visited', '1'));
   const page = await context.newPage();
 
   const consoleErrors = [];

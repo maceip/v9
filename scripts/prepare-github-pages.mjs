@@ -41,7 +41,13 @@ rmDir(docsWeb);
 rmDir(docsBridge);
 mkdirSync(docsDist, { recursive: true });
 
-cpSync(srcWeb, docsWeb, { recursive: true });
+// Dev/test pages that should not be served on the public Pages site.
+const WEB_EXCLUDE = new Set(['v9-net-test.html']);
+
+cpSync(srcWeb, docsWeb, {
+  recursive: true,
+  filter: (src) => !WEB_EXCLUDE.has(src.split('/').pop()),
+});
 cpSync(srcBridge, docsBridge, { recursive: true });
 
 /** Project Pages base is /<repo>/; import maps must not use site-root /napi-bridge/ (breaks under /repo/). */
