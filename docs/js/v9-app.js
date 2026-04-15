@@ -426,5 +426,3 @@ const hud = new TacticalHUD();
 
 // ── Theme crayon switcher ──
 initThemeSwitcher();
-
-console.log('[v9] Page ready (two-terminal layout).');

@@ -1,6 +1,6 @@
 /**
  * Navier-Stokes fluid simulation for navbar hover flourish.
- * Ported from tmp/TODO/mouse-project/src/Fluid.js — standalone, no bundler.
+ * Navier-Stokes fluid simulation — standalone, no bundler.
  * Inlines shader sources directly.
  */
 

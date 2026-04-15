@@ -223,7 +223,7 @@ export class GlassScene {
     const s = gl.createShader(type);
     gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      console.warn('Glass shader error:', gl.getShaderInfoLog(s));
+      console.debug('Glass shader error:', gl.getShaderInfoLog(s));
     }
     return s;
   }

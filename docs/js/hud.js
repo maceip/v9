@@ -23,6 +23,11 @@ export class TacticalHUD {
     this._keyBuf = '';
     this._memRAF = null;
     this._el = null;
+    /** @type {number|null} */
+    this._uaMemBytes = null;
+    this._uaMemFetchPending = false;
+    this._uaMemRejected = false;
+    this._lastUaMemAt = 0;
 
     this._injectFont();
     this._buildDOM();
@@ -214,6 +219,24 @@ export class TacticalHUD {
   }
 
   // ── Memory meter ──
+  _memMeterUptimeFallback() {
+    const mins = Math.floor(performance.now() / 60000);
+    this._meter.style.width = '0%';
+    this._meter.style.background = 'var(--frame-joint)';
+    this._meterText.textContent = `Uptime: ${mins}m`;
+  }
+
+  _memMeterFromBytes(bytes) {
+    const usedMb = bytes / 1048576;
+    const refBytes = 512 * 1048576;
+    const pct = Math.min(100, (bytes / refBytes) * 100);
+    this._meter.style.width = `${pct}%`;
+    if (pct < 50) this._meter.style.background = '#9bff00';
+    else if (pct < 80) this._meter.style.background = '#ffcc00';
+    else this._meter.style.background = '#ff4444';
+    this._meterText.textContent = `${usedMb.toFixed(0)} MB`;
+  }
+
   _startMemMeter() {
     const tick = () => {
       this._memRAF = requestAnimationFrame(tick);
@@ -228,12 +251,35 @@ export class TacticalHUD {
         else if (pct < 80) this._meter.style.background = '#ffcc00';
         else this._meter.style.background = '#ff4444';
         this._meterText.textContent = `${(used / 1048576).toFixed(0)}/${(total / 1048576).toFixed(0)} MB`;
-      } else {
-        const est = Math.random() * 30 + 40;
-        this._meter.style.width = `${est}%`;
-        this._meter.style.background = '#9bff00';
-        this._meterText.textContent = `~${est.toFixed(0)}%`;
+        return;
       }
+
+      const measureUa = performance.measureUserAgentSpecificMemory?.bind(performance);
+      if (!this._uaMemRejected && typeof measureUa === 'function') {
+        const now = performance.now();
+        if (!this._uaMemFetchPending && now - this._lastUaMemAt > 4000) {
+          this._uaMemFetchPending = true;
+          this._lastUaMemAt = now;
+          measureUa()
+            .then((m) => {
+              this._uaMemBytes = typeof m?.bytes === 'number' ? m.bytes : null;
+              this._uaMemFetchPending = false;
+            })
+            .catch(() => {
+              this._uaMemRejected = true;
+              this._uaMemBytes = null;
+              this._uaMemFetchPending = false;
+            });
+        }
+        if (this._uaMemBytes != null) {
+          this._memMeterFromBytes(this._uaMemBytes);
+        } else {
+          this._memMeterUptimeFallback();
+        }
+        return;
+      }
+
+      this._memMeterUptimeFallback();
     };
     tick();
   }
