@@ -24,10 +24,19 @@
 
 import { gunzipSync } from './zlib.js';
 import { cacheGetPackage, cachePutPackage, cacheDeletePackage } from './runtime-cache.js';
+import { browserHttpFetch } from './transport-policy.mjs';
 
 const REGISTRY = 'https://registry.npmjs.org';
 const _decoder = new TextDecoder();
 const _encoder = new TextEncoder();
+
+// Route all registry traffic through the transport policy so the auto-fallback
+// chain (native → tier-3 proxy → tier-2 wisp) engages on CORS / network
+// failures. Using browserHttpFetch directly means the shell's npm install path
+// does not depend on globalThis.fetch being patched by node-polyfills.js —
+// minimal test harnesses that import shell.js without loading the full
+// polyfill bundle still get the chain.
+const _fetch = (url, init) => browserHttpFetch(String(url), init || {});
 
 // ─── Tar extraction ─────────────────────────────────────────────────
 // npm tarballs are .tgz (gzip-compressed tar). Tar is a simple format:
@@ -127,7 +136,7 @@ function extractTgzToMemfs(tgzData, destDir, memfs) {
  */
 async function fetchPackageMetadata(packageName) {
   const url = `${REGISTRY}/${encodeURIComponent(packageName).replace('%40', '@')}`;
-  const res = await fetch(url, {
+  const res = await _fetch(url, {
     headers: { 'Accept': 'application/json' },
   });
   if (!res.ok) {
@@ -143,7 +152,7 @@ async function fetchPackageMetadata(packageName) {
  */
 async function fetchPackageMetadataAbbreviated(packageName) {
   const url = `${REGISTRY}/${encodeURIComponent(packageName).replace('%40', '@')}`;
-  const res = await fetch(url, {
+  const res = await _fetch(url, {
     headers: { 'Accept': 'application/vnd.npm.install-v1+json' },
   });
   if (!res.ok) {
@@ -158,7 +167,7 @@ async function fetchPackageMetadataAbbreviated(packageName) {
  * @returns {Promise<Uint8Array>}
  */
 async function fetchTarball(tarballUrl) {
-  const res = await fetch(tarballUrl);
+  const res = await _fetch(tarballUrl);
   if (!res.ok) {
     throw new Error(`npm tarball fetch failed: ${res.status} ${res.statusText}`);
   }
@@ -412,10 +421,18 @@ export function npm(args, options = {}) {
         'Usage: npm <command>',
         '',
         'Commands:',
-        '  npm install <pkg> [<pkg> ...]   Install packages',
-        '  npm i <pkg>                     Alias for install',
-        '  npm list                        List installed packages',
-        '  npm ls                          Alias for list',
+        '  npm install [<pkg> ...]        Install packages (or deps from package.json)',
+        '  npm uninstall <pkg> [...]      Remove packages (aliases: remove, rm)',
+        '  npm list                       List installed packages (alias: ls)',
+        '  npm run [<script>]             Run a script from package.json',
+        '  npm start                      Alias for: npm run start',
+        '  npm test                       Alias for: npm run test',
+        '  npm init [-y]                  Create a package.json',
+        '  npm root [-g]                  Print node_modules path',
+        '  npm prefix                     Print project root',
+        '  npm version                    Print version info',
+        '  npm view <pkg> [field]         Print registry info about a package',
+        '  npm exec <cmd> [args...]       Run a local/installed binary (alias: npx)',
         '',
       ].join('\n'),
       stderr: '',
@@ -427,8 +444,74 @@ export function npm(args, options = {}) {
     return npmInstall(args.slice(1), options);
   }
 
+  if (subcommand === 'uninstall' || subcommand === 'remove' || subcommand === 'rm' || subcommand === 'un') {
+    return npmUninstall(args.slice(1), options);
+  }
+
   if (subcommand === 'list' || subcommand === 'ls') {
     return npmList(options);
+  }
+
+  if (subcommand === 'run' || subcommand === 'run-script') {
+    return npmRun(args.slice(1), options);
+  }
+
+  if (subcommand === 'start') {
+    return npmRun(['start', ...args.slice(1)], options);
+  }
+
+  if (subcommand === 'test' || subcommand === 't' || subcommand === 'tst') {
+    return npmRun(['test', ...args.slice(1)], options);
+  }
+
+  if (subcommand === 'init' || subcommand === 'create') {
+    return npmInit(args.slice(1), options);
+  }
+
+  if (subcommand === 'root') {
+    return npmRoot(args.slice(1), options);
+  }
+
+  if (subcommand === 'prefix') {
+    const cwd = options.cwd || '/workspace';
+    return { stdout: cwd + '\n', stderr: '', exitCode: 0 };
+  }
+
+  if (subcommand === 'version' || subcommand === '--version' || subcommand === '-v') {
+    return {
+      stdout: JSON.stringify({ 'in-tab-npm': '0.1.0', node: 'edgejs-wasm' }, null, 2) + '\n',
+      stderr: '',
+      exitCode: 0,
+    };
+  }
+
+  if (subcommand === 'view' || subcommand === 'info' || subcommand === 'show') {
+    return npmView(args.slice(1));
+  }
+
+  if (subcommand === 'exec' || subcommand === 'x') {
+    return npmExec(args.slice(1), options);
+  }
+
+  if (subcommand === 'whoami') {
+    return { stdout: 'anonymous\n', stderr: '', exitCode: 0 };
+  }
+
+  if (subcommand === 'ping') {
+    return { stdout: 'registry: ' + REGISTRY + '\n', stderr: '', exitCode: 0 };
+  }
+
+  if (subcommand === 'config' || subcommand === 'c') {
+    return { stdout: 'registry=' + REGISTRY + '\n', stderr: '', exitCode: 0 };
+  }
+
+  if (subcommand === 'cache') {
+    // npm cache clean / ls / verify — no-ops against our IndexedDB cache
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
+
+  if (subcommand === 'audit' || subcommand === 'outdated' || subcommand === 'fund' || subcommand === 'doctor') {
+    return { stdout: '(no-op in in-tab npm)\n', stderr: '', exitCode: 0 };
   }
 
   return {
@@ -436,6 +519,289 @@ export function npm(args, options = {}) {
     stderr: `npm: unknown command "${subcommand}"\n`,
     exitCode: 1,
   };
+}
+
+// ─── npm run / start / test ─────────────────────────────────────────
+
+/**
+ * npm run [<script>] [-- <extra args>]
+ *
+ * With no script name, lists all available scripts from package.json.
+ * Otherwise looks up the script, then dispatches the script command
+ * string through the shell parser so all other shell commands (node,
+ * echo, &&, pipes) Just Work.
+ */
+function npmRun(args, options) {
+  const cwd = options.cwd || '/workspace';
+  const memfs = options.memfs;
+  if (!memfs) return { stdout: '', stderr: 'npm: no filesystem available\n', exitCode: 1 };
+
+  let pkg;
+  try {
+    pkg = JSON.parse(_decoder.decode(memfs.readFile(cwd + '/package.json')));
+  } catch {
+    return {
+      stdout: '',
+      stderr: `npm ERR! Could not read ${cwd}/package.json\n`,
+      exitCode: 1,
+    };
+  }
+
+  const scripts = pkg.scripts || {};
+
+  // npm run (no args) → list scripts, real npm style
+  if (args.length === 0) {
+    const names = Object.keys(scripts);
+    if (names.length === 0) {
+      return {
+        stdout: `Lifecycle scripts included in ${pkg.name || 'workspace'}@${pkg.version || '0.0.0'}:\n  (none)\n`,
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    const lines = [`Lifecycle scripts included in ${pkg.name || 'workspace'}@${pkg.version || '0.0.0'}:`];
+    for (const name of names) {
+      lines.push(`  ${name}`);
+      lines.push(`    ${scripts[name]}`);
+    }
+    return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+  }
+
+  const scriptName = args[0];
+  const extra = args.slice(1);
+  // Strip leading `--` that real npm uses to separate script args.
+  if (extra[0] === '--') extra.shift();
+
+  const scriptCmd = scripts[scriptName];
+  if (!scriptCmd) {
+    // Mirror real npm's "test" and "start" defaults when absent.
+    if (scriptName === 'test') {
+      return {
+        stdout: '',
+        stderr: 'npm ERR! Missing script: "test"\nnpm ERR! Did you mean one of these?\n    npm test\n',
+        exitCode: 1,
+      };
+    }
+    if (scriptName === 'start') {
+      return _runThroughShell('node server.js' + (extra.length ? ' ' + extra.join(' ') : ''), cwd, options);
+    }
+    return { stdout: '', stderr: `npm ERR! Missing script: "${scriptName}"\n`, exitCode: 1 };
+  }
+
+  const fullCmd = extra.length ? `${scriptCmd} ${extra.join(' ')}` : scriptCmd;
+  const header = `\n> ${pkg.name || 'workspace'}@${pkg.version || '0.0.0'} ${scriptName}\n> ${fullCmd}\n\n`;
+
+  const asyncWork = (async () => {
+    const result = await _runThroughShellAsync(fullCmd, cwd, options);
+    return {
+      stdout: header + (result.stdout || ''),
+      stderr: result.stderr || '',
+      exitCode: result.exitCode ?? 0,
+    };
+  })();
+  return { stdout: '', stderr: '', exitCode: 0, _async: asyncWork };
+}
+
+// Dispatch a command string through the shell-parser. We import lazily to
+// avoid a circular require at module load time (shell-commands.js already
+// imports npm.js).
+async function _runThroughShellAsync(cmdStr, cwd, options) {
+  const { executeCommandString } = await import('./shell-parser.js');
+  const result = executeCommandString(cmdStr, { cwd, env: options?.env || {} });
+  if (result._async) {
+    const r = await result._async;
+    return { stdout: r.stdout || '', stderr: r.stderr || '', exitCode: r.exitCode ?? 0 };
+  }
+  return { stdout: result.stdout || '', stderr: result.stderr || '', exitCode: result.exitCode ?? 0 };
+}
+
+function _runThroughShell(cmdStr, cwd, options) {
+  const work = _runThroughShellAsync(cmdStr, cwd, options);
+  return { stdout: '', stderr: '', exitCode: 0, _async: work };
+}
+
+// ─── npm uninstall ──────────────────────────────────────────────────
+
+function npmUninstall(packageNames, options) {
+  const cwd = options.cwd || '/workspace';
+  const memfs = options.memfs;
+  if (!memfs) return { stdout: '', stderr: 'npm: no filesystem available\n', exitCode: 1 };
+
+  const names = packageNames.filter(n => !n.startsWith('-'));
+  if (names.length === 0) {
+    return { stdout: '', stderr: 'npm: uninstall requires at least one package name\n', exitCode: 1 };
+  }
+
+  let removed = 0;
+  for (const name of names) {
+    const dir = cwd + '/node_modules/' + name;
+    try {
+      _rmrfMemfs(memfs, dir);
+      removed++;
+    } catch { /* not installed */ }
+  }
+
+  // Drop from package.json dependencies / devDependencies.
+  try {
+    const pkg = JSON.parse(_decoder.decode(memfs.readFile(cwd + '/package.json')));
+    let dirty = false;
+    for (const name of names) {
+      if (pkg.dependencies && pkg.dependencies[name]) { delete pkg.dependencies[name]; dirty = true; }
+      if (pkg.devDependencies && pkg.devDependencies[name]) { delete pkg.devDependencies[name]; dirty = true; }
+    }
+    if (dirty) {
+      memfs.writeFile(cwd + '/package.json', _encoder.encode(JSON.stringify(pkg, null, 2) + '\n'));
+    }
+  } catch { /* no package.json */ }
+
+  return {
+    stdout: `removed ${removed} package${removed !== 1 ? 's' : ''}\n`,
+    stderr: '',
+    exitCode: 0,
+  };
+}
+
+function _rmrfMemfs(memfs, path) {
+  let stat;
+  try { stat = memfs.stat(path); } catch { return; }
+  if (stat.isDirectory()) {
+    for (const entry of memfs.readdir(path)) {
+      _rmrfMemfs(memfs, path + '/' + entry);
+    }
+    try { memfs.rmdir(path); } catch {}
+  } else {
+    try { memfs.unlink(path); } catch {}
+  }
+}
+
+// ─── npm init ───────────────────────────────────────────────────────
+
+function npmInit(args, options) {
+  const cwd = options.cwd || '/workspace';
+  const memfs = options.memfs;
+  if (!memfs) return { stdout: '', stderr: 'npm: no filesystem available\n', exitCode: 1 };
+
+  const pkgPath = cwd + '/package.json';
+  let existing = null;
+  try { existing = JSON.parse(_decoder.decode(memfs.readFile(pkgPath))); } catch {}
+  if (existing) {
+    return {
+      stdout: '',
+      stderr: 'npm: package.json already exists\n',
+      exitCode: 1,
+    };
+  }
+
+  const name = (cwd.split('/').filter(Boolean).pop() || 'workspace').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const pkg = {
+    name,
+    version: '1.0.0',
+    description: '',
+    main: 'index.js',
+    scripts: { test: 'echo "Error: no test specified" && exit 1' },
+    keywords: [],
+    author: '',
+    license: 'ISC',
+  };
+  memfs.writeFile(pkgPath, _encoder.encode(JSON.stringify(pkg, null, 2) + '\n'));
+  return {
+    stdout: `Wrote to ${pkgPath}:\n\n${JSON.stringify(pkg, null, 2)}\n\n`,
+    stderr: '',
+    exitCode: 0,
+  };
+}
+
+// ─── npm root ───────────────────────────────────────────────────────
+
+function npmRoot(args, options) {
+  const cwd = options.cwd || '/workspace';
+  if (args.includes('-g') || args.includes('--global')) {
+    return { stdout: '/usr/local/lib/node_modules\n', stderr: '', exitCode: 0 };
+  }
+  return { stdout: cwd + '/node_modules\n', stderr: '', exitCode: 0 };
+}
+
+// ─── npm view / info ────────────────────────────────────────────────
+
+function npmView(args) {
+  const name = args[0];
+  if (!name) return { stdout: '', stderr: 'npm: view requires a package name\n', exitCode: 1 };
+
+  const field = args[1]; // optional: view express version
+
+  const work = (async () => {
+    try {
+      const packument = await fetchPackageMetadata(name);
+      if (field) {
+        // Resolve simple dotted paths on the latest version or the packument.
+        const latest = packument['dist-tags']?.latest;
+        const root = latest ? packument.versions?.[latest] || packument : packument;
+        const value = field.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), root);
+        return {
+          stdout: (value === undefined ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      const latest = packument['dist-tags']?.latest;
+      const vInfo = latest ? packument.versions?.[latest] : null;
+      const lines = [
+        `${packument.name}@${latest || '?'} | ${vInfo?.license || 'UNLICENSED'}`,
+        `deps: ${Object.keys(vInfo?.dependencies || {}).length}`,
+        `dist-tags:`,
+        ...Object.entries(packument['dist-tags'] || {}).map(([k, v]) => `  ${k}: ${v}`),
+        ``,
+        packument.description || '',
+      ];
+      return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+    } catch (err) {
+      return { stdout: '', stderr: `npm: view failed: ${err.message}\n`, exitCode: 1 };
+    }
+  })();
+  return { stdout: '', stderr: '', exitCode: 0, _async: work };
+}
+
+// ─── npm exec / npx ─────────────────────────────────────────────────
+//
+// Resolve a local bin:
+//   1. node_modules/.bin/<name>
+//   2. node_modules/<name>/package.json bin field
+// If found, dispatch it as `node <bin-path> [args...]` through the shell.
+
+function npmExec(args, options) {
+  const cwd = options.cwd || '/workspace';
+  const memfs = options.memfs;
+  if (!memfs) return { stdout: '', stderr: 'npm: no filesystem available\n', exitCode: 1 };
+  if (args.length === 0) return { stdout: '', stderr: 'npm: exec requires a command\n', exitCode: 1 };
+
+  const name = args[0];
+  const rest = args.slice(1);
+
+  // Check node_modules/<name>/package.json bin field
+  let binPath = null;
+  try {
+    const pkg = JSON.parse(_decoder.decode(memfs.readFile(`${cwd}/node_modules/${name}/package.json`)));
+    if (typeof pkg.bin === 'string') {
+      binPath = `${cwd}/node_modules/${name}/${pkg.bin}`;
+    } else if (pkg.bin && typeof pkg.bin === 'object') {
+      const first = pkg.bin[name] || Object.values(pkg.bin)[0];
+      if (first) binPath = `${cwd}/node_modules/${name}/${first}`;
+    } else {
+      const main = pkg.main || 'index.js';
+      binPath = `${cwd}/node_modules/${name}/${main}`;
+    }
+  } catch { /* not installed locally */ }
+
+  if (!binPath) {
+    return {
+      stdout: '',
+      stderr: `npm exec: ${name} is not installed. Try: npm i ${name}\n`,
+      exitCode: 1,
+    };
+  }
+
+  const cmdStr = `node ${binPath}${rest.length ? ' ' + rest.join(' ') : ''}`;
+  return _runThroughShell(cmdStr, cwd, options);
 }
 
 function npmInstall(packageNames, options) {
