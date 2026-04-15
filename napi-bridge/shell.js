@@ -14,7 +14,8 @@
  */
 
 import { executeCommandString } from './shell-parser.js';
-import { withCwd } from './shell-commands.js';
+import { withCwd, commands as shellCommands, getMemfs } from './shell-commands.js';
+import { resolvePath } from './memfs.js';
 
 /**
  * Create an interactive shell instance.
@@ -295,9 +296,57 @@ export function createShell(opts = {}) {
         continue;
       }
 
-      // Tab — basic completion
+      // Tab — completion
       if (ch === '\t') {
-        // TODO: filename/command completion
+        const textUpToCursor = line.slice(0, cursorPos);
+        const lastSpace = textUpToCursor.lastIndexOf(' ');
+        const prefix = textUpToCursor.slice(lastSpace + 1);
+        const isFirstToken = lastSpace === -1;
+
+        let matches = [];
+
+        if (isFirstToken) {
+          const cmdNames = Object.keys(shellCommands);
+          matches = cmdNames.filter(c => c.startsWith(prefix));
+        } else {
+          try {
+            const memfs = getMemfs();
+            let dirToSearch = cwd;
+            let filePrefix = prefix;
+            const slashIdx = prefix.lastIndexOf('/');
+            if (slashIdx !== -1) {
+              const dirPart = prefix.slice(0, slashIdx) || '/';
+              dirToSearch = resolvePath(dirPart, cwd);
+              filePrefix = prefix.slice(slashIdx + 1);
+            }
+            const entries = memfs.readdir(dirToSearch);
+            const filtered = entries.filter(e => e.startsWith(filePrefix));
+            matches = filtered.map(name => {
+              const fullPath = dirToSearch === '/' ? '/' + name : dirToSearch + '/' + name;
+              let suffix = '';
+              try {
+                if (memfs.stat(fullPath).isDirectory()) suffix = '/';
+              } catch {}
+              const dirPrefix = slashIdx !== -1 ? prefix.slice(0, slashIdx + 1) : '';
+              return dirPrefix + name + suffix;
+            });
+          } catch {}
+        }
+
+        if (matches.length === 1) {
+          const completion = matches[0] + (isFirstToken ? ' ' : '');
+          const before = line.slice(0, lastSpace + 1);
+          const after = line.slice(cursorPos);
+          line = before + completion + after;
+          cursorPos = before.length + completion.length;
+          redrawLine();
+        } else if (matches.length > 1) {
+          write('\r\n' + matches.join('  ') + '\r\n');
+          printPrompt();
+          write(line);
+          const diff = line.length - cursorPos;
+          if (diff > 0) write(`\x1b[${diff}D`);
+        }
         continue;
       }
 
