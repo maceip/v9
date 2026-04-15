@@ -35,6 +35,50 @@ const _env = () =>
   (typeof globalThis.process !== 'undefined' && globalThis.process?.env) || {};
 
 /**
+ * Baked-in hosted tier-3 fetch proxy. Same host as DEFAULT_WISP_URL —
+ * wisp-server-node serves `/fetch` alongside `/wisp/` on the same origin
+ * (see cmd/wisp-server-node/server.js). Used when NODEJS_IN_TAB_FETCH_PROXY
+ * / __V9_FETCH_PROXY_URL__ aren't explicitly set, so the auto-fallback
+ * chain has a working HTTPS-capable hop out of the box — no client config
+ * needed for the hosted demo.
+ *
+ * Overrides (all take precedence over the default):
+ *   - process.env.NODEJS_IN_TAB_FETCH_PROXY
+ *   - globalThis.__V9_FETCH_PROXY_URL__
+ *
+ * Kill switches (any → default not used, tier-3 disabled unless env set):
+ *   - globalThis.__V9_DISABLE_FETCH_PROXY__ === true
+ *   - localStorage['v9NoFetchProxy'] === '1'
+ *   - explicit off-value in the env var / global: '' | '0' | 'off' | 'no' | 'false'
+ */
+export const DEFAULT_FETCH_PROXY_URL = 'https://edge.stare.network/fetch';
+
+function _isFetchProxyKillSwitched() {
+  if (globalThis.__V9_DISABLE_FETCH_PROXY__ === true) return true;
+  try {
+    if (globalThis.localStorage && globalThis.localStorage.getItem('v9NoFetchProxy') === '1') {
+      return true;
+    }
+  } catch { /* storage blocked */ }
+  return false;
+}
+
+/**
+ * Resolved tier-3 fetch proxy URL. Precedence: env var → global → default.
+ * Explicit off-values and the kill switches collapse to null — tier-3 is
+ * skipped entirely in that case.
+ */
+function _getFetchProxyUrl() {
+  if (_isFetchProxyKillSwitched()) return null;
+  const raw = _env().NODEJS_IN_TAB_FETCH_PROXY || globalThis.__V9_FETCH_PROXY_URL__;
+  if (raw === '' || raw === '0' || raw === 'off' || raw === 'no' || raw === 'false') {
+    return null;
+  }
+  if (raw) return String(raw).replace(/\/$/, '');
+  return DEFAULT_FETCH_PROXY_URL;
+}
+
+/**
  * True only for a real Node process (not an in-tab polyfill that mimics process.versions).
  */
 export function isNodeHost() {
@@ -346,17 +390,18 @@ async function _wispFallbackAvailable() {
  *      have seen without auto-fallback.
  */
 export async function browserHttpFetch(url, init = {}) {
-  const env = _env();
-  const proxy = String(env.NODEJS_IN_TAB_FETCH_PROXY || '').replace(/\/$/, '');
+  const proxy = _getFetchProxyUrl();
   const mode = getHttpTransportMode();
 
-  // Explicit tier-3 selection — user-configured, go straight to proxy.
+  // Explicit tier-3 selection — caller set NODEJS_HTTP_TRANSPORT=fetch-proxy,
+  // so go straight to the proxy. Skip native entirely because the caller
+  // opted out of it.
   if (mode === 'fetch-proxy' && proxy) {
     return _fetchProxyFetch(url, init, proxy);
   }
 
-  // Try native fetch first. On AbortError propagate immediately — the caller
-  // aborted on purpose, don't retry via a fallback tier.
+  // Try native fetch first — fast path for CORS-enabled endpoints. On
+  // AbortError propagate immediately; the caller cancelled on purpose.
   try {
     return await fetch(url, init);
   } catch (err) {
@@ -367,17 +412,17 @@ export async function browserHttpFetch(url, init = {}) {
     if (proxy) {
       try { return await _fetchProxyFetch(url, init, proxy); }
       catch (proxyErr) {
-        // Fall through to wisp. Keep original err as the one we throw if
-        // nothing works — that's the error the caller's code was written
-        // against.
+        // Fall through to wisp. Keep the original native error for the
+        // final re-throw — callers' existing catch blocks were written
+        // against it.
       }
     }
 
     if (await _wispFallbackAvailable()) {
       try { return await _wispHttpFetch(url, init); }
       catch (wispErr) {
-        // For clearer diagnostics, if the wisp tier specifically rejected
-        // because it can't do HTTPS, surface THAT error — it's actionable.
+        // If wisp specifically rejected an HTTPS target, surface THAT
+        // error — it's actionable and points at the tier-3 fix.
         if (wispErr instanceof TypeError && String(wispErr.message).includes('wisp fallback: only plaintext')) {
           throw wispErr;
         }

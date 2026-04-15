@@ -174,6 +174,23 @@ async function runTests() {
   }
 
   const context = await browser.newContext();
+
+  // Optional override: point the in-tab fetch-proxy tier at a local
+  // wisp-server-node instance (cmd/wisp-server-node/server.js). Set
+  // V9_TEST_FETCH_PROXY_URL to http://127.0.0.1:<port>/fetch to exercise
+  // the full chain in dev sandboxes where chromium can't reach the
+  // hosted DEFAULT_FETCH_PROXY_URL directly. CI doesn't need this —
+  // it hits the baked-in default via real egress.
+  if (process.env.V9_TEST_FETCH_PROXY_URL) {
+    await context.addInitScript((url) => {
+      globalThis.__V9_FETCH_PROXY_URL__ = url;
+      // Make sure transport-policy.mjs's env check sees it too.
+      if (!globalThis.process) globalThis.process = { env: {} };
+      if (!globalThis.process.env) globalThis.process.env = {};
+      globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY = url;
+    }, process.env.V9_TEST_FETCH_PROXY_URL);
+  }
+
   const page = await context.newPage();
 
   const consoleErrors = [];
@@ -575,7 +592,11 @@ async function runTests() {
     await shellExec(page, 'npm install express', 500);
 
     try {
-      await waitForTerminalText(page, 'added', 90_000);
+      // express recursively pulls ~400 metadata + tarball requests. Through
+      // the in-tab npm client, even with a fast tier-3 fetch-proxy that's
+      // multiple minutes of fetch+gunzip+untar work in the JS engine. 240s
+      // gives the recursive install enough headroom on a modest CI runner.
+      await waitForTerminalText(page, 'added', 240_000);
       const expressInstallText = await getTerminalText(page);
       assert(
         expressInstallText.includes('express@'),

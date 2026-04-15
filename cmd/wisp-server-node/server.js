@@ -24,8 +24,11 @@
  */
 
 import { createServer as httpCreateServer } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { request as httpRequest } from 'node:http';
 import { WebSocketServer } from 'ws';
 import net from 'node:net';
+import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import {
   resolveAndCheck,
@@ -350,6 +353,322 @@ class Session {
   }
 }
 
+// ─── Tier-3 HTTPS fetch proxy (POST /fetch) ──────────────────────────
+//
+// Runs alongside the Wisp TCP tunnel on the same host + port. Serves the
+// `NODEJS_IN_TAB_FETCH_PROXY` wire protocol that napi-bridge/transport-policy.mjs
+// speaks, so clients get HTTPS targets (CORS-blocked registries, arbitrary
+// public HTTPS APIs) through the same hosted infra without needing a JS TLS
+// stack in the browser.
+//
+// Security posture is the SAME as the Wisp tunnel:
+//
+//   • Origin allowlist via isAllowedOrigin() — same policy as WebSocket upgrade
+//   • DNS pre-resolve + IP blocklist via resolveAndCheck() — blocks RFC1918,
+//     loopback, cloud metadata, etc.
+//   • Port block via checkPort() — SMTP/IRC/etc. cannot be reached
+//   • Connection pinned to the resolved IP via node:https `lookup` override,
+//     so there's no window for DNS rebinding between the guard check and the
+//     actual connect. TLS cert verification still uses the original hostname
+//     (SNI + cert CN), so HTTPS security is preserved.
+//
+// Budgets (hardcoded, not in guard.js because they only apply here):
+const FETCH_MAX_REQUEST_BODY  = 10 * 1024 * 1024;   // 10 MB upload cap
+const FETCH_MAX_RESPONSE_BODY = 100 * 1024 * 1024;  // 100 MB download cap
+const FETCH_MAX_REDIRECTS     = 5;
+const FETCH_REQUEST_TIMEOUT   = 30_000;
+
+function _readJsonBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > maxBytes) {
+        settled = true;
+        reject(new GuardError('body_too_large', `request body exceeds ${maxBytes} bytes`));
+        try { req.destroy(); } catch {}
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      try {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve(text ? JSON.parse(text) : {});
+      } catch (err) {
+        reject(new GuardError('invalid_json', 'request body is not valid JSON'));
+      }
+    });
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+  });
+}
+
+/**
+ * One hop of the redirect chain: connect, write request, collect response.
+ * Called from handleFetchRequest() up to FETCH_MAX_REDIRECTS times.
+ */
+function _doFetchHop(targetUrl, method, headers, bodyBytes, resolvedIp) {
+  const target = new URL(targetUrl);
+  const isHttps = target.protocol === 'https:';
+  const mod = isHttps ? httpsRequest : httpRequest;
+  const port = Number(target.port) || (isHttps ? 443 : 80);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    // The lookup override pins the TCP connection to the IP we already
+    // validated via resolveAndCheck(). This is the critical anti-rebind
+    // control: Node's DNS would otherwise be called a second time.
+    const req = mod({
+      hostname: target.hostname,
+      port,
+      path: (target.pathname || '/') + (target.search || ''),
+      method,
+      headers,
+      timeout: FETCH_REQUEST_TIMEOUT,
+      // Node's net.lookupAndConnectMultiple passes { all: true } here, so
+      // the callback must receive an array of { address, family } records.
+      // Older callers use { all: false } + a single-value callback, so
+      // support both.
+      lookup: (_hostname, options, callback) => {
+        const family = isIP(resolvedIp) === 6 ? 6 : 4;
+        if (options && options.all) {
+          callback(null, [{ address: resolvedIp, family }]);
+        } else {
+          callback(null, resolvedIp, family);
+        }
+      },
+      // Preserve SNI + cert verification against the original hostname.
+      servername: isHttps ? target.hostname : undefined,
+    }, (res) => {
+      const chunks = [];
+      let total = 0;
+      res.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > FETCH_MAX_RESPONSE_BODY) {
+          try { req.destroy(); } catch {}
+          fail(new GuardError('response_too_large',
+            `response body exceeds ${FETCH_MAX_RESPONSE_BODY} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => {
+        done({
+          status: res.statusCode || 0,
+          statusText: res.statusMessage || '',
+          headers: res.headers,
+          body: Buffer.concat(chunks),
+        });
+      });
+      res.on('error', fail);
+    });
+
+    req.on('error', fail);
+    req.on('timeout', () => {
+      try { req.destroy(); } catch {}
+      fail(new GuardError('timeout', `request timed out after ${FETCH_REQUEST_TIMEOUT}ms`));
+    });
+
+    if (bodyBytes && bodyBytes.length) req.write(bodyBytes);
+    req.end();
+  });
+}
+
+async function handleFetchRequest(req, res, origin) {
+  // CORS — mirror the Wisp tunnel's origin policy.
+  const corsOrigin = origin && isAllowedOrigin(origin) ? origin : null;
+  if (!corsOrigin) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'origin not allowed' }));
+    logEvent({ type: 'fetch_origin_rejected', origin: origin || null });
+    return;
+  }
+
+  // OPTIONS preflight
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': corsOrigin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin',
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    res.writeHead(405, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': corsOrigin,
+      'Allow': 'POST, OPTIONS',
+    });
+    res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+    return;
+  }
+
+  // Per-IP rate limiting reuses the Wisp session tracker: each /fetch call
+  // counts as one ephemeral session. Prevents a client from hammering the
+  // proxy faster than the existing WISP_MAX_SESSIONS_PER_IP budget permits.
+  const xff = req.headers['x-forwarded-for'];
+  const clientIp =
+    (xff ? String(xff).split(',')[0].trim() : '') || req.socket.remoteAddress || 'unknown';
+  const sessionId = 'f' + randomBytes(4).toString('hex');
+  if (!tryAddSession(clientIp, sessionId)) {
+    res.writeHead(429, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': corsOrigin,
+      'Retry-After': '5',
+    });
+    res.end(JSON.stringify({ ok: false, error: 'rate limited' }));
+    logEvent({ type: 'fetch_rate_limited', client_ip: clientIp });
+    return;
+  }
+
+  const sendJson = (status, obj) => {
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': corsOrigin,
+      'Vary': 'Origin',
+    });
+    res.end(JSON.stringify(obj));
+  };
+
+  try {
+    const payload = await _readJsonBody(req, FETCH_MAX_REQUEST_BODY);
+    const url = String(payload?.url || '');
+    const init = payload?.init || {};
+    if (!url) throw new GuardError('invalid_url', 'missing url');
+
+    // Initial hop + redirect chain. Each hop is independently validated:
+    // the guard runs on every Location target, not just the first.
+    let currentUrl = url;
+    let method = String(init.method || 'GET').toUpperCase();
+    const headersIn = init.headers && typeof init.headers === 'object' ? { ...init.headers } : {};
+    // Strip hop-by-hop and upstream-leaking headers before forwarding.
+    for (const k of Object.keys(headersIn)) {
+      const lower = k.toLowerCase();
+      if (lower === 'host' || lower === 'connection' || lower === 'keep-alive'
+          || lower === 'proxy-authorization' || lower === 'te'
+          || lower === 'transfer-encoding' || lower === 'upgrade'
+          || lower === 'content-length'
+          || lower.startsWith('x-forwarded-')) {
+        delete headersIn[k];
+      }
+    }
+    // Force identity encoding — we don't gunzip downstream.
+    headersIn['Accept-Encoding'] = 'identity';
+
+    let bodyBytes = null;
+    if (init.body64) bodyBytes = Buffer.from(String(init.body64), 'base64');
+
+    let hop;
+    for (let i = 0; i <= FETCH_MAX_REDIRECTS; i++) {
+      const target = new URL(currentUrl);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        throw new GuardError('bad_scheme', `unsupported scheme: ${target.protocol}`);
+      }
+      const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
+      checkPort(port);
+      const resolvedIp = await resolveAndCheck(target.hostname);
+
+      // Set Host per-hop based on the current URL. Don't leak the original
+      // Host header after a cross-origin redirect.
+      const hopHeaders = { ...headersIn, Host: target.host };
+      if (bodyBytes && bodyBytes.length && !hopHeaders['Content-Length'] && !hopHeaders['content-length']) {
+        hopHeaders['Content-Length'] = String(bodyBytes.length);
+      }
+
+      hop = await _doFetchHop(currentUrl, method, hopHeaders, bodyBytes, resolvedIp);
+
+      // Handle 3xx redirects.
+      if (hop.status >= 300 && hop.status < 400 && hop.headers?.location) {
+        if (i === FETCH_MAX_REDIRECTS) {
+          throw new GuardError('too_many_redirects',
+            `redirect chain exceeded ${FETCH_MAX_REDIRECTS} hops`);
+        }
+        currentUrl = new URL(hop.headers.location, currentUrl).toString();
+        // RFC 7231: 303 forces GET. 301/302 with non-GET historically
+        // downgrade to GET for most clients; match that behavior.
+        if (hop.status === 303 || (method !== 'GET' && method !== 'HEAD')) {
+          method = 'GET';
+          bodyBytes = null;
+          delete headersIn['Content-Length'];
+          delete headersIn['content-length'];
+        }
+        continue;
+      }
+      break;
+    }
+
+    // Flatten headers to a plain object, dropping hop-by-hop response
+    // headers that break the client's Response() constructor.
+    const headersOut = {};
+    for (const [k, v] of Object.entries(hop.headers || {})) {
+      const lower = k.toLowerCase();
+      if (lower === 'connection' || lower === 'keep-alive' || lower === 'transfer-encoding'
+          || lower === 'content-encoding' || lower === 'content-length'
+          || lower === 'strict-transport-security') {
+        continue;
+      }
+      headersOut[k] = Array.isArray(v) ? v.join(', ') : String(v);
+    }
+
+    sendJson(200, {
+      ok: true,
+      status: hop.status,
+      statusText: hop.statusText,
+      headers: headersOut,
+      body64: hop.body.toString('base64'),
+    });
+    logEvent({
+      type: 'fetch_ok',
+      session: sessionId,
+      client_ip: clientIp,
+      origin,
+      target: new URL(url).host,
+      status: hop.status,
+      bytes: hop.body.length,
+      hops: FETCH_MAX_REDIRECTS,
+    });
+  } catch (err) {
+    const code = err instanceof GuardError ? err.code : 'error';
+    const message = err instanceof Error ? err.message : String(err);
+    sendJson(502, { ok: false, error: message, code });
+    logEvent({
+      type: 'fetch_error',
+      session: sessionId,
+      client_ip: clientIp,
+      origin,
+      code,
+      message,
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+  } finally {
+    removeSession(clientIp, sessionId);
+  }
+}
+
 // ─── HTTP + WebSocket server ─────────────────────────────────────────
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -359,6 +678,17 @@ const httpServer = httpCreateServer((req, res) => {
   if (req.url === '/' || req.url === '/health' || req.url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
     res.end('wisp-server-node ok\n');
+    return;
+  }
+  // Tier-3 HTTPS fetch proxy — same host as the Wisp WSS endpoint.
+  if (req.url === '/fetch' || req.url === '/fetch/') {
+    handleFetchRequest(req, res, req.headers.origin || '').catch((err) => {
+      try {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'internal error: ' + (err?.message || err) }));
+      } catch { /* already sent */ }
+      logEvent({ type: 'fetch_internal_error', error: String(err?.message || err) });
+    });
     return;
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' });
