@@ -2,9 +2,25 @@
  * wisp-client.js — Clean-room Wisp v1 client for v9.
  *
  * Implements the Wisp v1 wire protocol so v9 can make TCP connections through
- * a hosted Wisp tunnel (wss://fetch.stare.network/wisp/ by default). Provides
+ * a hosted Wisp tunnel (wss://edge.stare.network/wisp/ by default). Provides
  * a Node-compatible Duplex stream per TCP connection, matching the shape of
  * GvisorSocket so net-stubs.js can pick either transport transparently.
+ *
+ * ── Default endpoint ───────────────────────────────────────────────────
+ * The hosted demo Wisp endpoint (wss://edge.stare.network/wisp/) is baked
+ * in as DEFAULT_WISP_URL and used when nothing else is configured. This
+ * keeps `isWispAvailable()` true out-of-the-box so minimal test harnesses
+ * and embeds-without-transport-defaults-stare.js still get tier-2 tunnel
+ * access. Overrides (all take precedence over the default):
+ *
+ *   - process.env.NODEJS_WISP_WS_URL
+ *   - globalThis.__V9_WISP_WS_URL__
+ *
+ * Kill switches (any → `isWispAvailable()` returns false):
+ *
+ *   - globalThis.__V9_DISABLE_WISP__ === true
+ *   - localStorage['v9NoWisp'] === '1'
+ *   - NODEJS_WISP_WS_URL / __V9_WISP_WS_URL__ set to '' / '0' / 'off' / 'no'
  *
  * PROTOCOL REFERENCE:
  *   https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md
@@ -402,13 +418,36 @@ class WispStream extends Duplex {
 
 const _env = () => (typeof globalThis.process !== 'undefined' && globalThis.process?.env) || {};
 
+/**
+ * Baked-in default for the hosted v9 demo Wisp endpoint. Used when no
+ * explicit override is set. See the docstring at the top of this file
+ * for the override/kill-switch precedence.
+ */
+export const DEFAULT_WISP_URL = 'wss://edge.stare.network/wisp/';
+
 /** @type {WispConnection | null} */
 let _sharedConn = null;
 
+function _isKillSwitched() {
+  if (globalThis.__V9_DISABLE_WISP__ === true) return true;
+  try {
+    if (globalThis.localStorage && globalThis.localStorage.getItem('v9NoWisp') === '1') {
+      return true;
+    }
+  } catch { /* storage may be blocked */ }
+  return false;
+}
+
 function _getWispUrl() {
-  const url = _env().NODEJS_WISP_WS_URL || globalThis.__V9_WISP_WS_URL__;
-  if (!url || url === '' || url === '0') return null;
-  return String(url);
+  if (_isKillSwitched()) return null;
+  const raw = _env().NODEJS_WISP_WS_URL || globalThis.__V9_WISP_WS_URL__;
+  // Explicit off-value from env/global → honor the user's override.
+  if (raw === '' || raw === '0' || raw === 'off' || raw === 'no' || raw === 'false') {
+    return null;
+  }
+  if (raw) return String(raw);
+  // Nothing configured → fall back to the baked-in hosted demo endpoint.
+  return DEFAULT_WISP_URL;
 }
 
 /**
