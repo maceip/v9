@@ -381,20 +381,43 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ── Uniform mini terminal icon for dismissed tiles ──
+const TILE_ICON_SVG = `<svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" class="tile-icon-svg">
+  <rect x="5" y="7" width="30" height="24" rx="4" fill="currentColor" opacity="0.15" stroke="currentColor" stroke-width="1.5"/>
+  <path d="M11 15l5 4-5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <line x1="19" y1="23" x2="28" y2="23" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+</svg>`;
+
 let dismissedCount = 0;
 function addDismissedTile(term) {
   dismissedCount++;
+  const isShell = term?.title === 'shell';
   const tile = document.createElement('div');
   tile.className = 'dismissed-tile';
-  // Label by which terminal was dismissed
-  tile.textContent = term?.title === 'shell' ? 'sh' : 'cc';
-  tile.title = `${term?.title || 'v9'} session ${dismissedCount}`;
+
+  // Uniform terminal icon for all tiles
+  tile.innerHTML = TILE_ICON_SVG;
+
+  // Colored dot indicator: green for shell, accent-blue for Claude
+  const dot = document.createElement('span');
+  dot.className = 'tile-dot';
+  dot.style.background = isShell ? '#9bff00' : '#7aa2f7';
+  tile.appendChild(dot);
+
+  tile.title = isShell ? 'Shell session — click to restore' : 'Claude Code session — click to restore';
+
   tile.addEventListener('click', () => {
-    tile.remove();
-    // Re-activate the dismissed terminal
-    if (term && term.state === 'IDLE') {
-      handleActivate(term, new Event('click'));
-    }
+    // Animate tile out before restoring
+    tile.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
+    tile.style.transform = 'scale(1.3)';
+    tile.style.opacity = '0';
+    setTimeout(() => {
+      tile.remove();
+      // Re-activate the dismissed terminal
+      if (term && term.state === 'IDLE') {
+        handleActivate(term, new Event('click'));
+      }
+    }, 150);
   });
   dismissedTray.appendChild(tile);
   tile.style.transform = 'scale(0.3)';

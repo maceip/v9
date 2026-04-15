@@ -534,8 +534,8 @@
       height: 100%;
     }
     .dismissed-tile {
-      width: 38px; height: 26px;
-      border-radius: 4px;
+      width: 32px; height: 24px;
+      border-radius: 5px;
       border: 1px solid var(--frame-border);
       background: var(--frame-bg);
       box-shadow: 0 1px 4px rgba(0,0,0,0.3);
@@ -544,15 +544,27 @@
       touch-action: manipulation;
       flex-shrink: 0;
       display: flex; align-items: center; justify-content: center;
-      font-family: 'Goldman', sans-serif;
-      font-size: 8px;
       color: var(--accent);
       opacity: 0.8;
       transition: transform 0.2s ease, opacity 0.2s ease;
+      position: relative;
+      overflow: visible;
     }
     .dismissed-tile:hover {
-      transform: translateY(-2px) scale(1.08);
+      transform: translateY(-2px) scale(1.12);
       opacity: 1;
+    }
+    .tile-icon-svg {
+      width: 18px; height: 18px;
+      pointer-events: none;
+    }
+    .tile-dot {
+      position: absolute;
+      bottom: -2px; right: -2px;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      border: 1px solid var(--frame-bg);
+      pointer-events: none;
     }
 
     /* ════════════════════════════════════════════════════════════════
@@ -639,7 +651,7 @@
       .frame-joint { width: 4px; height: 4px; }
       .bg-icon { width: 20px; height: 20px; }
       #dismissed-tray { gap: 6px; margin-left: 10px; }
-      .dismissed-tile { width: 36px; height: 26px; font-size: 8px; }
+      .dismissed-tile { width: 32px; height: 24px; }
       .boot-text { font-size: 12px; }
       .terminal-label { font-size: 9px; }
       .terminal-wrap.idle { transform: scale(0.86) translateY(1%); }
@@ -650,7 +662,7 @@
       #navbar { height: 44px; padding-left: 10px; padding-right: 10px; }
       #viewport { bottom: calc(44px + env(safe-area-inset-bottom, 0)); }
       .nav-name { font-size: 14px; letter-spacing: 1px; }
-      .dismissed-tile { width: 30px; height: 22px; font-size: 7px; }
+      .dismissed-tile { width: 32px; height: 24px; }
       .terminal-frame { border-radius: 8px; border-width: 1.5px; }
       .terminal-screen { top: 3px; left: 3px; right: 3px; bottom: 3px; border-radius: 4px; }
       .boot-text { font-size: 11px; }
@@ -727,7 +739,7 @@
       }
       .dismissed-tile {
         width: 32px;
-        height: 22px;
+        height: 24px;
         flex-shrink: 0;
       }
 
