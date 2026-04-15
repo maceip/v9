@@ -24,10 +24,19 @@
 
 import { gunzipSync } from './zlib.js';
 import { cacheGetPackage, cachePutPackage, cacheDeletePackage } from './runtime-cache.js';
+import { browserHttpFetch } from './transport-policy.mjs';
 
 const REGISTRY = 'https://registry.npmjs.org';
 const _decoder = new TextDecoder();
 const _encoder = new TextEncoder();
+
+// Route all registry traffic through the transport policy so the auto-fallback
+// chain (native → tier-3 proxy → tier-2 wisp) engages on CORS / network
+// failures. Using browserHttpFetch directly means the shell's npm install path
+// does not depend on globalThis.fetch being patched by node-polyfills.js —
+// minimal test harnesses that import shell.js without loading the full
+// polyfill bundle still get the chain.
+const _fetch = (url, init) => browserHttpFetch(String(url), init || {});
 
 // ─── Tar extraction ─────────────────────────────────────────────────
 // npm tarballs are .tgz (gzip-compressed tar). Tar is a simple format:
@@ -127,7 +136,7 @@ function extractTgzToMemfs(tgzData, destDir, memfs) {
  */
 async function fetchPackageMetadata(packageName) {
   const url = `${REGISTRY}/${encodeURIComponent(packageName).replace('%40', '@')}`;
-  const res = await fetch(url, {
+  const res = await _fetch(url, {
     headers: { 'Accept': 'application/json' },
   });
   if (!res.ok) {
@@ -143,7 +152,7 @@ async function fetchPackageMetadata(packageName) {
  */
 async function fetchPackageMetadataAbbreviated(packageName) {
   const url = `${REGISTRY}/${encodeURIComponent(packageName).replace('%40', '@')}`;
-  const res = await fetch(url, {
+  const res = await _fetch(url, {
     headers: { 'Accept': 'application/vnd.npm.install-v1+json' },
   });
   if (!res.ok) {
@@ -158,7 +167,7 @@ async function fetchPackageMetadataAbbreviated(packageName) {
  * @returns {Promise<Uint8Array>}
  */
 async function fetchTarball(tarballUrl) {
-  const res = await fetch(tarballUrl);
+  const res = await _fetch(tarballUrl);
   if (!res.ok) {
     throw new Error(`npm tarball fetch failed: ${res.status} ${res.statusText}`);
   }
