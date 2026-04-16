@@ -862,11 +862,15 @@ export class GvisorServer extends EventEmitter {
 
 let _controlWs = null;
 
-let _controlWsFailed = false;
+let _controlWsBackoff = 0;
+let _controlWsLastAttempt = 0;
+const _controlPendingQueue = [];
 
 function _getControlWs() {
   if (_controlWs && _controlWs.readyState <= 1) return _controlWs;
-  if (_controlWsFailed) return null;
+  if (_controlWsBackoff > 0) {
+    if (Date.now() - _controlWsLastAttempt < _controlWsBackoff) return null;
+  }
   const baseUrl = globalThis.__V9_GVISOR_WS_URL__ || _env().NODEJS_GVISOR_WS_URL;
   if (!baseUrl) {
     return null;
@@ -874,15 +878,22 @@ function _getControlWs() {
   const url = new URL(baseUrl);
   url.pathname = '/__v9net/forward';
   const WS = globalThis.__browserRuntimeNativeWebSocket || globalThis.WebSocket;
+  _controlWsLastAttempt = Date.now();
   try {
     _controlWs = new WS(url.toString());
-    _controlWs.onopen = () => { console.log('[v9-net:control] connected'); };
+    _controlWs.onopen = () => {
+      _controlWsBackoff = 0;
+      while (_controlPendingQueue.length > 0) {
+        const pending = _controlPendingQueue.shift();
+        try { _controlWs.send(JSON.stringify(pending)); } catch { /* best-effort */ }
+      }
+    };
     _controlWs.onmessage = (ev) => {
       try { console.log('[v9-net:control] response:', ev.data); } catch {}
     };
     _controlWs.onclose = () => { _controlWs = null; };
     _controlWs.onerror = () => {
-      _controlWsFailed = true;
+      _controlWsBackoff = Math.min((_controlWsBackoff || 1000) * 2, 30000);
       _controlWs = null;
     };
   } catch { _controlWs = null; }
@@ -891,14 +902,15 @@ function _getControlWs() {
 
 function _sendControl(msg) {
   const ws = _getControlWs();
-  if (!ws) return;
-  const send = () => {
-    try {
-      ws.send(JSON.stringify(msg));
-    } catch { /* control channel is best-effort */ }
-  };
-  if (ws.readyState === 1) send();
-  else ws.addEventListener('open', send, { once: true });
+  if (!ws) {
+    _controlPendingQueue.push(msg);
+    return;
+  }
+  if (ws.readyState === 1) {
+    try { ws.send(JSON.stringify(msg)); } catch { /* best-effort */ }
+  } else {
+    _controlPendingQueue.push(msg);
+  }
 }
 
 function _requestPortForward(port) {
