@@ -36,6 +36,8 @@ export function createShell(opts = {}) {
   let historyIdx = -1;
   let historyTmp = '';
   let busy = false;
+  let nanoMode = null;
+  const customPrompt = opts.prompt || null;
 
   const PROMPT_COLOR = '\x1b[32m';
   const CWD_COLOR = '\x1b[34m';
@@ -50,7 +52,13 @@ export function createShell(opts = {}) {
   }
 
   function printPrompt() {
-    write(`${CWD_COLOR}${shortCwd()}${RESET} ${PROMPT_COLOR}$ ${RESET}`);
+    if (typeof customPrompt === 'function') {
+      write(customPrompt({ cwd, shortCwd: shortCwd() }));
+    } else if (typeof customPrompt === 'string') {
+      write(customPrompt);
+    } else {
+      write(`${CWD_COLOR}${shortCwd()}${RESET} ${PROMPT_COLOR}$ ${RESET}`);
+    }
   }
 
   // Rewrite the input line in-place. `prevVisualCol` is the visual column of
@@ -95,6 +103,12 @@ export function createShell(opts = {}) {
         cwd = result.cwd;
       }
 
+      // Handle nano interactive editor
+      if (result._nano) {
+        enterNano(result._nano);
+        return; // nano mode takes over input; prompt printed on exit
+      }
+
       // Handle async commands (npm install)
       if (result._async) {
         const asyncResult = await result._async;
@@ -112,11 +126,126 @@ export function createShell(opts = {}) {
     printPrompt();
   }
 
+  // ── Nano micro-editor mode ──────────────────────────────────────────
+
+  function enterNano(opts) {
+    const lines = (opts.content || '').split('\n');
+    nanoMode = {
+      path: opts.path,
+      displayPath: opts.displayPath,
+      lines,
+      row: 0,
+      col: 0,
+      dirty: false,
+      scrollTop: 0,
+    };
+    busy = false;
+    renderNano();
+  }
+
+  function renderNano() {
+    if (!nanoMode) return;
+    write('\x1b[2J\x1b[H');
+    write(`\x1b[7m  GNU nano   ${nanoMode.displayPath}${nanoMode.dirty ? ' [Modified]' : ''}  \x1b[0m\r\n`);
+    const visibleLines = 18;
+    for (let i = 0; i < visibleLines; i++) {
+      const lineIdx = nanoMode.scrollTop + i;
+      write((lineIdx < nanoMode.lines.length ? nanoMode.lines[lineIdx] : '') + '\r\n');
+    }
+    write('\x1b[7m ^X\x1b[0m Exit  \x1b[7m ^O\x1b[0m Save  \x1b[7m ^K\x1b[0m Cut  \x1b[7m ^G\x1b[0m Help\r\n');
+    const screenRow = nanoMode.row - nanoMode.scrollTop + 2;
+    write(`\x1b[${screenRow};${nanoMode.col + 1}H`);
+  }
+
+  function handleNanoInput(data) {
+    for (let i = 0; i < data.length; i++) {
+      const ch = data[i];
+      if (ch === '\x18') { // Ctrl+X — exit
+        nanoMode = null;
+        write('\x1b[2J\x1b[H');
+        printPrompt();
+        return;
+      }
+      if (ch === '\x0f') { // Ctrl+O — save
+        const content = nanoMode.lines.join('\n');
+        getMemfs().writeFile(nanoMode.path, content);
+        nanoMode.dirty = false;
+        write(`\x1b[22;1H\x1b[2K\x1b[32m[ Wrote ${nanoMode.lines.length} lines ]\x1b[0m`);
+        setTimeout(() => renderNano(), 800);
+        return;
+      }
+      if (ch === '\x0b') { // Ctrl+K — cut line
+        if (nanoMode.lines.length > 1) {
+          nanoMode.lines.splice(nanoMode.row, 1);
+          if (nanoMode.row >= nanoMode.lines.length) nanoMode.row = nanoMode.lines.length - 1;
+          nanoMode.col = 0;
+        } else {
+          nanoMode.lines[0] = '';
+          nanoMode.col = 0;
+        }
+        nanoMode.dirty = true;
+        renderNano(); return;
+      }
+      if (ch === '\r' || ch === '\n') {
+        const cur = nanoMode.lines[nanoMode.row] || '';
+        nanoMode.lines[nanoMode.row] = cur.substring(0, nanoMode.col);
+        nanoMode.lines.splice(nanoMode.row + 1, 0, cur.substring(nanoMode.col));
+        nanoMode.row++;
+        nanoMode.col = 0;
+        nanoMode.dirty = true;
+        if (nanoMode.row >= nanoMode.scrollTop + 18) nanoMode.scrollTop++;
+        renderNano(); return;
+      }
+      if (ch === '\x7f' || ch === '\b') {
+        if (nanoMode.col > 0) {
+          const cur = nanoMode.lines[nanoMode.row];
+          nanoMode.lines[nanoMode.row] = cur.substring(0, nanoMode.col - 1) + cur.substring(nanoMode.col);
+          nanoMode.col--;
+          nanoMode.dirty = true;
+        } else if (nanoMode.row > 0) {
+          const prev = nanoMode.lines[nanoMode.row - 1];
+          nanoMode.col = prev.length;
+          nanoMode.lines[nanoMode.row - 1] = prev + nanoMode.lines[nanoMode.row];
+          nanoMode.lines.splice(nanoMode.row, 1);
+          nanoMode.row--;
+          nanoMode.dirty = true;
+        }
+        renderNano(); return;
+      }
+      if (ch === '\x1b' && i + 1 < data.length && data[i + 1] === '[') {
+        const seq = data[i + 2];
+        if (seq === 'A' && nanoMode.row > 0) {
+          nanoMode.row--;
+          nanoMode.col = Math.min(nanoMode.col, nanoMode.lines[nanoMode.row].length);
+          if (nanoMode.row < nanoMode.scrollTop) nanoMode.scrollTop = nanoMode.row;
+        } else if (seq === 'B' && nanoMode.row < nanoMode.lines.length - 1) {
+          nanoMode.row++;
+          nanoMode.col = Math.min(nanoMode.col, nanoMode.lines[nanoMode.row].length);
+          if (nanoMode.row >= nanoMode.scrollTop + 18) nanoMode.scrollTop = nanoMode.row - 17;
+        } else if (seq === 'C') {
+          if (nanoMode.col < (nanoMode.lines[nanoMode.row] || '').length) nanoMode.col++;
+        } else if (seq === 'D') {
+          if (nanoMode.col > 0) nanoMode.col--;
+        }
+        i += 2;
+        renderNano(); continue;
+      }
+      if (ch >= ' ') {
+        const cur = nanoMode.lines[nanoMode.row] || '';
+        nanoMode.lines[nanoMode.row] = cur.substring(0, nanoMode.col) + ch + cur.substring(nanoMode.col);
+        nanoMode.col++;
+        nanoMode.dirty = true;
+        renderNano();
+      }
+    }
+  }
+
   /**
    * Feed raw terminal input data (from xterm onData).
    * Handles line editing, special keys, and command execution.
    */
   function feed(data) {
+    if (nanoMode) { handleNanoInput(data); return; }
     if (busy) return; // ignore input while a command is running
 
     for (let i = 0; i < data.length; i++) {
