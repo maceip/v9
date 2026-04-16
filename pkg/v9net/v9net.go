@@ -4,6 +4,7 @@ package v9net
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -88,11 +89,66 @@ func Start(wsAddr string, portMappings string, debug bool) error {
 		return fmt.Errorf("v9net: virtual network init failed: %w", err)
 	}
 
+	servicesMux := vn.ServicesMux()
+
 	mux := http.NewServeMux()
 	mux.Handle("/", websocket.Handler(func(ws *websocket.Conn) {
 		ws.PayloadType = websocket.BinaryFrame
 		if err := vn.AcceptQemu(context.Background(), ws); err != nil {
 			log.Printf("v9net: forwarding finished: %v\n", err)
+		}
+	}))
+
+	mux.Handle("/__v9net/forward", websocket.Handler(func(ws *websocket.Conn) {
+		log.Printf("v9net: control connection from %s\n", ws.Request().RemoteAddr)
+		defer ws.Close()
+		dec := json.NewDecoder(ws)
+		enc := json.NewEncoder(ws)
+		for {
+			var msg struct {
+				Action string `json:"action"`
+				Port   int    `json:"port"`
+			}
+			if err := dec.Decode(&msg); err != nil {
+				return
+			}
+			switch msg.Action {
+			case "forward":
+				if msg.Port < 1 || msg.Port > 65535 {
+					enc.Encode(map[string]interface{}{"ok": false, "error": "invalid port"})
+					continue
+				}
+				local := fmt.Sprintf("0.0.0.0:%d", msg.Port)
+				remote := fmt.Sprintf("%s:%d", VMIP, msg.Port)
+				body := strings.NewReader(fmt.Sprintf(`{"local":"%s","remote":"%s","protocol":"tcp"}`, local, remote))
+				req, _ := http.NewRequest("POST", "/services/forwarder/expose", body)
+				req.Header.Set("Content-Type", "application/json")
+				rec := &responseRecorder{code: 200}
+				servicesMux.ServeHTTP(rec, req)
+				if rec.code == 200 {
+					log.Printf("v9net: + forwarding port %d\n", msg.Port)
+					enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+				} else {
+					errMsg := rec.body.String()
+					if strings.Contains(errMsg, "already running") {
+						enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+					} else {
+						log.Printf("v9net: forward port %d failed: %s\n", msg.Port, errMsg)
+						enc.Encode(map[string]interface{}{"ok": false, "error": errMsg})
+					}
+				}
+			case "unforward":
+				local := fmt.Sprintf("0.0.0.0:%d", msg.Port)
+				body := strings.NewReader(fmt.Sprintf(`{"local":"%s","protocol":"tcp"}`, local))
+				req, _ := http.NewRequest("POST", "/services/forwarder/unexpose", body)
+				req.Header.Set("Content-Type", "application/json")
+				rec := &responseRecorder{code: 200}
+				servicesMux.ServeHTTP(rec, req)
+				log.Printf("v9net: - stopped forwarding port %d\n", msg.Port)
+				enc.Encode(map[string]interface{}{"ok": true, "port": msg.Port})
+			default:
+				enc.Encode(map[string]interface{}{"ok": false, "error": "unknown action"})
+			}
 		}
 	}))
 
@@ -143,3 +199,18 @@ func IsRunning() bool {
 	defer mu.Unlock()
 	return running
 }
+
+type responseRecorder struct {
+	code int
+	body strings.Builder
+	hdr  http.Header
+}
+
+func (r *responseRecorder) Header() http.Header {
+	if r.hdr == nil {
+		r.hdr = make(http.Header)
+	}
+	return r.hdr
+}
+func (r *responseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
+func (r *responseRecorder) WriteHeader(code int)         { r.code = code }
