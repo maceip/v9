@@ -31,26 +31,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: quick
-    # Pre-baked CI image: Emscripten 4.0.23 + Chromium + Node 22.
-    # Build/publish via .github/workflows/ci-image.yml or manually:
-    #   docker build -f docker/Dockerfile.ci -t ghcr.io/maceip/v9-ci .
-    #   docker push ghcr.io/maceip/v9-ci
-    container:
-      image: ghcr.io/maceip/v9-ci:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    permissions:
-      contents: read
-      packages: read
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      # Use vendored wasm when present (most runs); build from source
-      # only when dist/ is empty (first clone, after distclean, etc.).
+      - name: Install Chromium
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq chromium-browser >/dev/null 2>&1 \
+            || sudo apt-get install -y -qq chromium >/dev/null 2>&1
+          CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
+          echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
+
+      # Skip Emscripten + wasm build when vendored wasm is present.
+      # The repo tracks dist/edgejs.{js,wasm} so most runs skip this
+      # entirely (~5 min saved). Only wasm-rebuild.yml or a missing
+      # dist/ triggers a from-source build.
       - name: Check for vendored wasm
         id: wasm-check
         run: |
@@ -62,6 +65,12 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "Wasm not vendored — will build from source"
           fi
+
+      - name: Setup Emscripten
+        if: steps.wasm-check.outputs.found == 'false'
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.23
 
       - name: Build wasm from source
         if: steps.wasm-check.outputs.found == 'false'
@@ -89,17 +98,14 @@ jobs:
             dist/edgejs.js
 
       - name: Integration tests
-        env:
-          CHROME_BIN: /usr/bin/chromium-browser
         run: |
-          if [ -f "$EMSDK/emsdk_env.sh" ]; then source "$EMSDK/emsdk_env.sh"; fi
+          if [ -f "${EMSDK:-/nonexistent}/emsdk_env.sh" ]; then source "$EMSDK/emsdk_env.sh"; fi
           make test-integration
           make test-soak-quick
 
       - name: E2E shell + npm
         env:
-          CHROME_BIN: /usr/bin/chromium-browser
-          PLAYWRIGHT_BROWSER_PATH: /usr/bin/chromium-browser
+          PLAYWRIGHT_BROWSER_PATH: ${{ env.CHROME_BIN }}
         run: npm run test:e2e:shell
 
   # Verify vendored wasm is present on main — auto-vendors from
