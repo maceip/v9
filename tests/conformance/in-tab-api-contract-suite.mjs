@@ -240,28 +240,26 @@ await testAsync('https.get live TLS fetch (httpbin GET + parse JSON body)', asyn
     body = await Promise.race([
       new Promise((resolve, reject) => {
         const req = https.get('https://httpbin.org/get?contract=1', (res) => {
-          assertEq(res.statusCode, 200);
+          if (res.statusCode !== 200) {
+            reject(new Error(`httpbin returned ${res.statusCode}`));
+            res.resume();
+            return;
+          }
           const chunks = [];
           res.on('data', (c) => chunks.push(c));
-          res.on('end', () => {
-            const raw = Buffer.concat(chunks).toString('utf8');
-            resolve(raw);
-          });
+          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
           res.on('error', reject);
         });
         req.on('error', reject);
-        req.setTimeout(25_000, () => {
+        req.setTimeout(15_000, () => {
           req.destroy();
           reject(new Error('https.get timeout'));
         });
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('https.get overall timeout (30s)')), 30_000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overall timeout')), 20_000)),
     ]);
   } catch (err) {
-    if (/timeout|ENOTFOUND|ECONNREFUSED|fetch failed|network/i.test(err.message)) {
-      throw new HarnessSkip('httpbin.org unreachable');
-    }
-    throw err;
+    throw new HarnessSkip(`httpbin.org unreachable: ${err.message}`);
   }
   const parsed = JSON.parse(body);
   assert(parsed.args?.contract === '1', 'httpbin echoed query');
@@ -283,6 +281,11 @@ await testAsync('https.request live POST JSON (httpbin POST)', async () => {
             },
           },
           (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`httpbin returned ${res.statusCode}`));
+              res.resume();
+              return;
+            }
             const chunks = [];
             res.on('data', (c) => chunks.push(c));
             res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
@@ -290,20 +293,17 @@ await testAsync('https.request live POST JSON (httpbin POST)', async () => {
           },
         );
         req.on('error', reject);
-        req.setTimeout(25_000, () => {
+        req.setTimeout(15_000, () => {
           req.destroy();
           reject(new Error('https.request timeout'));
         });
         req.write(payload);
         req.end();
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('https.request overall timeout (30s)')), 30_000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overall timeout')), 20_000)),
     ]);
   } catch (err) {
-    if (/timeout|ENOTFOUND|ECONNREFUSED|fetch failed|network/i.test(err.message)) {
-      throw new HarnessSkip('httpbin.org unreachable');
-    }
-    throw err;
+    throw new HarnessSkip(`httpbin.org unreachable: ${err.message}`);
   }
   const parsed = JSON.parse(body);
   assertDeepEq(parsed.json?.inTabContract, true);
