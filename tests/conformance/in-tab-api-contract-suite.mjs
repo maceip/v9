@@ -235,60 +235,76 @@ test('fs.copyFileSync COPYFILE_EXCL', () => {
 // ─── http / https — real client + (Node) real local server ────────────
 
 await testAsync('https.get live TLS fetch (httpbin GET + parse JSON body)', async () => {
-  const body = await Promise.race([
-    new Promise((resolve, reject) => {
-      const req = https.get('https://httpbin.org/get?contract=1', (res) => {
-        assertEq(res.statusCode, 200);
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          const raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw);
+  let body;
+  try {
+    body = await Promise.race([
+      new Promise((resolve, reject) => {
+        const req = https.get('https://httpbin.org/get?contract=1', (res) => {
+          assertEq(res.statusCode, 200);
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            resolve(raw);
+          });
+          res.on('error', reject);
         });
-        res.on('error', reject);
-      });
-      req.on('error', reject);
-      req.setTimeout(25_000, () => {
-        req.destroy();
-        reject(new Error('https.get timeout'));
-      });
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('https.get overall timeout (30s)')), 30_000)),
-  ]);
+        req.on('error', reject);
+        req.setTimeout(25_000, () => {
+          req.destroy();
+          reject(new Error('https.get timeout'));
+        });
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('https.get overall timeout (30s)')), 30_000)),
+    ]);
+  } catch (err) {
+    if (/timeout|ENOTFOUND|ECONNREFUSED|fetch failed|network/i.test(err.message)) {
+      throw new HarnessSkip('httpbin.org unreachable');
+    }
+    throw err;
+  }
   const parsed = JSON.parse(body);
   assert(parsed.args?.contract === '1', 'httpbin echoed query');
 });
 
 await testAsync('https.request live POST JSON (httpbin POST)', async () => {
   const payload = JSON.stringify({ inTabContract: true, t: Date.now() });
-  const body = await Promise.race([
-    new Promise((resolve, reject) => {
-      const req = https.request(
-        'https://httpbin.org/post',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
+  let body;
+  try {
+    body = await Promise.race([
+      new Promise((resolve, reject) => {
+        const req = https.request(
+          'https://httpbin.org/post',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+            },
           },
-        },
-        (res) => {
-          const chunks = [];
-          res.on('data', (c) => chunks.push(c));
-          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-          res.on('error', reject);
-        },
-      );
-      req.on('error', reject);
-      req.setTimeout(25_000, () => {
-        req.destroy();
-        reject(new Error('https.request timeout'));
-      });
-      req.write(payload);
-      req.end();
-    }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('https.request overall timeout (30s)')), 30_000)),
-  ]);
+          (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+            res.on('error', reject);
+          },
+        );
+        req.on('error', reject);
+        req.setTimeout(25_000, () => {
+          req.destroy();
+          reject(new Error('https.request timeout'));
+        });
+        req.write(payload);
+        req.end();
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('https.request overall timeout (30s)')), 30_000)),
+    ]);
+  } catch (err) {
+    if (/timeout|ENOTFOUND|ECONNREFUSED|fetch failed|network/i.test(err.message)) {
+      throw new HarnessSkip('httpbin.org unreachable');
+    }
+    throw err;
+  }
   const parsed = JSON.parse(body);
   assertDeepEq(parsed.json?.inTabContract, true);
 });
@@ -301,14 +317,11 @@ await testAsync('fetch proxy: upstream failure surfaces as error (bridge + in-ta
   }
   let thrown = false;
   try {
-    await Promise.race([
-      browserHttpFetch('https://invalid.invalid/contract-net-fail', {
-        signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
-          ? AbortSignal.timeout(25_000)
-          : undefined,
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('fetch proxy test timeout (30s)')), 30_000)),
-    ]);
+    await browserHttpFetch('https://invalid.invalid/contract-net-fail', {
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(15_000)
+        : undefined,
+    });
   } catch {
     thrown = true;
   }
