@@ -90,11 +90,21 @@
     }
   }
   </script>
+  <script>
+    // Disable gvisor + wisp before node-polyfills.js sets defaults. The
+    // contract suite runs in CI without v9-net and the hosted Wisp server
+    // may be unreachable. HTTPS tests use the in-process fetch proxy
+    // (passed via ?fetchProxy=) instead.
+    // Use '0' not '' because '' is falsy and falls through to defaults.
+    globalThis.__V9_GVISOR_WS_URL__ = '0';
+    globalThis.__V9_DISABLE_WISP__ = true;
+  </script>
   <script src="node-polyfills.js"></script>
   <script>
     globalThis.__HARNESS_BROWSER_FINISH__ = true;
     if (globalThis.process && globalThis.process.env) {
       globalThis.process.env.CONFORMANCE_TARGET = 'bridge';
+      globalThis.process.env.NODEJS_GVISOR_WS_URL = '0';
       const params = new URLSearchParams(globalThis.location?.search || '');
       const fetchProxy = params.get('fetchProxy');
       if (fetchProxy) {
