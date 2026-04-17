@@ -54,7 +54,10 @@ export async function runBrowserHostContractPhase(opts = {}) {
   const notes = [];
 
   try {
-    const launchOptions = { headless: true };
+    const launchOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    };
     const executablePath = process.env.CHROME_BIN || process.env.GOOGLE_CHROME_BIN
       || process.env.GOOGLE_CHROME_SHIM;
     if (executablePath) launchOptions.executablePath = executablePath;
