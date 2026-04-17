@@ -85,14 +85,14 @@ jobs:
           set -e
           test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
           test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
-          # Integration tests also reference build/edge (raw emscripten output).
-          # When using vendored wasm, populate build/ from dist/.
-          if [ ! -f build/edge ] || [ ! -f build/edge.wasm ]; then
+          # Integration tests require build/edge (CJS shim) + build/edge.js
+          # (Emscripten output) + build/edge.wasm. When using vendored wasm,
+          # populate build/ from dist/ and generate the CJS shim.
+          if [ ! -f build/edge.js ] || [ ! -f build/edge.wasm ]; then
             mkdir -p build
-            cp dist/edgejs.js build/edge
+            cp dist/edgejs.js build/edge.js
             cp dist/edgejs.wasm build/edge.wasm
-            # write-build-edge-shim.mjs creates build/edge.js (the ESM wrapper)
-            node scripts/write-build-edge-shim.mjs build 2>/dev/null || cp dist/edgejs.js build/edge.js
+            node scripts/write-build-edge-shim.mjs build
           fi
           ls -la dist/edgejs.* build/edge*
 
