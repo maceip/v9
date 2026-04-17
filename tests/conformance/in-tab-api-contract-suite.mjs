@@ -691,9 +691,20 @@ test('net.BlockList + SocketAddress + autoSelectFamily (import-time / policy sur
 
 test('net TCP listen unavailable in bridge (documented)', () => {
   if (mode === 'node') return;
-  assertThrows(() => net.createServer(), /not available in the browser environment/i);
-  const srv = new net.Server();
-  assertThrows(() => srv.listen(4000, '127.0.0.1'), /not available in the browser environment/i);
+  // When node-polyfills.js configures a default gvisor WS URL,
+  // isGvisorAvailable() returns true and createServer() returns a
+  // GvisorServer instead of throwing. Only assert the throw when no
+  // gvisor URL is configured.
+  const gvisorConfigured = typeof globalThis.__V9_GVISOR_WS_URL__ === 'string'
+    && globalThis.__V9_GVISOR_WS_URL__ !== '';
+  if (!gvisorConfigured) {
+    assertThrows(() => net.createServer(), /not available in the browser environment/i);
+    const srv = new net.Server();
+    assertThrows(() => srv.listen(4000, '127.0.0.1'), /not available in the browser environment/i);
+  } else {
+    const srv = net.createServer();
+    assert(srv != null, 'createServer returns a server object when gvisor URL is configured');
+  }
 });
 
 finish();
