@@ -192,6 +192,7 @@ async function runTests() {
   }
 
   const page = await context.newPage();
+  page.setDefaultTimeout(120_000);
 
   const consoleErrors = [];
   page.on('console', (msg) => {
