@@ -685,9 +685,9 @@
 
   function maybeRewriteOAuthUrl(url) {
     // Don't rewrite redirect_uri (server only accepts localhost).
-    // Store callback info in sessionStorage so oauth-bridge.html can
-    // deliver the auth code when the V9 OAuth Bridge extension
-    // redirects the failed localhost callback to the bridge page.
+    // Always store callback info so oauth-bridge.html can deliver the
+    // auth code when the V9 OAuth Bridge extension (or gvisor port
+    // forward failure) redirects the failed localhost callback.
     try {
       const parsed = new URL(url);
       const redirectUri = parsed.searchParams.get('redirect_uri');
@@ -696,7 +696,6 @@
       const isLoopback = local.hostname === 'localhost' || local.hostname === '127.0.0.1';
       if (!isLoopback) return url;
       const port = local.port || '80';
-      if (!getBrowserLocalServerRegistry()[port]) return url;
       localStorage.setItem('__v9_oauth_callback', JSON.stringify({
         origin: globalThis.location?.origin,
         port,

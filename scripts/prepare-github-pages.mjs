@@ -42,7 +42,8 @@ rmDir(docsBridge);
 mkdirSync(docsDist, { recursive: true });
 
 // Dev/test pages that should not be served on the public Pages site.
-const WEB_EXCLUDE = new Set(['v9-net-test.html']);
+// v9-net-test.html is included so users can verify APK + browser connectivity.
+const WEB_EXCLUDE = new Set([]);
 
 cpSync(srcWeb, docsWeb, {
   recursive: true,

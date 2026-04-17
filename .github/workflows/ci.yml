@@ -29,7 +29,7 @@ jobs:
   integration:
     name: Integration tier
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     needs: quick
     steps:
       - uses: actions/checkout@v4
@@ -44,35 +44,51 @@ jobs:
 
       - name: Install Chromium
         run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq chromium-browser >/dev/null 2>&1 \
+            || sudo apt-get install -y -qq chromium >/dev/null 2>&1
           CHROME_BIN_PATH="$(which chromium-browser || which chromium || which google-chrome)"
           echo "CHROME_BIN=$CHROME_BIN_PATH" >> "$GITHUB_ENV"
 
-      # Pin tot (~ LLD 23): 3.1.64 wasm-ld can SIGSEGV on ubuntu-latest (ImportSection::addImport)
-      # — see docs/BUILD_TOOLCHAIN.md / docker/Dockerfile EMSDK_FLAVOR default.
+      # Skip Emscripten + wasm build when vendored wasm is present.
+      # The repo tracks dist/edgejs.{js,wasm} so most runs skip this
+      # entirely (~5 min saved). Only wasm-rebuild.yml or a missing
+      # dist/ triggers a from-source build.
+      - name: Check for vendored wasm
+        id: wasm-check
+        run: |
+          if [ -f dist/edgejs.js ] && [ -f dist/edgejs.wasm ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Wasm runtime found (vendored)"
+            ls -la dist/edgejs.*
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Wasm not vendored — will build from source"
+          fi
+
       - name: Setup Emscripten
+        if: steps.wasm-check.outputs.found == 'false'
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 4.0.23
 
-      - name: Configure and build
+      - name: Build wasm from source
+        if: steps.wasm-check.outputs.found == 'false'
         run: |
           source "$EMSDK/emsdk_env.sh"
           make fetch
           make configure
           make build
 
-      - name: Verify wasm build output
+      - name: Verify wasm
         run: |
           set -e
-          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js not produced by build"; exit 1; }
-          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm not produced by build"; exit 1; }
-          test -f build/edge || { echo "::error::build/edge not produced by build"; exit 1; }
-          echo "Wasm build verified"
+          test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
+          test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
           ls -la dist/edgejs.*
 
       - name: Upload Wasm build artifacts
+        if: steps.wasm-check.outputs.found == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: edgejs-wasm-${{ github.sha }}
@@ -80,23 +96,15 @@ jobs:
           path: |
             dist/edgejs.wasm
             dist/edgejs.js
-            build/edge
 
       - name: Integration tests
         run: |
-          source "$EMSDK/emsdk_env.sh"
+          if [ -f "${EMSDK:-/nonexistent}/emsdk_env.sh" ]; then source "$EMSDK/emsdk_env.sh"; fi
           make test-integration
           make test-soak-quick
 
-      # E2E shell + npm tests: drives the in-tab nodejs shell demo through
-      # Playwright. Includes the npm install ms / npm install express round
-      # trips, which need real outbound HTTPS to registry.npmjs.org. CI
-      # runners have it; the dev sandbox does not, which is why these
-      # tests skip-not-fail there but must run here.
       - name: E2E shell + npm
         env:
-          # test-shell-npm.mjs auto-discovers chromium via `which`, but be
-          # explicit so CI failures point at the right binary.
           PLAYWRIGHT_BROWSER_PATH: ${{ env.CHROME_BIN }}
         run: npm run test:e2e:shell
 

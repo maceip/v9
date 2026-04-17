@@ -862,52 +862,62 @@ export class GvisorServer extends EventEmitter {
 
 let _controlWs = null;
 
+let _controlWsBackoff = 0;
+let _controlWsLastAttempt = 0;
+const _controlPendingQueue = [];
+
 function _getControlWs() {
   if (_controlWs && _controlWs.readyState <= 1) return _controlWs;
+  if (_controlWsBackoff > 0) {
+    if (Date.now() - _controlWsLastAttempt < _controlWsBackoff) return null;
+  }
   const baseUrl = globalThis.__V9_GVISOR_WS_URL__ || _env().NODEJS_GVISOR_WS_URL;
   if (!baseUrl) {
-    console.warn('[v9-net:control] no gvisor URL — cannot open control channel');
     return null;
   }
   const url = new URL(baseUrl);
   url.pathname = '/__v9net/forward';
   const WS = globalThis.__browserRuntimeNativeWebSocket || globalThis.WebSocket;
+  _controlWsLastAttempt = Date.now();
   try {
-    console.log('[v9-net:control] connecting to ' + url.toString());
     _controlWs = new WS(url.toString());
-    _controlWs.onopen = () => { console.log('[v9-net:control] connected'); };
+    _controlWs.onopen = () => {
+      _controlWsBackoff = 0;
+      while (_controlPendingQueue.length > 0) {
+        const pending = _controlPendingQueue.shift();
+        try { _controlWs.send(JSON.stringify(pending)); } catch { /* best-effort */ }
+      }
+    };
     _controlWs.onmessage = (ev) => {
       try { console.log('[v9-net:control] response:', ev.data); } catch {}
     };
-    _controlWs.onclose = () => { console.log('[v9-net:control] closed'); _controlWs = null; };
-    _controlWs.onerror = (e) => { console.error('[v9-net:control] error', e); _controlWs = null; };
-  } catch (e) { console.error('[v9-net:control] failed to create WS:', e); _controlWs = null; }
+    _controlWs.onclose = () => { _controlWs = null; };
+    _controlWs.onerror = () => {
+      _controlWsBackoff = Math.min((_controlWsBackoff || 1000) * 2, 30000);
+      _controlWs = null;
+    };
+  } catch { _controlWs = null; }
   return _controlWs;
 }
 
 function _sendControl(msg) {
   const ws = _getControlWs();
   if (!ws) {
-    console.error('[v9-net:control] cannot send — no control WS:', JSON.stringify(msg));
+    _controlPendingQueue.push(msg);
     return;
   }
-  const send = () => {
-    try {
-      console.log('[v9-net:control] sending:', JSON.stringify(msg));
-      ws.send(JSON.stringify(msg));
-    } catch (e) { console.error('[v9-net:control] send failed:', e); }
-  };
-  if (ws.readyState === 1) send();
-  else ws.addEventListener('open', send, { once: true });
+  if (ws.readyState === 1) {
+    try { ws.send(JSON.stringify(msg)); } catch { /* best-effort */ }
+  } else {
+    _controlPendingQueue.push(msg);
+  }
 }
 
 function _requestPortForward(port) {
-  console.log('[v9-net] requesting port forward:', port);
   _sendControl({ action: 'forward', port });
 }
 
 function _requestPortUnforward(port) {
-  console.log('[v9-net] requesting port unforward:', port);
   _sendControl({ action: 'unforward', port });
 }
 

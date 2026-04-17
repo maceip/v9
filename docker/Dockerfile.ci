@@ -1,0 +1,58 @@
+# CI container for v9 integration tests.
+# Pre-bakes Emscripten 4.0.23, Chromium, and Node 22 so CI skips ~7 min
+# of setup on every run.
+#
+# Build:   docker build -f docker/Dockerfile.ci -t ghcr.io/maceip/v9-ci .
+# Publish: docker push ghcr.io/maceip/v9-ci
+# Rebuild: .github/workflows/ci-image.yml (manual or on Dockerfile change)
+
+# syntax=docker/dockerfile:1
+ARG UBUNTU_TAG=24.04
+FROM ubuntu:${UBUNTU_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    EMSDK=/opt/emsdk \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# ── System packages + Chromium ──────────────────────────────────────
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    python3 \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    xz-utils \
+    chromium-browser \
+    fonts-liberation \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2t64 \
+  && rm -rf /var/lib/apt/lists/*
+
+# ── Node.js 22 ──────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y --no-install-recommends nodejs \
+  && rm -rf /var/lib/apt/lists/* \
+  && node -v && npm -v
+
+# ── Emscripten SDK (pinned to match CI / Makefile) ──────────────────
+ARG EMSDK_VERSION=4.0.23
+RUN git clone --depth 1 https://github.com/emscripten-core/emsdk.git /opt/emsdk \
+  && cd /opt/emsdk \
+  && ./emsdk install "${EMSDK_VERSION}" \
+  && ./emsdk activate "${EMSDK_VERSION}"
+
+ENV PATH="/opt/emsdk:/opt/emsdk/upstream/emscripten:${PATH}"
+
+# ── Set CHROME_BIN for Playwright / test harnesses ──────────────────
+ENV CHROME_BIN=/usr/bin/chromium-browser
+
+WORKDIR /workspace
