@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BountyNet Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="top-bar">
+      <span class="logo">BountyNet</span>
+      <span class="status" id="net-status">wispnet: connecting…</span>
+    </header>
+    <div id="terminal-grid">
+      <div class="term-pane" id="pane-0"><div class="term-label">node-0</div><div class="term-container" data-idx="0"></div></div>
+      <div class="term-pane" id="pane-1"><div class="term-label">node-1</div><div class="term-container" data-idx="1"></div></div>
+      <div class="term-pane" id="pane-2"><div class="term-label">node-2</div><div class="term-container" data-idx="2"></div></div>
+      <div class="term-pane" id="pane-3"><div class="term-label">node-3</div><div class="term-container" data-idx="3"></div></div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

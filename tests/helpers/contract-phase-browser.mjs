@@ -14,7 +14,7 @@ const TIMEOUT_MS = 180_000;
 
 const coopCoep = {
   'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
 };
 
 /** @param {{ rootDir?: string, htmlPath?: string }} [opts] */

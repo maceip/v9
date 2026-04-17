@@ -112,6 +112,16 @@
       }
     }
   </script>
+  <script>
+    setTimeout(() => {
+      if (!globalThis.__HARNESS_BROWSER_RESULT__) {
+        globalThis.__HARNESS_BROWSER_RESULT__ = {
+          passed: 0, skipped: 0, failed: 1, ok: false,
+          error: 'Suite did not complete within 60s (CDN import likely blocked by COEP)'
+        };
+      }
+    }, 60000);
+  </script>
 </head>
 <body>
   <pre id="status">Running in-tab API contract (browser host)…</pre>

@@ -1575,6 +1575,99 @@ function nodeCmd(args, options) {
 }
 
 
+// ─── xxd (hex dump) ──────────────────────────────────────────────────
+
+function xxd(args, options) {
+  let reverseMode = false;
+  let length = -1;
+  let cols = 16;
+  const paths = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-r') { reverseMode = true; }
+    else if (a === '-l' && i + 1 < args.length) { length = parseInt(args[++i], 10); }
+    else if (a === '-c' && i + 1 < args.length) { cols = parseInt(args[++i], 10); }
+    else if (!a.startsWith('-')) { paths.push(a); }
+  }
+
+  let data;
+  if (options && options._stdin) {
+    if (reverseMode) return _xxdReverse(options._stdin);
+    data = _encoder.encode(options._stdin);
+  } else if (paths.length > 0) {
+    const resolved = normalizePath(paths[0]);
+    try {
+      data = _activeMemfs.readFile(resolved);
+      if (reverseMode) return _xxdReverse(_decoder.decode(data));
+    } catch {
+      return { stdout: '', stderr: `xxd: ${paths[0]}: No such file or directory\n`, exitCode: 1 };
+    }
+  } else {
+    return { stdout: '', stderr: 'xxd: no input\n', exitCode: 1 };
+  }
+
+  if (length >= 0 && length < data.byteLength) {
+    data = data.subarray(0, length);
+  }
+
+  const lines = [];
+  for (let offset = 0; offset < data.byteLength; offset += cols) {
+    const chunk = data.subarray(offset, Math.min(offset + cols, data.byteLength));
+    const addr = offset.toString(16).padStart(8, '0');
+    const hexParts = [];
+    for (let j = 0; j < cols; j++) {
+      hexParts.push(j < chunk.length ? chunk[j].toString(16).padStart(2, '0') : '  ');
+    }
+    const hexGrouped = [];
+    for (let j = 0; j < hexParts.length; j += 2) {
+      hexGrouped.push(hexParts.slice(j, j + 2).join(''));
+    }
+    let ascii = '';
+    for (let j = 0; j < chunk.length; j++) {
+      ascii += chunk[j] >= 0x20 && chunk[j] <= 0x7e ? String.fromCharCode(chunk[j]) : '.';
+    }
+    lines.push(`${addr}: ${hexGrouped.join(' ')}  ${ascii}`);
+  }
+
+  return { stdout: lines.join('\n') + '\n', stderr: '', exitCode: 0 };
+}
+
+function _xxdReverse(text) {
+  const bytes = [];
+  for (const line of text.split('\n')) {
+    const match = line.match(/^[0-9a-fA-F]+:\s+(.+?)\s{2}/);
+    if (match) {
+      const hexStr = match[1].replace(/\s/g, '');
+      for (let i = 0; i < hexStr.length; i += 2) {
+        bytes.push(parseInt(hexStr.substring(i, i + 2), 16));
+      }
+    }
+  }
+  return { stdout: _decoder.decode(new Uint8Array(bytes)), stderr: '', exitCode: 0 };
+}
+
+// ─── nano (simplified editor) ────────────────────────────────────────
+// Returns a _nano marker so the shell can enter interactive editor mode.
+
+function nano(args) {
+  const paths = args.filter(a => !a.startsWith('-'));
+  if (paths.length === 0) {
+    return { stdout: '', stderr: 'nano: missing filename\n', exitCode: 1 };
+  }
+  const resolved = normalizePath(paths[0]);
+  let content = '';
+  try {
+    content = _decoder.decode(_activeMemfs.readFile(resolved));
+  } catch {
+    // New file — starts empty
+  }
+  return {
+    stdout: '', stderr: '', exitCode: 0,
+    _nano: { path: resolved, displayPath: paths[0], content },
+  };
+}
+
 export const commands = {
   ls, cat, grep, find, head, tail, echo, pwd, mkdir, rm, cp, mv, touch,
   wc, sort, uniq, tr, basename, dirname, env, cd,
@@ -1583,6 +1676,7 @@ export const commands = {
   rg, xargs, tee, sed, awk, which, whoami, date, uname, seq, yes, printf: printfCmd,
   readlink, realpath: realpathCmd, stat: statCmd, chmod, chown,
   npm: npmCmd, node: nodeCmd,
+  xxd, nano,
 };
 
 export function hasCommand(name) {
