@@ -91,6 +91,9 @@ export async function runBrowserHostContractPhase(opts = {}) {
     } else if (!result.ok) {
       checksFailed++;
       notes.push(`harness: failed=${result.failed} passed=${result.passed} skipped=${result.skipped}`);
+      if (result.failures?.length) {
+        for (const f of result.failures.slice(0, 5)) notes.push(`  failed: ${f}`);
+      }
     } else {
       checksPassed++;
       notes.push(`suite: ${result.passed} passed, ${result.skipped} skipped, ${result.failed} failed`);
