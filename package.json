@@ -86,7 +86,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "^2.1.90",
+    "@anthropic-ai/claude-code": "^2.1.111",
     "@anthropic-ai/sdk": "^0.80.0",
     "playwright-core": "^1.59.1",
     "ws": "^8.20.0",

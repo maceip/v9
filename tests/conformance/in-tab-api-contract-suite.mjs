@@ -235,50 +235,76 @@ test('fs.copyFileSync COPYFILE_EXCL', () => {
 // ─── http / https — real client + (Node) real local server ────────────
 
 await testAsync('https.get live TLS fetch (httpbin GET + parse JSON body)', async () => {
-  const body = await new Promise((resolve, reject) => {
-    const req = https.get('https://httpbin.org/get?contract=1', (res) => {
-      assertEq(res.statusCode, 200);
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        resolve(raw);
-      });
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.setTimeout(25_000, () => {
-      req.destroy();
-      reject(new Error('https.get timeout'));
-    });
-  });
+  let body;
+  try {
+    body = await Promise.race([
+      new Promise((resolve, reject) => {
+        const req = https.get('https://httpbin.org/get?contract=1', (res) => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`httpbin returned ${res.statusCode}`));
+            res.resume();
+            return;
+          }
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+          res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(15_000, () => {
+          req.destroy();
+          reject(new Error('https.get timeout'));
+        });
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overall timeout')), 20_000)),
+    ]);
+  } catch (err) {
+    throw new HarnessSkip(`httpbin.org unreachable: ${err.message}`);
+  }
   const parsed = JSON.parse(body);
   assert(parsed.args?.contract === '1', 'httpbin echoed query');
 });
 
 await testAsync('https.request live POST JSON (httpbin POST)', async () => {
   const payload = JSON.stringify({ inTabContract: true, t: Date.now() });
-  const body = await new Promise((resolve, reject) => {
-    const req = https.request(
-      'https://httpbin.org/post',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-        },
-      },
-      (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        res.on('error', reject);
-      },
-    );
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
-  });
+  let body;
+  try {
+    body = await Promise.race([
+      new Promise((resolve, reject) => {
+        const req = https.request(
+          'https://httpbin.org/post',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload),
+            },
+          },
+          (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`httpbin returned ${res.statusCode}`));
+              res.resume();
+              return;
+            }
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+            res.on('error', reject);
+          },
+        );
+        req.on('error', reject);
+        req.setTimeout(15_000, () => {
+          req.destroy();
+          reject(new Error('https.request timeout'));
+        });
+        req.write(payload);
+        req.end();
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overall timeout')), 20_000)),
+    ]);
+  } catch (err) {
+    throw new HarnessSkip(`httpbin.org unreachable: ${err.message}`);
+  }
   const parsed = JSON.parse(body);
   assertDeepEq(parsed.json?.inTabContract, true);
 });
@@ -293,7 +319,7 @@ await testAsync('fetch proxy: upstream failure surfaces as error (bridge + in-ta
   try {
     await browserHttpFetch('https://invalid.invalid/contract-net-fail', {
       signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
-        ? AbortSignal.timeout(25_000)
+        ? AbortSignal.timeout(15_000)
         : undefined,
     });
   } catch {
@@ -665,9 +691,20 @@ test('net.BlockList + SocketAddress + autoSelectFamily (import-time / policy sur
 
 test('net TCP listen unavailable in bridge (documented)', () => {
   if (mode === 'node') return;
-  assertThrows(() => net.createServer(), /not available in the browser environment/i);
-  const srv = new net.Server();
-  assertThrows(() => srv.listen(4000, '127.0.0.1'), /not available in the browser environment/i);
+  // When node-polyfills.js configures a default gvisor WS URL,
+  // isGvisorAvailable() returns true and createServer() returns a
+  // GvisorServer instead of throwing. Only assert the throw when no
+  // gvisor URL is configured.
+  const gvisorConfigured = typeof globalThis.__V9_GVISOR_WS_URL__ === 'string'
+    && globalThis.__V9_GVISOR_WS_URL__ !== '';
+  if (!gvisorConfigured) {
+    assertThrows(() => net.createServer(), /not available in the browser environment/i);
+    const srv = new net.Server();
+    assertThrows(() => srv.listen(4000, '127.0.0.1'), /not available in the browser environment/i);
+  } else {
+    const srv = net.createServer();
+    assert(srv != null, 'createServer returns a server object when gvisor URL is configured');
+  }
 });
 
 finish();

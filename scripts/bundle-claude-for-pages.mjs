@@ -79,6 +79,7 @@ const nodeBuiltins = [
   'timers',
   'timers/promises',
   'console',
+  'vm',
 ];
 
 await esbuild.build({

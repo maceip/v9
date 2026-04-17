@@ -14,6 +14,7 @@ export function createHarness(title) {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  const failures = [];
 
   /** Log a skipped test (e.g. wrong platform); does not count as pass or fail. */
   function skip(name, reason) {
@@ -29,6 +30,7 @@ export function createHarness(title) {
       passed++;
     } catch (error) {
       console.log(`  FAIL: ${name} — ${error.message}`);
+      failures.push(`${name}: ${error.message}`);
       failed++;
     }
   }
@@ -46,6 +48,7 @@ export function createHarness(title) {
         return;
       }
       console.log(`  FAIL: ${name} — ${error.message}`);
+      failures.push(`${name}: ${error.message}`);
       failed++;
     }
   }
@@ -94,7 +97,7 @@ export function createHarness(title) {
     const skipPart = skipped ? `, ${skipped} skipped` : '';
     console.log(`\n=== Results: ${passed} passed${skipPart}, ${failed} failed ===`);
     if (globalThis.__HARNESS_BROWSER_FINISH__) {
-      globalThis.__HARNESS_BROWSER_RESULT__ = { passed, skipped, failed, ok: failed === 0 };
+      globalThis.__HARNESS_BROWSER_RESULT__ = { passed, skipped, failed, ok: failed === 0, failures };
       return;
     }
     // Do not call process.exit() — on Windows, forced exit while native MessagePorts or
