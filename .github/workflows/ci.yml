@@ -80,12 +80,20 @@ jobs:
           make configure
           make build
 
-      - name: Verify wasm
+      - name: Verify wasm and populate build/
         run: |
           set -e
           test -f dist/edgejs.js || { echo "::error::dist/edgejs.js missing"; exit 1; }
           test -f dist/edgejs.wasm || { echo "::error::dist/edgejs.wasm missing"; exit 1; }
-          ls -la dist/edgejs.*
+          # Integration tests require build/edge (CJS shim) + build/edge.js
+          # + build/edge.wasm. When using vendored wasm, populate from dist/.
+          if [ ! -f build/edge.js ] || [ ! -f build/edge.wasm ]; then
+            mkdir -p build
+            cp dist/edgejs.js build/edge.js
+            cp dist/edgejs.wasm build/edge.wasm
+            node scripts/write-build-edge-shim.mjs build
+          fi
+          ls -la dist/edgejs.* build/edge*
 
       - name: Upload Wasm build artifacts
         if: steps.wasm-check.outputs.found == 'false'
