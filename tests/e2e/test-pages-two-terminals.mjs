@@ -153,7 +153,7 @@ async function runTests() {
     assert(domState.wrap1 && domState.wrap2, 'Both terminal wraps exist');
     assert(domState.iframe1 && domState.iframe2, 'Both iframe elements exist');
     assert(domState.role1 === 'shell', 'Terminal 1 is data-role="shell"');
-    assert(domState.role2 === 'app-demo', 'Terminal 2 is data-role="app-demo"');
+    assert(domState.role2 === 'demo', 'Terminal 2 is data-role="demo"');
 
     // ═══════════════════════════════════════════════════════════════
     // Test 2: Terminals are side-by-side (desktop layout)
