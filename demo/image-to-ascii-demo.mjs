@@ -1,4 +1,4 @@
-const ASCII_RAMP = " .,:;i1tfLCG08@";
+const FOREGROUND_ASCII_RAMP = ".:-=+*#%@";
 const INPUT_ASSET_PATH = '/web/assets/bountynet_input.svg';
 
 function terminalSize() {
@@ -16,6 +16,14 @@ function loadImage(src) {
     image.onerror = () => reject(new Error(`Unable to load demo image: ${src.slice(0, 64)}`));
     image.src = src;
   });
+}
+
+function colorDistance(r1, g1, b1, r2, g2, b2) {
+  return Math.sqrt(
+    ((r1 - r2) ** 2)
+    + ((g1 - g2) ** 2)
+    + ((b1 - b2) ** 2),
+  );
 }
 
 function renderAscii(image, width, height) {
@@ -39,13 +47,38 @@ function renderAscii(image, width, height) {
   context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
 
   const { data } = context.getImageData(0, 0, width, height);
+  const backgroundSampleX = Math.min(width - 1, offsetX + 1);
+  const backgroundSampleY = Math.min(height - 1, offsetY + 1);
+  const backgroundSampleOffset = (backgroundSampleY * width + backgroundSampleX) * 4;
+  const backgroundColor = {
+    r: data[backgroundSampleOffset],
+    g: data[backgroundSampleOffset + 1],
+    b: data[backgroundSampleOffset + 2],
+  };
+
   const lines = [];
   for (let y = 0; y < height; y += 1) {
     let line = '';
     for (let x = 0; x < width; x += 1) {
+      if (x < offsetX || x >= offsetX + drawWidth || y < offsetY || y >= offsetY + drawHeight) {
+        line += ' ';
+        continue;
+      }
       const pixelOffset = (y * width + x) * 4;
       const alpha = data[pixelOffset + 3] / 255;
       if (alpha < 0.05) {
+        line += ' ';
+        continue;
+      }
+      const distanceFromBackground = colorDistance(
+        data[pixelOffset],
+        data[pixelOffset + 1],
+        data[pixelOffset + 2],
+        backgroundColor.r,
+        backgroundColor.g,
+        backgroundColor.b,
+      );
+      if (distanceFromBackground < 70) {
         line += ' ';
         continue;
       }
@@ -54,11 +87,15 @@ function renderAscii(image, width, height) {
         + data[pixelOffset + 1] * 0.7152
         + data[pixelOffset + 2] * 0.0722
       ) * alpha;
+      const contrast = Math.max(0, Math.min(1, luminance / 255));
       const rampIndex = Math.max(
         0,
-        Math.min(ASCII_RAMP.length - 1, Math.round((luminance / 255) * (ASCII_RAMP.length - 1))),
+        Math.min(
+          FOREGROUND_ASCII_RAMP.length - 1,
+          Math.round(contrast * (FOREGROUND_ASCII_RAMP.length - 1)),
+        ),
       );
-      line += ASCII_RAMP[rampIndex];
+      line += FOREGROUND_ASCII_RAMP[rampIndex];
     }
     lines.push(line.replace(/\s+$/u, ''));
   }
