@@ -7,7 +7,7 @@
  *   2. Clicking either terminal zooms BOTH together
  *   3. Each terminal has its own iframe pointing at the right URL
  *   4. The shell terminal loads web/index.html?autorun=0 (no bundle)
- *   5. The Claude terminal loads web/index.html?bundle=...&autorun=1
+ *   5. The app demo terminal loads web/index.html?bundle=...&autorun=1
  *   6. The shell iframe drops into the interactive shell
  *   7. LIVE NETWORK: `npm install express` in the shell actually fetches
  *      from registry.npmjs.org and extracts files into MEMFS
@@ -153,7 +153,7 @@ async function runTests() {
     assert(domState.wrap1 && domState.wrap2, 'Both terminal wraps exist');
     assert(domState.iframe1 && domState.iframe2, 'Both iframe elements exist');
     assert(domState.role1 === 'shell', 'Terminal 1 is data-role="shell"');
-    assert(domState.role2 === 'claude', 'Terminal 2 is data-role="claude"');
+    assert(domState.role2 === 'app-demo', 'Terminal 2 is data-role="app-demo"');
 
     // ═══════════════════════════════════════════════════════════════
     // Test 2: Terminals are side-by-side (desktop layout)
@@ -253,20 +253,24 @@ async function runTests() {
     await page.waitForTimeout(1000); // let iframe start loading
     const srcs = await page.evaluate(() => ({
       shell: document.getElementById('cli-frame').src,
-      claude: document.getElementById('cli-frame-2').src,
+      appDemo: document.getElementById('cli-frame-2').src,
     }));
     assert(
       srcs.shell.includes('autorun=0') && !srcs.shell.includes('bundle='),
       'Shell iframe URL has autorun=0 (no bundle)',
     );
     assert(
-      srcs.claude === '' || (srcs.claude.includes('bundle=') && srcs.claude.includes('autorun=1')),
-      'Claude iframe URL has bundle= and autorun=1 (or unloaded)',
+      srcs.appDemo === '' || (
+        srcs.appDemo.includes('bundle=')
+        && srcs.appDemo.includes('autorun=1')
+        && srcs.appDemo.includes('image-to-ascii-demo.js')
+      ),
+      'App demo iframe URL has the image-to-ascii bundle and autorun=1 (or unloaded)',
     );
 
     // ═══════════════════════════════════════════════════════════════
     // Test 6: Shell iframe actually loads and shows prompt
-    //         (Claude iframe won't load without Wasm runtime, that's OK)
+    //         (App demo iframe won't load without Wasm runtime, that's OK)
     // ═══════════════════════════════════════════════════════════════
     // The shell iframe loads web/index.html which boots its own shell.
     // Since our test server doesn't serve edgejs.wasm, the shell will still

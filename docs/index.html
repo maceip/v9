@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>v9</title>
-  <meta name="description" content="v9 — Node.js in the browser (EdgeJS + napi-bridge). Landing page loads Claude Code in a sandboxed terminal iframe after CI builds wasm and bundle.">
+  <meta name="description" content="v9 — Node.js in the browser (EdgeJS + napi-bridge). Landing page pairs an interactive shell with an image-to-ascii demo running in the browser runtime.">
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#e8e4de" media="(prefers-color-scheme: light)">
 
@@ -1074,7 +1074,7 @@
     <div id="fog"></div>
     <div id="spotlight"></div>
 
-    <!-- Terminal pair: shell (left) + Claude CLI (right) -->
+    <!-- Terminal pair: shell (left) + image-to-ascii demo (right) -->
     <div id="terminal-pair">
       <!-- Terminal 1: Interactive shell (npm, node, MEMFS) -->
       <div id="terminal-wrap" class="terminal-wrap idle" data-role="shell">
@@ -1109,8 +1109,8 @@
         </div>
       </div>
 
-      <!-- Terminal 2: Claude Code CLI (real Node.js + Anthropic SDK) -->
-      <div id="terminal-wrap-2" class="terminal-wrap idle" data-role="claude">
+      <!-- Terminal 2: image-to-ascii demo (browser runtime bundle) -->
+      <div id="terminal-wrap-2" class="terminal-wrap idle" data-role="demo">
         <div id="terminal-frame-2" class="terminal-frame">
           <div class="frame-vent" style="top:8px;left:50%;transform:translateX(-50%)"></div>
           <div class="frame-vent" style="bottom:8px;left:50%;transform:translateX(-50%)"></div>
@@ -1133,11 +1133,11 @@
 
           <div id="terminal-screen-2" class="terminal-screen">
             <canvas id="glass-canvas-2" class="glass-canvas"></canvas>
-            <div class="terminal-label">CLAUDE CODE</div>
+            <div class="terminal-label">IMAGE TO ASCII</div>
             <div id="terminal-overlay-2" class="terminal-overlay">
               <div id="boot-text-2" class="boot-text"></div>
             </div>
-            <iframe id="cli-frame-2" class="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Claude Code (browser runtime)"></iframe>
+            <iframe id="cli-frame-2" class="cli-frame" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title="Image to ASCII demo (browser runtime)"></iframe>
           </div>
         </div>
       </div>
