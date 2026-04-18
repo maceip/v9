@@ -1,20 +1,5 @@
 const ASCII_RAMP = " .,:;i1tfLCG08@";
-
-const SAMPLE_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 192">
-  <rect width="256" height="192" rx="18" fill="#0a0a0f"/>
-  <rect x="20" y="24" width="216" height="144" rx="14" fill="#11111b" stroke="#2a2b3b" stroke-width="3"/>
-  <rect x="36" y="40" width="184" height="24" rx="8" fill="#1d2030"/>
-  <circle cx="52" cy="52" r="5" fill="#7aa2f7"/>
-  <circle cx="68" cy="52" r="5" fill="#9bff00"/>
-  <circle cx="84" cy="52" r="5" fill="#f7768e"/>
-  <polygon points="150,74 104,122 136,122 116,160 178,102 146,102" fill="#9bff00"/>
-  <rect x="36" y="136" width="72" height="10" rx="5" fill="#7aa2f7" opacity="0.9"/>
-  <rect x="36" y="152" width="104" height="8" rx="4" fill="#c0caf5" opacity="0.72"/>
-  <rect x="148" y="136" width="52" height="24" rx="8" fill="#1f2335" stroke="#7aa2f7" stroke-width="2"/>
-  <text x="174" y="153" text-anchor="middle" font-family="monospace" font-size="13" fill="#c0caf5">v9</text>
-</svg>
-`.trim();
+const INPUT_ASSET_PATH = '/web/assets/bountynet_input.svg';
 
 function terminalSize() {
   const columns = Number(globalThis.process?.stdout?.columns || 80);
@@ -22,10 +7,6 @@ function terminalSize() {
   const width = Math.max(28, Math.min(78, columns - 4));
   const height = Math.max(16, Math.min(30, rows - 10));
   return { width, height };
-}
-
-function svgDataUrl(svg) {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 function loadImage(src) {
@@ -88,13 +69,13 @@ function renderAscii(image, width, height) {
 export async function main() {
   try {
     const { width, height } = terminalSize();
-    const source = svgDataUrl(SAMPLE_SVG);
+    const source = new URL(INPUT_ASSET_PATH, globalThis.location?.origin || window.location.origin).href;
     const image = await loadImage(source);
     const ascii = renderAscii(image, width, height);
 
     console.log('\x1b[32mimage-to-ascii demo\x1b[0m');
     console.log('Inspired by IonicaBizau/image-to-ascii, rendered in the browser runtime.');
-    console.log(`Source image: inline SVG sample | Output grid: ${width}x${height}`);
+    console.log(`Source image: ${INPUT_ASSET_PATH} | Output grid: ${width}x${height}`);
     console.log('');
     console.log(ascii);
 
