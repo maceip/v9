@@ -66,7 +66,7 @@ export function showOnboarding() {
         <div class="onboarding-mode-icon">⚡</div>
         <div class="onboarding-mode-info">
           <strong>Runtime</strong>
-          <span>Run unmodified Node.js apps entirely in the browser — like the Claude Code demo on the right</span>
+          <span>Run Node-style apps entirely in the browser — like the image-to-ascii demo on the right</span>
         </div>
       </div>
     `;

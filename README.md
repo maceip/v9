@@ -96,15 +96,13 @@ node scripts/dev-server.mjs
 
 **Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
 
-A **reference-app** stress case on the same stack.
+A browser demo bundle on the same stack.
 
 ```bash
-# 1. Set API key (DevTools console):
-#    sessionStorage.setItem('anthropic_api_key', 'sk-ant-…')
-# 2. Bundle the vendor CLI:
-npm run bundle:claude-code
-# 3. Run it:
-v9 run dist/claude-code-cli.js
+# 1. Bundle the demo app:
+npm run bundle:image-to-ascii-demo
+# 2. Run it:
+v9 run dist/image-to-ascii-demo.js
 ```
 
 **Contributors:** If you edit `tests/conformance/in-tab-api-contract-suite.mjs`, refresh the Wasm copy: `npm run build:in-tab-api-contract:wasm`, then `npm run test:nodejs-in-tab-contract`.
@@ -126,7 +124,7 @@ npm run test:nodejs-in-tab-contract
 | `edgejs.wasm`, `edgejs.js` | **Vendored** (or `npm run build` / `npm run vendor:wasm`) | Wasm runtime — the product. Details in `docs/BUILD_TOOLCHAIN.md` |
 | `build/edge` | `npm run build` | CommonJS loader stub (core devs only) |
 | `<name>-bundle.js` | `v9 build` | Your app bundled for the browser |
-| `claude-code-cli.js` | `npm run bundle:claude-code` | Reference app (Anthropic CLI) |
+| `image-to-ascii-demo.js` | `npm run bundle:image-to-ascii-demo` | Reference app bundle for the landing-page demo |
 | `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS |
 
 `dist/edgejs.{js,wasm}` are tracked in git. Other `dist/` contents are gitignored.
@@ -148,22 +146,22 @@ Legacy names `test:claude-contract:*` still point at the same commands during mi
 - `docs/NODEJS_IN_TAB_ROADMAP.md` — architecture + next milestones  
 - `.planning/` — minimal release-gate metadata (large historical phase trees removed)
 
-## GitHub Pages (landing + Claude in iframe)
+## GitHub Pages (landing + image-to-ascii demo)
 
 The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) runs on **`push` to `main`** (and **`workflow_dispatch`** so you can run it from another branch without double-deploy races).
 
-1. **`npm ci`** — includes **`@anthropic-ai/claude-code`** (devDependency), used only as input to the pre-bundle step below.
+1. **`npm ci`** — installs the bundler/runtime dependencies used by the landing page demo build.
 2. **`make fetch`**, **`make configure`**, **`make build`** — produces **`dist/edgejs.{js,wasm}`**.
 3. **`scripts/prepare-github-pages.mjs`** — copies **`web/`** → **`docs/web/`**, **`napi-bridge/`** → **`docs/napi-bridge/`**, copies wasm into **`docs/dist/`**, rewrites **every** `*.html` import map from **`/napi-bridge/`** to **`../napi-bridge/`** (required for project Pages under **`/<repo>/`**), and writes **`docs/.nojekyll`** so GitHub serves static files as-is.
-4. **`scripts/bundle-claude-for-pages.mjs`** — esbuilds the vendor CLI with Node built-ins left **external** (resolved via the same import map). Output: **`docs/dist/claude-code-cli.js`** next to **`edgejs.*`**.
+4. **`scripts/bundle-image-to-ascii-demo.mjs`** — esbuilds the browser-safe image-to-ascii demo entry and writes **`docs/dist/image-to-ascii-demo.js`** next to **`edgejs.*`**.
 
-The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<repo-prefix>dist/claude-code-cli.js&autorun=1`** so the iframe runtime matches localhost, with **`bundle=`** as an absolute path from the site root (see `siteRootPrefix()` in `docs/js/v9-app.js`).
+The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<repo-prefix>dist/image-to-ascii-demo.js&autorun=1`** so the iframe runtime matches localhost, with **`bundle=`** as an absolute path from the site root (see `siteRootPrefix()` in `docs/js/v9-app.js`).
 
 **Limitation:** `github.io` static hosting does **not** let you set **`Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`** headers. The local dev server (`v9 run` / `v9 build`) sends those for **`SharedArrayBuffer`** / full Wasm threading semantics; on Pages, behavior may differ. For a public demo with the same headers, front the site with a host that injects those headers (e.g. Cloudflare **`_headers`**) or keep the canonical wasm validation on CI + local dev.
 
 Generated trees **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`**, and **`docs/.nojekyll`** are produced by the steps above (under **`docs/`** only what’s needed for deploy); **`docs/web/`** etc. remain gitignored per **`.gitignore`**. Local dry-run after a wasm build:
 
-`node scripts/prepare-github-pages.mjs && node scripts/bundle-claude-for-pages.mjs`
+`node scripts/prepare-github-pages.mjs && node scripts/bundle-image-to-ascii-demo.mjs`
 
 **Deploy failing in ~3s with environment errors:** GitHub’s **`github-pages`** [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) can restrict which branches may deploy. In the repo: **Settings → Environments → `github-pages` → Deployment branches**, allow **`main`** (or all branches if you use **`workflow_dispatch`** from other refs).
 
