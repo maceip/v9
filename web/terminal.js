@@ -440,7 +440,7 @@ async function boot() {
     if (!config.appBundle || !config.autorun) {
       // No bundle — shell is the primary interface. Prompt NOW.
       globalThis._stdinPush = (data) => shell.feed(data);
-      term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser');
+      term.writeln('\x1b[36mexec\x1b[0m — agent shell tools runtime');
       term.writeln('Type \x1b[33mnpm install <pkg>\x1b[0m to install packages, or any shell command.\r\n');
       shell.prompt();
     }
@@ -517,7 +517,7 @@ async function boot() {
       // Bundle takes over: clear the shell prompt, banner, launch app.
       // Because shell.prompt() may have already painted above, clear first.
       // (A bundle boot with autorun expects the full terminal.)
-      term.writeln('\x1b[36mv9\x1b[0m — Node.js in the browser\r\n');
+      term.writeln('\x1b[36mexec\x1b[0m — agent shell tools runtime\r\n');
       controller.start().then(() => {
         controller.waitForExit().then(() => {
           if (shell) {

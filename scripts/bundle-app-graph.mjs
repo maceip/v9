@@ -2,8 +2,8 @@
 /**
  * Low-level CJS bundler for MEMFS (used by tests and internal tooling).
  *
- * For app bundling, prefer `v9 build` which produces optimized ESM bundles
- * with Node built-ins externalized for the browser runtime.
+ * This helper remains for internal/runtime experiments during the migration to
+ * the agent-shell-tools-aligned surface. It is not a primary product entrypoint.
  *
  * Usage:
  *   node scripts/bundle-app-graph.mjs --entry ./myapp/index.js --outfile ./dist/app-bundle.cjs

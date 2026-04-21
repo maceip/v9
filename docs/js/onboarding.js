@@ -1,5 +1,6 @@
 /**
- * First-visit onboarding popover — terminal-shaped window explaining v9.
+ * First-visit onboarding popover — terminal-shaped window explaining the
+ * current agent-shell-tools-oriented runtime surface.
  *
  * Shows once for new visitors (persisted via localStorage). Contains a brief
  * explanation of v9's two modes (Shell + Runtime) and a live auto-typing demo
@@ -37,8 +38,8 @@ export function showOnboarding() {
     const header = document.createElement('div');
     header.className = 'onboarding-header';
     header.innerHTML = `
-      <span class="onboarding-title">Welcome to v9</span>
-      <span class="onboarding-subtitle">Node.js in the browser</span>
+      <span class="onboarding-title">Welcome</span>
+      <span class="onboarding-subtitle">Agent shell tools runtime</span>
     `;
     card.appendChild(header);
 
@@ -48,7 +49,7 @@ export function showOnboarding() {
 
     const intro = document.createElement('p');
     intro.className = 'onboarding-intro';
-    intro.textContent = 'v9 runs Node.js directly in your browser tab using WebAssembly. No install, no server, no Docker.';
+    intro.textContent = 'This environment now centers on sandboxed command execution, grpc_exec streaming, and concurrent runtime sessions.';
     body.appendChild(intro);
 
     // Two modes

@@ -3,7 +3,8 @@
  * GitHub Pages / demo deploy: pre-bundle the vendor CLI into one ESM file.
  *
  * This is the Pages-specific bundling recipe for the Anthropic CLI reference app.
- * For general app bundling, use `v9 build` instead.
+ * It is retained as a demo bundling helper while the legacy browser runtime
+ * remains available as an optional client surface.
  *
  * Run **after** `scripts/prepare-github-pages.mjs` in CI so `docs/dist/` already contains
  * `edgejs.{js,wasm}` and the CLI file lands alongside them.

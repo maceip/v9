@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
  * Dev server: HTTP file server (8080) + CORS proxy (8081)
- * Prefer `v9 run` or `v9 build` which start this server automatically.
  * Direct usage: node scripts/dev-server.mjs
  */
 import http from 'node:http';
@@ -257,8 +256,6 @@ proxy.on('upgrade', (req, socket, head) => {
 
 fileServer.listen(8080, () => console.log('File server: http://localhost:8080/'));
 proxy.listen(8081, () => console.log('CORS proxy:  http://localhost:8081/'));
-console.log('\nPreferred: use the v9 CLI instead of this server directly:');
-console.log('  v9 run <your-bundle.js>');
-console.log('  v9 build                  (bundles your project and opens browser)\n');
+console.log('\nUse this server for transitional browser/runtime development only.\n');
 console.log('Manual URL: http://localhost:8080/web/index.html?bundle=/dist/<your-bundle>.js&autorun=1');
 console.log('Keep this process running: API traffic is proxied on :8081 (see web/node-polyfills.js).');

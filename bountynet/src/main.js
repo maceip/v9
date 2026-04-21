@@ -1,5 +1,5 @@
 /**
- * BountyNet — 4-terminal demo using the real v9 runtime.
+ * BountyNet — 4-terminal demo using the legacy browser runtime.
  *
  * Boots four xterm.js terminals, each wired to a real v9 createShell
  * instance from napi-bridge/shell.js, sharing the v9 MEMFS. The shell
