@@ -388,8 +388,8 @@ async function boot() {
   let processBridge = null;
 
   // ── Kick off Stage B imports in parallel with Stage A ──────────────────
-  // The Stage B module graph (browser-builtins → http/net-stubs → gvisor-net
-  // → wisp-client → wolfssl-tls) is ~2700 lines of parse cost that we used
+  // The Stage B module graph (browser-builtins → http/net-stubs and the
+  // retained runtime shims) is still large enough that we used
   // to serialise behind the shell. Starting the dynamic imports here, BEFORE
   // awaiting the shell, lets the browser parse+link them while xterm paints
   // and createShell runs. By the time Stage B actually needs them below,

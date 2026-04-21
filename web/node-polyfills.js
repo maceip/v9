@@ -512,8 +512,6 @@
 
   const _origFetch = globalThis.fetch;
   const _proxyUrl = (() => {
-    // When v9-net is running, skip the CORS proxy — traffic goes through gvisor
-    if (globalThis.__V9_GVISOR_WS_URL__) return '';
     try {
       const params = new URLSearchParams(globalThis.location?.search || '');
       const q = params.get('proxy');
@@ -762,53 +760,21 @@
     globalThis.structuredClone = (obj) => JSON.parse(JSON.stringify(obj));
   }
 
-  // ─── Explicit transport config (no probing) ────────────────────────
+  // ─── Explicit proxy config (no probing) ─────────────────────────────
   //
-  // The browser client no longer ships the legacy staged transport stack as
-  // part of the product surface. During migration, explicit raw-socket or
-  // fetch-proxy configuration can still be mirrored into globals/env for any
-  // transitional modules that read them, but there are no baked-in hosted
-  // defaults and no boot-time transport probing.
+  // The retained browser helper layer only mirrors an explicitly configured
+  // fetch proxy for modules that still read process.env / globals at
+  // module-load time. There are no baked-in transport defaults.
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
     const procEnv = globalThis.process?.env || {};
-
-    const gvisorWs = params.get('gvisor')
-      || globalThis.__V9_GVISOR_WS_URL__
-      || procEnv.NODEJS_GVISOR_WS_URL
-      || null;
-
-    const rawWispParam = params.get('wisp');
-    const wispDisabled =
-      globalThis.__V9_DISABLE_WISP__ === true
-      || rawWispParam === '0'
-      || rawWispParam === 'off'
-      || rawWispParam === 'false'
-      || rawWispParam === 'no'
-      || (() => {
-        try { return globalThis.localStorage?.getItem('v9NoWisp') === '1'; }
-        catch { return false; }
-      })();
-    const wispWs = wispDisabled
-      ? null
-      : (rawWispParam && rawWispParam !== '1' ? rawWispParam : null)
-        || globalThis.__V9_WISP_WS_URL__
-        || procEnv.NODEJS_WISP_WS_URL
-        || null;
 
     const fetchProxy = params.get('fetchProxy')
       || globalThis.__V9_FETCH_PROXY_URL__
       || procEnv.NODEJS_IN_TAB_FETCH_PROXY
       || null;
 
-    // Mirror resolved URLs into both the dedicated globals and process.env
-    // so module-load-time checks in any transport module find them.
-    globalThis.__V9_GVISOR_WS_URL__ = gvisorWs;
     if (globalThis.process?.env) {
-      globalThis.process.env.NODEJS_GVISOR_WS_URL = gvisorWs;
-      if (wispWs && !globalThis.process.env.NODEJS_WISP_WS_URL) {
-        globalThis.process.env.NODEJS_WISP_WS_URL = wispWs;
-      }
       if (fetchProxy && !globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY) {
         globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY = fetchProxy;
       }
@@ -830,11 +796,8 @@
     };
 
     // One info line, deferred so it never blocks first paint. Logs only
-    // explicit transitional config — no probing, no defaults.
-    const logTransports = () => {
-      if (gvisorWs)          console.log('[runtime] local raw transport  ' + gvisorWs);
-      if (wispDisabled)      console.log('[runtime] explicit wisp disabled');
-      else if (wispWs)       console.log('[runtime] explicit wisp        ' + wispWs);
+    // explicit proxy configuration — no probing, no defaults.
+    const logProxy = () => {
       if (fetchProxy)        console.log('[runtime] explicit fetch proxy ' + fetchProxy);
       const last = readLastNetMode();
       if (last) {
@@ -843,12 +806,12 @@
       }
     };
     if (typeof globalThis.requestIdleCallback === 'function') {
-      globalThis.requestIdleCallback(logTransports, { timeout: 2000 });
+      globalThis.requestIdleCallback(logProxy, { timeout: 2000 });
     } else {
-      setTimeout(logTransports, 0);
+      setTimeout(logProxy, 0);
     }
   } catch (e) {
-    console.log('[v9-net] transport config skipped:', e?.message || e);
+    console.log('[runtime] proxy config skipped:', e?.message || e);
   }
 
 })();
