@@ -1,43 +1,29 @@
 /**
- * Stub modules for net, tls, dns — load without error; throw on raw socket use.
+ * Minimal `net` / `tls` / `dns` compatibility shims.
  *
- * Public `node:net` inspection types (`BlockList`, `SocketAddress`, dual-stack
- * toggles, `Stream` alias) are implemented for apps that block-check IPs without
- * opening TCP. `connect` / `createServer`+`listen` still fail in-tab unless an
- * embedder tunnel is registered — see transport-policy.mjs + docs/TRANSPORT.md
- * (optional hook __NODE_TAB_WISP_TCP_CONNECT or external Wisp client).
+ * The repo no longer ships the legacy gVisor/Wisp browser transport stack.
+ * Browser-side raw sockets are intentionally unavailable unless an embedder
+ * provides an explicit transport hook. The public product surface is now the
+ * hosted `grpc_exec` family, not direct in-tab TCP.
  */
 
 import { EventEmitter } from './eventemitter.js';
-import { getRawSocketTransportMode } from './transport-policy.mjs';
-import { isGvisorAvailable, GvisorSocket, GvisorServer, getGvisorStack } from './gvisor-net.js';
-import { isWispAvailable, wispConnect } from './wisp-client.js';
-import { createTlsConnection } from './wolfssl-tls.js';
-import { recordNetworkMode } from './runtime-cache.js';
 
 function notAvailable(mod, method) {
   return function () {
-    throw new Error(`${mod}.${method}() is not available in the browser environment`);
+    throw new Error(`${mod}.${method}() is not available in this runtime`);
   };
 }
 
 function _rawSocketUnavailable(modDotMethod) {
-  const mode = getRawSocketTransportMode();
-  if (mode === 'gvisor') {
-    // Should not reach here — gvisor path handled before this is called.
-    throw new Error(`${modDotMethod}: gvisor transport failed to initialize. Check NODEJS_GVISOR_WS_URL.`);
-  }
-  if (mode === 'wisp') {
-    // Should not reach here — wisp path handled before this is called.
-    throw new Error(`${modDotMethod}: wisp transport failed to initialize. Check NODEJS_WISP_WS_URL.`);
-  }
-  if (mode === 'embedder') {
+  if (typeof globalThis.__V9_GRPC_TUNNEL_CONNECT__ === 'function') {
     throw new Error(
-      `${modDotMethod}: provide tcp via globalThis.__NODE_TAB_WISP_TCP_CONNECT (see docs/TRANSPORT.md).`,
+      `${modDotMethod}: this build expects callers to use the grpc_exec tunnel client directly instead of node:net shims.`,
     );
   }
-  throw new Error(`${modDotMethod} is not available in the browser environment. ` +
-    'Set NODEJS_GVISOR_WS_URL (local v9-net) or NODEJS_WISP_WS_URL (hosted Wisp tunnel). See docs/TRANSPORT.md.');
+  throw new Error(
+    `${modDotMethod}() is not available in this runtime. Use the hosted grpc_exec tunnel path instead.`,
+  );
 }
 
 function _invalidIp(address) {
@@ -286,143 +272,60 @@ class Socket extends EventEmitter {
     this.writable = false;
     this.readable = false;
     this._opts = opts;
-    // _delegate is a Duplex-shaped object: either a GvisorSocket (sync connect)
-    // or a WispStream (async connect via wispConnect()). Both share the same
-    // interface that the Socket class forwards to.
-    /** @type {any} */
     this._delegate = null;
-    this._transport = 'none'; // 'gvisor' | 'wisp' | 'none'
-    // Pending writes queued until async delegate (Wisp) is ready
-    this._pendingWrites = [];
-
-    if (isGvisorAvailable()) {
-      this._delegate = new GvisorSocket(null, opts);
-      this._transport = 'gvisor';
-      this._forwardEvents();
-      this.writable = true;
-      this.readable = true;
-    } else if (isWispAvailable()) {
-      // Wisp delegate is created lazily inside connect() since it's async.
-      this._transport = 'wisp';
-    }
+    this._transport = 'none';
   }
 
-  _forwardEvents() {
-    if (!this._delegate) return;
-    for (const ev of ['connect', 'ready', 'data', 'end', 'close', 'error', 'drain', 'timeout',
-                       'finish', 'pipe', 'unpipe', 'readable']) {
-      this._delegate.on(ev, (...args) => this.emit(ev, ...args));
-    }
-  }
+  get remoteAddress() { return undefined; }
+  get remotePort() { return undefined; }
+  get remoteFamily() { return 'IPv4'; }
+  get localAddress() { return undefined; }
+  get localPort() { return undefined; }
+  get connecting() { return false; }
+  get pending() { return false; }
+  get readyState() { return 'closed'; }
+  get bytesRead() { return 0; }
+  get bytesWritten() { return 0; }
+  get allowHalfOpen() { return false; }
+  set allowHalfOpen(v) { void v; }
 
-  // ─── POSIX socket properties ────────────────────────────────────
-  get remoteAddress() { return this._delegate?.remoteAddress; }
-  get remotePort() { return this._delegate?.remotePort; }
-  get remoteFamily() { return this._delegate?.remoteFamily ?? 'IPv4'; }
-  get localAddress() { return this._delegate?.localAddress; }
-  get localPort() { return this._delegate?.localPort; }
-  get connecting() { return this._delegate?.connecting ?? false; }
-  get pending() { return this._delegate?.pending ?? true; }
-  get readyState() { return this._delegate?.readyState ?? 'closed'; }
-  get bytesRead() { return this._delegate?.bytesRead ?? 0; }
-  get bytesWritten() { return this._delegate?.bytesWritten ?? 0; }
-  get allowHalfOpen() { return this._delegate?.allowHalfOpen ?? false; }
-  set allowHalfOpen(v) { if (this._delegate) this._delegate.allowHalfOpen = v; }
-
-  // ─── Duplex stream methods ──────────────────────────────────────
   connect(...args) {
-    // Parse net.Socket.connect() args: (port, host?, cb?) or (options, cb?)
-    let host, port, cb;
-    if (typeof args[0] === 'object') {
-      port = args[0].port;
-      host = args[0].host || '127.0.0.1';
-      if (typeof args[1] === 'function') cb = args[1];
-    } else {
-      port = args[0];
-      if (typeof args[1] === 'string') { host = args[1]; cb = args[2]; }
-      else { host = '127.0.0.1'; cb = args[1]; }
-    }
+    const cb = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
     if (cb) this.once('connect', cb);
-
-    // Record the last-known-good transport on the first successful connect.
-    // Cross-tab via runtime-cache.js localStorage, fire-and-forget.
-    const transport = this._transport;
-    this.once('connect', () => {
-      try { recordNetworkMode(transport); } catch { /* ignore */ }
-    });
-
-    if (this._transport === 'gvisor') {
-      return this._delegate.connect(...args);
-    }
-    if (this._transport === 'wisp') {
-      // Async: resolve the Wisp stream, then forward events and flush writes.
-      wispConnect(host, port).then((stream) => {
-        this._delegate = stream;
-        this._forwardEvents();
-        this.writable = true;
-        this.readable = true;
-        this.emit('connect');
-        this.emit('ready');
-        // Flush any queued writes
-        for (const { chunk, encoding, cb: wcb } of this._pendingWrites) {
-          this._delegate.write(chunk, encoding, wcb);
-        }
-        this._pendingWrites = [];
-      }).catch((err) => {
-        this.emit('error', err);
-      });
-      return this;
-    }
-    throw new Error('net.Socket.connect() is not available in the browser environment');
+    _rawSocketUnavailable('net.connect');
   }
-
-  write(chunk, encoding, cb) {
-    if (this._delegate) return this._delegate.write(chunk, encoding, cb);
-    if (this._transport === 'wisp') {
-      // Queue until the async connect resolves
-      this._pendingWrites.push({ chunk, encoding, cb });
-      return true;
-    }
-    throw new Error('net.Socket.write() is not available in the browser environment');
-  }
-  end(...args) { if (this._delegate) { this._delegate.end(...args); return this; } return this; }
-  destroy(...args) { if (this._delegate) { this._delegate.destroy(...args); return this; } return this; }
-  pipe(dest, opts) { if (this._delegate) return this._delegate.pipe(dest, opts); return dest; }
-  unpipe(dest) { if (this._delegate) this._delegate.unpipe(dest); return this; }
-  read(size) { return this._delegate?.read(size) ?? null; }
-  cork() { this._delegate?.cork?.(); }
-  uncork() { this._delegate?.uncork?.(); }
-  setEncoding(enc) { this._delegate?.setEncoding?.(enc); return this; }
+  write() { _rawSocketUnavailable('net.Socket.write'); }
+  end() { return this; }
+  destroy() { return this; }
+  pipe(dest) { return dest; }
+  unpipe() { return this; }
+  read() { return null; }
+  cork() {}
+  uncork() {}
+  setEncoding() { return this; }
   setKeepAlive() { return this; }
   setNoDelay() { return this; }
-  setTimeout(ms, cb) { this._delegate?.setTimeout?.(ms, cb); return this; }
+  setTimeout(_ms, _cb) { return this; }
   ref() { return this; }
   unref() { return this; }
-  pause() { this._delegate?.pause?.(); return this; }
-  resume() { this._delegate?.resume?.(); return this; }
-  address() { return this._delegate?.address?.() ?? null; }
+  pause() { return this; }
+  resume() { return this; }
+  address() { return null; }
 }
 
 class Server extends EventEmitter {
   constructor(opts, handler) {
     super();
     if (typeof opts === 'function') { handler = opts; opts = {}; }
-    this._gvs = null;
-    if (isGvisorAvailable()) {
-      this._gvs = new GvisorServer(handler);
-      for (const ev of ['listening', 'connection', 'close', 'error']) {
-        this._gvs.on(ev, (...args) => this.emit(ev, ...args));
-      }
-    } else if (handler) {
-      this.on('connection', handler);
-    }
+    this._handler = handler || null;
+    if (handler) this.on('connection', handler);
   }
   listen(...args) {
-    if (this._gvs) return this._gvs.listen(...args);
-    throw new Error('net.Server.listen() is not available in the browser environment');
+    void args;
+    _rawSocketUnavailable('net.Server.listen');
   }
-  close(cb) { if (this._gvs) { this._gvs.close(cb); return this; } return this; }
-  address() { return this._gvs?.address() ?? null; }
+  close(cb) { if (typeof cb === 'function') queueMicrotask(cb); return this; }
+  address() { return null; }
   ref() { return this; }
   unref() { return this; }
 }
@@ -432,16 +335,12 @@ export const net = {
     return net.connect(...args);
   },
   createServer(...args) {
-    if (isGvisorAvailable()) return new Server(...args);
-    _rawSocketUnavailable('net.createServer');
+    return new Server(...args);
   },
   connect(...args) {
-    if (isGvisorAvailable()) {
-      const sock = new Socket();
-      sock.connect(...args);
-      return sock;
-    }
-    _rawSocketUnavailable('net.connect');
+    const sock = new Socket();
+    sock.connect(...args);
+    return sock;
   },
   Socket,
   Server,
@@ -468,28 +367,8 @@ export const net = {
 // ─── tls ────────────────────────────────────────────────────────────
 
 export const tls = {
-  connect(...args) {
-    if (isGvisorAvailable()) {
-      // Parse tls.connect(port, host, opts, cb) / tls.connect(opts, cb)
-      let opts = {}, cb;
-      if (typeof args[0] === 'object') {
-        opts = args[0]; cb = args[1];
-      } else {
-        opts.port = args[0];
-        if (typeof args[1] === 'string') { opts.host = args[1]; cb = args[2]; }
-        else { cb = args[1]; }
-        if (typeof args[args.length - 1] === 'object' && args[args.length - 1] !== cb) {
-          Object.assign(opts, args[args.length - 1]);
-        }
-      }
-      return createTlsConnection(opts, typeof cb === 'function' ? cb : undefined);
-    }
-    _rawSocketUnavailable('tls.connect');
-  },
-  createServer(...args) {
-    if (isGvisorAvailable()) return new Server(...args);
-    notAvailable('tls', 'createServer')();
-  },
+  connect() { _rawSocketUnavailable('tls.connect'); },
+  createServer() { _rawSocketUnavailable('tls.createServer'); },
   createSecureContext(opts) { return { context: {}, ca: opts?.ca || [], cert: opts?.cert || null, key: opts?.key || null }; },
   getCiphers() { return ['TLS_AES_256_GCM_SHA384']; },
   TLSSocket: Socket,
@@ -503,12 +382,20 @@ export const tls = {
 
 // ─── dns ────────────────────────────────────────────────────────────
 
-// DNS — use DoH (DNS-over-HTTPS) when gvisor is available, stub otherwise.
-import { resolveDns } from './gvisor-net.js';
+async function resolveDns(hostname) {
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)) return hostname;
+  const r = await fetch(
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`,
+    { headers: { Accept: 'application/dns-json' } },
+  );
+  const j = await r.json();
+  const ans = j.Answer?.find(a => a.type === 1);
+  if (!ans?.data) throw new Error(`DNS failed: ${hostname}`);
+  return ans.data;
+}
 
 function _dnsLookup(hostname, options, cb) {
   if (typeof options === 'function') { cb = options; options = {}; }
-  if (!isGvisorAvailable()) return notAvailable('dns', 'lookup')();
   resolveDns(hostname).then(ip => {
     if (cb) cb(null, ip, 4);
   }).catch(err => { if (cb) cb(err); });
@@ -516,7 +403,6 @@ function _dnsLookup(hostname, options, cb) {
 
 function _dnsResolve4(hostname, options, cb) {
   if (typeof options === 'function') { cb = options; options = {}; }
-  if (!isGvisorAvailable()) return notAvailable('dns', 'resolve4')();
   resolveDns(hostname).then(ip => {
     if (cb) cb(null, [ip]);
   }).catch(err => { if (cb) cb(err); });

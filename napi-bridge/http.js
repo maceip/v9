@@ -13,8 +13,6 @@
 import { EventEmitter } from './eventemitter.js';
 import { Readable, Writable } from './streams.js';
 import { browserHttpFetch } from './transport-policy.mjs';
-import { isGvisorAvailable, GvisorSocket, GvisorServer as _GvisorTcpServer } from './gvisor-net.js';
-import { isWispAvailable, wispConnect } from './wisp-client.js';
 import { recordNetworkMode } from './runtime-cache.js';
 
 const _encoder = new TextEncoder();
@@ -779,55 +777,6 @@ class ClientRequest extends Writable {
     this.socket = sock;
   }
 
-  /**
-   * Send HTTP/1.1 request over gvisor raw TCP socket.
-   * All headers survive — no browser forbidden-header stripping.
-   */
-  _doGvisorRequest(body) {
-    const { head, hostname, port } = this._buildRawHttpRequest(body);
-    const sock = new GvisorSocket(null);
-    sock.connect(port, hostname, () => {
-      sock.write(head);
-      if (body && body.byteLength) sock.write(body);
-      // Cross-tab runtime cache: last-known-good transport is now gvisor.
-      try { recordNetworkMode('gvisor'); } catch { /* ignore */ }
-    });
-    this._wireSocketToResponse(sock);
-  }
-
-  /**
-   * Send HTTP/1.1 request over a hosted Wisp v1 TCP stream.
-   *
-   * Tier-2 transport path: used when no local gvisor is available but
-   * NODEJS_WISP_WS_URL is set. wispConnect() is async (one round-trip to
-   * open the TCP stream through the Wisp mux), so we await it before
-   * writing the HTTP bytes. After that, the WispStream is a Node-Duplex
-   * with the same data/end/close/error contract as GvisorSocket, so the
-   * shared _wireSocketToResponse handles the rest.
-   */
-  _doWispRequest(body) {
-    const { head, hostname, port } = this._buildRawHttpRequest(body);
-    wispConnect(hostname, port).then((sock) => {
-      if (this._destroyed) {
-        try { sock.destroy(); } catch { /* ignore */ }
-        return;
-      }
-      this._wireSocketToResponse(sock);
-      try {
-        sock.write(head);
-        if (body && body.byteLength) sock.write(body);
-        // Cross-tab runtime cache: last-known-good transport is now wisp.
-        try { recordNetworkMode('wisp'); } catch { /* ignore */ }
-      } catch (err) {
-        this._clearTimeoutTimer();
-        if (!this._destroyed) this.emit('error', err);
-      }
-    }).catch((err) => {
-      this._clearTimeoutTimer();
-      if (!this._destroyed) this.emit('error', err);
-    });
-  }
-
   // Start a streaming fetch with ReadableStream body.
   // Subsequent _write() calls enqueue directly into the stream.
   // end() closes the stream.
@@ -941,23 +890,10 @@ class ClientRequest extends Writable {
         }
       }
 
-      // ── Route decision (priority order, all headers preserved in tiers 1+2) ──
-      //   tier 1: gvisor TCP   (local v9-net, any Host)
-      //   tier 2: wisp TCP     (hosted wss:// tunnel to our GLB)
-      //   tier 3/4: browser fetch — forbidden-header stripped, but TLS-safe
-      // Raw-TCP tiers are preferred because they can send headers browsers
-      // block (Host, Cookie to arbitrary origins, Origin overrides, etc.)
-      // and because they bypass CORS entirely.
-      if (_hasBrowsingContext && isGvisorAvailable()) {
-        this._doGvisorRequest(body);
-        return;
-      }
-      if (_hasBrowsingContext && isWispAvailable()) {
-        this._doWispRequest(body);
-        return;
-      }
-
-      // Fallback: browser fetch (headers stripped) or Node-native fetch
+      // Browser fetch or explicit fetch-proxy is now the only supported
+      // HTTP transport path in the retained browser client layer. Raw TCP
+      // transports were removed from the primary product surface in favor
+      // of grpc_exec tunnel support.
       const fetchExtra = {};
       if (body && this._bodyChunks.length > 1 && _canStreamUpload()) {
         const chunks = this._bodyChunks;
@@ -1162,7 +1098,6 @@ class FakeServer extends EventEmitter {
     registry[this._port] = this;
 
     this._maybeStartHttpRelay();
-    this._maybeStartGvisorListener();
 
     queueMicrotask(() => {
       this.emit('listening');
@@ -1229,94 +1164,6 @@ class FakeServer extends EventEmitter {
     } catch {
       this._relayWs = null;
     }
-  }
-
-  /** @type {import('./gvisor-net.js').GvisorServer|null} */
-  _gvisorTcp = null;
-
-  _maybeStartGvisorListener() {
-    console.log('[v9-net:http] _maybeStartGvisorListener() isGvisorAvailable=' + isGvisorAvailable() + ' port=' + this._port);
-    if (!isGvisorAvailable()) {
-      console.log('[v9-net:http] gvisor NOT available — using FakeServer only');
-      return;
-    }
-    try {
-      this._gvisorTcp = new _GvisorTcpServer();
-      this._gvisorTcp.on('connection', (socket) => {
-        console.log('[v9-net:http] incoming TCP connection on port ' + this._port);
-        this._handleGvisorTcpConn(socket);
-      });
-      this._gvisorTcp.listen(this._port);
-      console.log('[v9-net:http] gvisor TCP listener started on port ' + this._port);
-    } catch (e) {
-      console.error('[v9-net:http] gvisor listener failed:', e);
-      if (this._gvisorTcp) {
-        try { this._gvisorTcp.close(); } catch {}
-        this._gvisorTcp = null;
-      }
-    }
-  }
-
-  _handleGvisorTcpConn(socket) {
-    let buf = new Uint8Array(0);
-    const onData = (chunk) => {
-      const c = chunk instanceof Uint8Array ? chunk
-        : (chunk instanceof ArrayBuffer ? new Uint8Array(chunk)
-        : _encoder.encode(String(chunk)));
-      const nb = new Uint8Array(buf.length + c.length);
-      nb.set(buf); nb.set(c, buf.length);
-      buf = nb;
-
-      const str = _decoder.decode(buf);
-      const idx = str.indexOf('\r\n\r\n');
-      if (idx === -1) return;
-
-      socket.removeListener('data', onData);
-      const lines = str.slice(0, idx).split('\r\n');
-      const parts = lines[0].split(' ');
-      const method = parts[0];
-      const url = parts[1] || '/';
-      const headers = {};
-      for (let i = 1; i < lines.length; i++) {
-        const colon = lines[i].indexOf(':');
-        if (colon > 0) {
-          headers[lines[i].slice(0, colon).toLowerCase().trim()] = lines[i].slice(colon + 1).trim();
-        }
-      }
-
-      const bodyStr = str.slice(idx + 4);
-      let bodyU8 = null;
-      if (bodyStr.length) bodyU8 = _encoder.encode(bodyStr);
-
-      const req = new ServerIncomingMessage({
-        method, url, host: headers.host || `localhost:${this._port}`, headers, body: bodyU8,
-      });
-      const res = new ServerResponse();
-
-      res.once('finish', () => {
-        const chunks = res._bodyChunks || [];
-        let body = new Uint8Array(0);
-        if (chunks.length === 1) body = chunks[0];
-        else if (chunks.length > 1) {
-          const total = chunks.reduce((s, c) => s + c.byteLength, 0);
-          body = new Uint8Array(total);
-          let o = 0;
-          for (const c of chunks) { body.set(c, o); o += c.byteLength; }
-        }
-        const hdr = { ...res.getHeaders() };
-        if (!hdr['content-length']) hdr['content-length'] = String(body.byteLength);
-        let head = `HTTP/1.1 ${res.statusCode} ${res.statusMessage || 'OK'}\r\n`;
-        for (const [k, v] of Object.entries(hdr)) head += `${k}: ${v}\r\n`;
-        head += '\r\n';
-        socket.write(head);
-        if (body.byteLength) socket.write(body);
-        socket.end();
-      });
-
-      if (this._handler) this._handler(req, res);
-      this.emit('request', req, res);
-    };
-    socket.on('data', onData);
   }
 
   _sendRelayHttpResponse(id, fields) {
@@ -1395,10 +1242,6 @@ class FakeServer extends EventEmitter {
     this._listening = false;
     const registry = getBrowserLocalServerRegistry();
     delete registry[this._port];
-    if (this._gvisorTcp) {
-      try { this._gvisorTcp.close(); } catch { /* ignore */ }
-      this._gvisorTcp = null;
-    }
     if (typeof cb === 'function') queueMicrotask(cb);
     queueMicrotask(() => this.emit('close'));
     return this;
