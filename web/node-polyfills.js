@@ -769,14 +769,14 @@
     const params = new URLSearchParams(globalThis.location?.search || '');
     const procEnv = globalThis.process?.env || {};
 
-    const fetchProxy = params.get('fetchProxy')
-      || globalThis.__V9_FETCH_PROXY_URL__
-      || procEnv.NODEJS_IN_TAB_FETCH_PROXY
+    const fetchProxy = params.get('proxy')
+      || globalThis.__V9_ANTHROPIC_FETCH_PROXY__
+      || globalThis.__V9_PAGES_ANTHROPIC_PROXY__
       || null;
 
     if (globalThis.process?.env) {
-      if (fetchProxy && !globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY) {
-        globalThis.process.env.NODEJS_IN_TAB_FETCH_PROXY = fetchProxy;
+      if (fetchProxy && !globalThis.process.env.ANTHROPIC_PROXY_URL) {
+        globalThis.process.env.ANTHROPIC_PROXY_URL = fetchProxy;
       }
     }
 
