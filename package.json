@@ -13,7 +13,7 @@
   },
   "scripts": {
     "test": "npm run test:go",
-    "test:go": "go test ./grpc_exec/... ./mcpmux/...",
+    "test:go": "go build -o /tmp/mcpmux.bin ./mcpmux && go build -o /tmp/echoserver.bin ./mcpmux/internal/testbin/echoserver && go build -o /tmp/echoserver_v2.bin ./mcpmux/internal/testbin/echoserver_v2 && go build -o /tmp/crashserver.bin ./mcpmux/internal/testbin/crashserver && MCPMUX_TEST_BIN__MAIN_MCPMUX_MCPMUX__MCPMUX=/tmp/mcpmux.bin MCPMUX_TEST_BIN__MAIN_MCPMUX_INTERNAL_TESTBIN_ECHOSERVER_ECHOSERVER__ECHOSERVER=/tmp/echoserver.bin MCPMUX_TEST_BIN__MAIN_MCPMUX_INTERNAL_TESTBIN_ECHOSERVER_V2_ECHOSERVER_V2__ECHOSERVER_V2=/tmp/echoserver_v2.bin MCPMUX_TEST_BIN__MAIN_MCPMUX_INTERNAL_TESTBIN_CRASHSERVER_CRASHSERVER__CRASHSERVER=/tmp/crashserver.bin go test ./grpc_exec/... ./mcpmux/...",
     "test:legacy": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs",
     "test:basic": "node tests/test-basic.mjs",
     "test:napi": "node tests/test-napi-bridge.mjs",

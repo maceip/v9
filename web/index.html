@@ -109,12 +109,6 @@
     }
   }
   </script>
-  <script src="pages-proxy-default.js"></script>
-  <!-- Hostname-guarded: only activates on *.github.io or with ?enableStareTransport=1.
-       Self-hosters embedding v9's web/ don't need to remove this — it's a no-op
-       for them. To use your own hosted Wisp/fetch-proxy infra, set
-       globalThis.__V9_WISP_WS_URL__ / __V9_FETCH_PROXY_URL__ before node-polyfills.js. -->
-  <script src="transport-defaults-stare.js"></script>
   <script src="node-polyfills.js"></script>
 </head>
 <body>

@@ -1,61 +1,10 @@
 /**
- * wisp-client.js — Clean-room Wisp v1 client for v9.
+ * Legacy Wisp transport client.
  *
- * Implements the Wisp v1 wire protocol so v9 can make TCP connections through
- * a hosted Wisp tunnel (wss://edge.stare.network/wisp/ by default). Provides
- * a Node-compatible Duplex stream per TCP connection, matching the shape of
- * GvisorSocket so net-stubs.js can pick either transport transparently.
- *
- * ── Default endpoint ───────────────────────────────────────────────────
- * The hosted demo Wisp endpoint (wss://edge.stare.network/wisp/) is baked
- * in as DEFAULT_WISP_URL and used when nothing else is configured. This
- * keeps `isWispAvailable()` true out-of-the-box so minimal test harnesses
- * and embeds-without-transport-defaults-stare.js still get tier-2 tunnel
- * access. Overrides (all take precedence over the default):
- *
- *   - process.env.NODEJS_WISP_WS_URL
- *   - globalThis.__V9_WISP_WS_URL__
- *
- * Kill switches (any → `isWispAvailable()` returns false):
- *
- *   - globalThis.__V9_DISABLE_WISP__ === true
- *   - localStorage['v9NoWisp'] === '1'
- *   - NODEJS_WISP_WS_URL / __V9_WISP_WS_URL__ set to '' / '0' / 'off' / 'no'
- *
- * PROTOCOL REFERENCE:
- *   https://github.com/MercuryWorkshop/wisp-protocol/blob/main/protocol.md
- *   (CC-BY-4.0 specification — this implementation is a clean-room re-write
- *    from the spec and does NOT reproduce any code from wisp-js which is AGPL.)
- *
- * WIRE FORMAT (Wisp v1, little-endian):
- *
- *   Every packet:
- *     uint8  type        offset 0
- *     uint32 stream_id   offset 1..4
- *     ...    payload     offset 5..
- *
- *   Packet types:
- *     0x01 CONNECT   client→server:
- *                      uint8  stream_type  (0x01=TCP, 0x02=UDP)
- *                      uint16 dest_port
- *                      utf8   dest_hostname (remaining bytes; no NUL)
- *     0x02 DATA      bidirectional: raw bytes
- *     0x03 CONTINUE  server→client (for a stream):
- *                      uint32 buffer_remaining (packets the client may send)
- *     0x04 CLOSE     bidirectional:
- *                      uint8  reason
- *
- *   Stream IDs are chosen by the client, starting at 1 and incrementing.
- *   stream_id = 0 is reserved for control (connection-wide CONTINUE / CLOSE).
- *
- *   Flow control: the server sends an initial CONTINUE on stream_id=0 with
- *   the per-stream buffer size. Each DATA packet sent by the client consumes
- *   one slot; when the slot count reaches zero the client must wait for a
- *   CONTINUE on the stream before sending more DATA. CONTINUE gives the new
- *   absolute remaining-buffer count, not a delta.
- *
- *   Framing: each Wisp packet is exactly one binary WebSocket message.
- *   No additional length prefix is needed — WebSocket provides message framing.
+ * The repository is being migrated away from Wisp and the broader staged
+ * transport fallback system. This module intentionally remains loadable during
+ * the transition, but no default endpoint is provided and availability stays
+ * off unless an embedder explicitly configures it.
  */
 
 import { Duplex } from './streams.js';
@@ -418,12 +367,7 @@ class WispStream extends Duplex {
 
 const _env = () => (typeof globalThis.process !== 'undefined' && globalThis.process?.env) || {};
 
-/**
- * Baked-in default for the hosted v9 demo Wisp endpoint. Used when no
- * explicit override is set. See the docstring at the top of this file
- * for the override/kill-switch precedence.
- */
-export const DEFAULT_WISP_URL = 'wss://edge.stare.network/wisp/';
+export const DEFAULT_WISP_URL = null;
 
 /** @type {WispConnection | null} */
 let _sharedConn = null;
@@ -446,7 +390,6 @@ function _getWispUrl() {
     return null;
   }
   if (raw) return String(raw);
-  // Nothing configured → fall back to the baked-in hosted demo endpoint.
   return DEFAULT_WISP_URL;
 }
 

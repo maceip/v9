@@ -1,33 +1,15 @@
 /**
  * Central transport policy for Node-shaped APIs in browser / Wasm bridge hosts.
  *
- * Four-tier transport chain, tried in order of preference:
- *
- *   [1] LOCAL v9-net       — NODEJS_GVISOR_WS_URL — raw TCP via local gvisor-tap-vsock
- *   [2] HOSTED WISP        — NODEJS_WISP_WS_URL   — raw TCP via remote Wisp tunnel
- *   [3] HOSTED FETCH PROXY — NODEJS_IN_TAB_FETCH_PROXY — HTTP(S) via JSON POST proxy
- *   [4] DIRECT BROWSER FETCH — native fetch(), CORS-restricted (works for npm etc.)
- *
- * Raw sockets (net.connect, net.createServer) need tier 1 or tier 2.
- * HTTP client (fetch, http.request) can use any tier, picked by preference order.
- *
- * ── Auto-fallback for fetch() ─────────────────────────────────────────
- * `browserHttpFetch()` implements the full chain: native fetch first, then
- * on failure walks down to tier-3 fetch-proxy, then tier-2 wisp (plaintext
- * HTTP only). Callers don't need to know which tier is active. `globalThis.fetch`
- * is patched in web/node-polyfills.js to route through this function so every
- * fetch() call in the host JS context gets the chain automatically.
- *
- * Tier 2 caveat: wispConnect gives a raw TCP socket. HTTPS would need a TLS
- * handshake on top of the stream, which doesn't exist in the browser host JS
- * (the wasm Node runtime has BoringSSL; the host JS doesn't). So the wisp
- * fallback only handles plaintext HTTP. For HTTPS targets the chain emits a
- * clear TypeError pointing at tier-3 as the HTTPS-capable fallback.
+ * Legacy transport tiers are being retired in favor of a single explicit
+ * grpc-backed execution and network path. During the migration, the code still
+ * honors explicit configuration for raw TCP and fetch proxies, but it no longer
+ * ships hosted defaults.
  *
  * Env (process.env on host; globalThis.process.env in tab):
- *   NODEJS_GVISOR_WS_URL        — tier 1: local v9-net WebSocket URL
- *   NODEJS_WISP_WS_URL          — tier 2: hosted Wisp v1 tunnel URL
- *   NODEJS_IN_TAB_FETCH_PROXY   — tier 3: POST JSON { url, init } → JSON { ok, status, headers, body64 }
+ *   NODEJS_GVISOR_WS_URL        — optional explicit local raw-TCP transport
+ *   NODEJS_WISP_WS_URL          — optional explicit remote raw-TCP transport
+ *   NODEJS_IN_TAB_FETCH_PROXY   — optional explicit HTTP(S) JSON proxy
  *   NODEJS_HTTP_TRANSPORT       — fetch | fetch-proxy | auto (default auto)
  */
 
@@ -35,23 +17,21 @@ const _env = () =>
   (typeof globalThis.process !== 'undefined' && globalThis.process?.env) || {};
 
 /**
- * Baked-in hosted tier-3 fetch proxy. Same host as DEFAULT_WISP_URL —
- * wisp-server-node serves `/fetch` alongside `/wisp/` on the same origin
- * (see cmd/wisp-server-node/server.js). Used when NODEJS_IN_TAB_FETCH_PROXY
- * / __V9_FETCH_PROXY_URL__ aren't explicitly set, so the auto-fallback
- * chain has a working HTTPS-capable hop out of the box — no client config
- * needed for the hosted demo.
+ * Legacy hosted tier-3 fetch proxy default.
  *
- * Overrides (all take precedence over the default):
+ * The new agent-shell-tools-aligned surface no longer ships baked-in hosted
+ * transport defaults. The proxy must now be explicitly configured by the host.
+ *
+ * Overrides:
  *   - process.env.NODEJS_IN_TAB_FETCH_PROXY
  *   - globalThis.__V9_FETCH_PROXY_URL__
  *
- * Kill switches (any → default not used, tier-3 disabled unless env set):
+ * Kill switches (any → tier-3 disabled unless env/global explicitly set):
  *   - globalThis.__V9_DISABLE_FETCH_PROXY__ === true
  *   - localStorage['v9NoFetchProxy'] === '1'
  *   - explicit off-value in the env var / global: '' | '0' | 'off' | 'no' | 'false'
  */
-export const DEFAULT_FETCH_PROXY_URL = 'https://edge.stare.network/fetch';
+export const DEFAULT_FETCH_PROXY_URL = null;
 
 function _isFetchProxyKillSwitched() {
   if (globalThis.__V9_DISABLE_FETCH_PROXY__ === true) return true;
@@ -64,7 +44,7 @@ function _isFetchProxyKillSwitched() {
 }
 
 /**
- * Resolved tier-3 fetch proxy URL. Precedence: env var → global → default.
+ * Resolved tier-3 fetch proxy URL. Precedence: env var → global.
  * Explicit off-values and the kill switches collapse to null — tier-3 is
  * skipped entirely in that case.
  */
@@ -75,7 +55,7 @@ function _getFetchProxyUrl() {
     return null;
   }
   if (raw) return String(raw).replace(/\/$/, '');
-  return DEFAULT_FETCH_PROXY_URL;
+  return null;
 }
 
 /**
@@ -231,13 +211,8 @@ async function _fetchProxyFetch(url, init, proxyUrl) {
 }
 
 /**
- * Tier-2: send an HTTP/1.1 request over a raw Wisp TCP stream, parse the
- * response bytes, return a Response. Plaintext HTTP only — HTTPS targets
- * throw because the host JS context has no TLS implementation.
- *
- * The wisp path lives in napi-bridge/wisp-client.js. We import it lazily
- * so environments that don't carry wisp (e.g. pure-Node test runners with
- * no WebSocket global) can still load this module.
+ * Explicitly configured raw-TCP fallback over Wisp-compatible transport.
+ * Plaintext HTTP only — HTTPS targets still require a proxy or native fetch.
  */
 async function _wispHttpFetch(url, init) {
   const target = new URL(String(url));
@@ -376,18 +351,8 @@ async function _wispFallbackAvailable() {
 }
 
 /**
- * Fetch with automatic fallback down the transport chain.
- *
- * Precedence when called from the browser host JS:
- *   1. Tier-3 fetch-proxy (if NODEJS_IN_TAB_FETCH_PROXY is set explicitly,
- *      it's preferred — the user opted into the proxy path).
- *   2. Native browser fetch. Fast path for anything CORS-enabled.
- *   3. On native failure (TypeError / abort / network error), walk the
- *      chain: tier-3 proxy if not already tried, then tier-2 wisp for
- *      plaintext HTTP targets.
- *   4. Re-throw the original native-fetch error if no fallback tier can
- *      handle the request — the caller sees the same error shape it would
- *      have seen without auto-fallback.
+ * Fetch with explicit proxy/raw-socket fallbacks only when the host has
+ * configured them. No baked-in hosted endpoints are used anymore.
  */
 export async function browserHttpFetch(url, init = {}) {
   const proxy = _getFetchProxyUrl();
