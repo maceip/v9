@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	pb "github.com/google/agent-shell-tools/grpc_exec/grpcexecpb"
+	pb "github.com/maceip/v9/grpc_exec/grpcexecpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

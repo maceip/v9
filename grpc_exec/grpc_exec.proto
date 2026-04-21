@@ -18,7 +18,7 @@ package grpc_exec;
 
 import "google/protobuf/duration.proto";
 
-option go_package = "github.com/google/agent-shell-tools/grpc_exec/grpcexecpb";
+option go_package = "github.com/maceip/v9/grpc_exec/grpcexecpb";
 
 // A simple command execution service.
 service ExecService {

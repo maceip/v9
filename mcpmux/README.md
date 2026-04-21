@@ -32,7 +32,7 @@ MCP server. It does not yet multiplex the full MCP feature surface.
 ## Install
 
 ```bash
-go install github.com/google/agent-shell-tools/mcpmux@latest
+go install github.com/maceip/v9/mcpmux@latest
 ```
 
 Or build with Bazel:

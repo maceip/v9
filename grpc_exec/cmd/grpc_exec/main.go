@@ -26,7 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	pb "github.com/google/agent-shell-tools/grpc_exec/grpcexecpb"
+	pb "github.com/maceip/v9/grpc_exec/grpcexecpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

@@ -1,4 +1,4 @@
-module github.com/google/agent-shell-tools
+module github.com/maceip/v9
 
 go 1.24.0
 

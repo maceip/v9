@@ -21,32 +21,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/bazelbuild/rules_go/go/runfiles"
-	pb "github.com/google/agent-shell-tools/grpc_exec/grpcexecpb"
+	pb "github.com/maceip/v9/grpc_exec/grpcexecpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func binPath(t *testing.T) string {
 	t.Helper()
-	rloc := os.Getenv("GRPC_EXECD_BIN")
-	if rloc == "" {
-		t.Fatal("GRPC_EXECD_BIN not set")
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
 	}
-	r, err := runfiles.New()
+	pkgDir := filepath.Dir(thisFile)
+	out := filepath.Join(t.TempDir(), "grpc_execd")
+	cmd := exec.Command("go", "build", "-o", out, pkgDir)
+	cmd.Env = os.Environ()
+	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("runfiles: %v", err)
+		t.Fatalf("build grpc_execd: %v\n%s", err, outBytes)
 	}
-	p, err := r.Rlocation(rloc)
-	if err != nil {
-		t.Fatalf("rlocation(%q): %v", rloc, err)
-	}
-	return p
+	return out
 }
 
 // startServer launches the grpc_execd binary on a temporary Unix socket and

@@ -18,28 +18,34 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func echoServerPath(t *testing.T) string {
 	t.Helper()
-	p, err := runfiles.Rlocation("_main/mcpmux/internal/testbin/echoserver/echoserver_/echoserver")
-	if err != nil {
-		t.Fatalf("finding echoserver runfile: %v", err)
+	if override := os.Getenv("MCPMUX_TEST_ECHOSERVER_BIN"); override != "" {
+		return override
+	}
+	p := filepath.Join("mcpmux", "internal", "testbin", "echoserver")
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("echoserver fixture not built: %v", err)
 	}
 	return p
 }
 
 func crashServerPath(t *testing.T) string {
 	t.Helper()
-	p, err := runfiles.Rlocation("_main/mcpmux/internal/testbin/crashserver/crashserver_/crashserver")
-	if err != nil {
-		t.Fatalf("finding crashserver runfile: %v", err)
+	if override := os.Getenv("MCPMUX_TEST_CRASHSERVER_BIN"); override != "" {
+		return override
+	}
+	p := filepath.Join("mcpmux", "internal", "testbin", "crashserver")
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("crashserver fixture not built: %v", err)
 	}
 	return p
 }

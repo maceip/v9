@@ -18,22 +18,50 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func binPath(t *testing.T, name string) string {
 	t.Helper()
-	p, err := runfiles.Rlocation(name)
-	if err != nil {
-		t.Fatalf("rlocation %s: %v", name, err)
+	if env := os.Getenv("MCPMUX_TEST_BIN_" + sanitizeEnvKey(name)); env != "" {
+		return env
 	}
-	return p
+	candidate := filepath.Join("/workspace", stripWorkspacePrefix(name))
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	t.Fatalf("binary path for %s not found; set MCPMUX_TEST_BIN_%s", name, sanitizeEnvKey(name))
+	return ""
+}
+
+func sanitizeEnvKey(name string) string {
+	out := make([]rune, 0, len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			out = append(out, r-32)
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			out = append(out, r)
+		default:
+			out = append(out, '_')
+		}
+	}
+	return string(out)
+}
+
+func stripWorkspacePrefix(name string) string {
+	const prefix = "_main/"
+	if len(name) >= len(prefix) && name[:len(prefix)] == prefix {
+		return name[len(prefix):]
+	}
+	return name
 }
 
 func proxyPath(t *testing.T) string {

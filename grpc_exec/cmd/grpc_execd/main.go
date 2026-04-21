@@ -23,8 +23,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	pb "github.com/google/agent-shell-tools/grpc_exec/grpcexecpb"
-	"github.com/google/agent-shell-tools/grpc_exec/server"
+	pb "github.com/maceip/v9/grpc_exec/grpcexecpb"
+	"github.com/maceip/v9/grpc_exec/server"
 	"google.golang.org/grpc"
 )
 
