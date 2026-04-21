@@ -431,6 +431,453 @@ func (x *ExitInfo) GetErrorMessage() string {
 	return ""
 }
 
+type TunnelClientEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*TunnelClientEvent_Open
+	//	*TunnelClientEvent_Data
+	//	*TunnelClientEvent_Close
+	Event         isTunnelClientEvent_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelClientEvent) Reset() {
+	*x = TunnelClientEvent{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelClientEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelClientEvent) ProtoMessage() {}
+
+func (x *TunnelClientEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelClientEvent.ProtoReflect.Descriptor instead.
+func (*TunnelClientEvent) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TunnelClientEvent) GetEvent() isTunnelClientEvent_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *TunnelClientEvent) GetOpen() *OpenTcpRequest {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelClientEvent_Open); ok {
+			return x.Open
+		}
+	}
+	return nil
+}
+
+func (x *TunnelClientEvent) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelClientEvent_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+func (x *TunnelClientEvent) GetClose() *CloseTunnel {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelClientEvent_Close); ok {
+			return x.Close
+		}
+	}
+	return nil
+}
+
+type isTunnelClientEvent_Event interface {
+	isTunnelClientEvent_Event()
+}
+
+type TunnelClientEvent_Open struct {
+	// Must be the first message on the stream.
+	Open *OpenTcpRequest `protobuf:"bytes,1,opt,name=open,proto3,oneof"`
+}
+
+type TunnelClientEvent_Data struct {
+	// Bytes to write to the remote connection.
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+type TunnelClientEvent_Close struct {
+	// Close the active connection.
+	Close *CloseTunnel `protobuf:"bytes,3,opt,name=close,proto3,oneof"`
+}
+
+func (*TunnelClientEvent_Open) isTunnelClientEvent_Event() {}
+
+func (*TunnelClientEvent_Data) isTunnelClientEvent_Event() {}
+
+func (*TunnelClientEvent_Close) isTunnelClientEvent_Event() {}
+
+type OpenTcpRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Port          uint32                 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenTcpRequest) Reset() {
+	*x = OpenTcpRequest{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenTcpRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenTcpRequest) ProtoMessage() {}
+
+func (x *OpenTcpRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenTcpRequest.ProtoReflect.Descriptor instead.
+func (*OpenTcpRequest) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *OpenTcpRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *OpenTcpRequest) GetPort() uint32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+type CloseTunnel struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseTunnel) Reset() {
+	*x = CloseTunnel{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseTunnel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseTunnel) ProtoMessage() {}
+
+func (x *CloseTunnel) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseTunnel.ProtoReflect.Descriptor instead.
+func (*CloseTunnel) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{8}
+}
+
+type TunnelServerEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*TunnelServerEvent_Opened
+	//	*TunnelServerEvent_Data
+	//	*TunnelServerEvent_Closed
+	//	*TunnelServerEvent_Error
+	Event         isTunnelServerEvent_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelServerEvent) Reset() {
+	*x = TunnelServerEvent{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelServerEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelServerEvent) ProtoMessage() {}
+
+func (x *TunnelServerEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelServerEvent.ProtoReflect.Descriptor instead.
+func (*TunnelServerEvent) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *TunnelServerEvent) GetEvent() isTunnelServerEvent_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *TunnelServerEvent) GetOpened() *TunnelOpened {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelServerEvent_Opened); ok {
+			return x.Opened
+		}
+	}
+	return nil
+}
+
+func (x *TunnelServerEvent) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelServerEvent_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+func (x *TunnelServerEvent) GetClosed() *TunnelClosed {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelServerEvent_Closed); ok {
+			return x.Closed
+		}
+	}
+	return nil
+}
+
+func (x *TunnelServerEvent) GetError() *TunnelError {
+	if x != nil {
+		if x, ok := x.Event.(*TunnelServerEvent_Error); ok {
+			return x.Error
+		}
+	}
+	return nil
+}
+
+type isTunnelServerEvent_Event interface {
+	isTunnelServerEvent_Event()
+}
+
+type TunnelServerEvent_Opened struct {
+	// Sent once when the TCP connection is established.
+	Opened *TunnelOpened `protobuf:"bytes,1,opt,name=opened,proto3,oneof"`
+}
+
+type TunnelServerEvent_Data struct {
+	// Bytes received from the remote connection.
+	Data []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof"`
+}
+
+type TunnelServerEvent_Closed struct {
+	// Sent once when the connection is closed cleanly.
+	Closed *TunnelClosed `protobuf:"bytes,3,opt,name=closed,proto3,oneof"`
+}
+
+type TunnelServerEvent_Error struct {
+	// Sent on dialing/proxying failure before the stream ends.
+	Error *TunnelError `protobuf:"bytes,4,opt,name=error,proto3,oneof"`
+}
+
+func (*TunnelServerEvent_Opened) isTunnelServerEvent_Event() {}
+
+func (*TunnelServerEvent_Data) isTunnelServerEvent_Event() {}
+
+func (*TunnelServerEvent_Closed) isTunnelServerEvent_Event() {}
+
+func (*TunnelServerEvent_Error) isTunnelServerEvent_Event() {}
+
+type TunnelOpened struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RemoteAddress string                 `protobuf:"bytes,1,opt,name=remote_address,json=remoteAddress,proto3" json:"remote_address,omitempty"`
+	RemotePort    uint32                 `protobuf:"varint,2,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelOpened) Reset() {
+	*x = TunnelOpened{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelOpened) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelOpened) ProtoMessage() {}
+
+func (x *TunnelOpened) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelOpened.ProtoReflect.Descriptor instead.
+func (*TunnelOpened) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *TunnelOpened) GetRemoteAddress() string {
+	if x != nil {
+		return x.RemoteAddress
+	}
+	return ""
+}
+
+func (x *TunnelOpened) GetRemotePort() uint32 {
+	if x != nil {
+		return x.RemotePort
+	}
+	return 0
+}
+
+type TunnelClosed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelClosed) Reset() {
+	*x = TunnelClosed{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelClosed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelClosed) ProtoMessage() {}
+
+func (x *TunnelClosed) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelClosed.ProtoReflect.Descriptor instead.
+func (*TunnelClosed) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TunnelClosed) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type TunnelError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelError) Reset() {
+	*x = TunnelError{}
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelError) ProtoMessage() {}
+
+func (x *TunnelError) ProtoReflect() protoreflect.Message {
+	mi := &file_grpc_exec_grpc_exec_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelError.ProtoReflect.Descriptor instead.
+func (*TunnelError) Descriptor() ([]byte, []int) {
+	return file_grpc_exec_grpc_exec_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *TunnelError) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_grpc_exec_grpc_exec_proto protoreflect.FileDescriptor
 
 const file_grpc_exec_grpc_exec_proto_rawDesc = "" +
@@ -457,10 +904,35 @@ const file_grpc_exec_grpc_exec_proto_rawDesc = "" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\"L\n" +
 	"\bExitInfo\x12\x1b\n" +
 	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage2O\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\x93\x01\n" +
+	"\x11TunnelClientEvent\x12/\n" +
+	"\x04open\x18\x01 \x01(\v2\x19.grpc_exec.OpenTcpRequestH\x00R\x04open\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04data\x12.\n" +
+	"\x05close\x18\x03 \x01(\v2\x16.grpc_exec.CloseTunnelH\x00R\x05closeB\a\n" +
+	"\x05event\">\n" +
+	"\x0eOpenTcpRequest\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\rR\x04port\"\r\n" +
+	"\vCloseTunnel\"\xc8\x01\n" +
+	"\x11TunnelServerEvent\x121\n" +
+	"\x06opened\x18\x01 \x01(\v2\x17.grpc_exec.TunnelOpenedH\x00R\x06opened\x12\x14\n" +
+	"\x04data\x18\x02 \x01(\fH\x00R\x04data\x121\n" +
+	"\x06closed\x18\x03 \x01(\v2\x17.grpc_exec.TunnelClosedH\x00R\x06closed\x12.\n" +
+	"\x05error\x18\x04 \x01(\v2\x16.grpc_exec.TunnelErrorH\x00R\x05errorB\a\n" +
+	"\x05event\"V\n" +
+	"\fTunnelOpened\x12%\n" +
+	"\x0eremote_address\x18\x01 \x01(\tR\rremoteAddress\x12\x1f\n" +
+	"\vremote_port\x18\x02 \x01(\rR\n" +
+	"remotePort\"&\n" +
+	"\fTunnelClosed\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"'\n" +
+	"\vTunnelError\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage2O\n" +
 	"\vExecService\x12@\n" +
 	"\n" +
-	"RunCommand\x12\x16.grpc_exec.ClientEvent\x1a\x16.grpc_exec.ServerEvent(\x010\x01B+Z)github.com/maceip/v9/grpc_exec/grpcexecpbb\x06proto3"
+	"RunCommand\x12\x16.grpc_exec.ClientEvent\x1a\x16.grpc_exec.ServerEvent(\x010\x012Z\n" +
+	"\rTunnelService\x12I\n" +
+	"\aOpenTcp\x12\x1c.grpc_exec.TunnelClientEvent\x1a\x1c.grpc_exec.TunnelServerEvent(\x010\x01B+Z)github.com/maceip/v9/grpc_exec/grpcexecpbb\x06proto3"
 
 var (
 	file_grpc_exec_grpc_exec_proto_rawDescOnce sync.Once
@@ -474,7 +946,7 @@ func file_grpc_exec_grpc_exec_proto_rawDescGZIP() []byte {
 	return file_grpc_exec_grpc_exec_proto_rawDescData
 }
 
-var file_grpc_exec_grpc_exec_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_grpc_exec_grpc_exec_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_grpc_exec_grpc_exec_proto_goTypes = []any{
 	(*ClientEvent)(nil),         // 0: grpc_exec.ClientEvent
 	(*StartCommandRequest)(nil), // 1: grpc_exec.StartCommandRequest
@@ -482,21 +954,35 @@ var file_grpc_exec_grpc_exec_proto_goTypes = []any{
 	(*ServerEvent)(nil),         // 3: grpc_exec.ServerEvent
 	(*CommandStarted)(nil),      // 4: grpc_exec.CommandStarted
 	(*ExitInfo)(nil),            // 5: grpc_exec.ExitInfo
-	(*durationpb.Duration)(nil), // 6: google.protobuf.Duration
+	(*TunnelClientEvent)(nil),   // 6: grpc_exec.TunnelClientEvent
+	(*OpenTcpRequest)(nil),      // 7: grpc_exec.OpenTcpRequest
+	(*CloseTunnel)(nil),         // 8: grpc_exec.CloseTunnel
+	(*TunnelServerEvent)(nil),   // 9: grpc_exec.TunnelServerEvent
+	(*TunnelOpened)(nil),        // 10: grpc_exec.TunnelOpened
+	(*TunnelClosed)(nil),        // 11: grpc_exec.TunnelClosed
+	(*TunnelError)(nil),         // 12: grpc_exec.TunnelError
+	(*durationpb.Duration)(nil), // 13: google.protobuf.Duration
 }
 var file_grpc_exec_grpc_exec_proto_depIdxs = []int32{
-	1, // 0: grpc_exec.ClientEvent.start:type_name -> grpc_exec.StartCommandRequest
-	2, // 1: grpc_exec.ClientEvent.terminate:type_name -> grpc_exec.TerminateCommand
-	6, // 2: grpc_exec.TerminateCommand.grace_period:type_name -> google.protobuf.Duration
-	5, // 3: grpc_exec.ServerEvent.exited:type_name -> grpc_exec.ExitInfo
-	4, // 4: grpc_exec.ServerEvent.started:type_name -> grpc_exec.CommandStarted
-	0, // 5: grpc_exec.ExecService.RunCommand:input_type -> grpc_exec.ClientEvent
-	3, // 6: grpc_exec.ExecService.RunCommand:output_type -> grpc_exec.ServerEvent
-	6, // [6:7] is the sub-list for method output_type
-	5, // [5:6] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	1,  // 0: grpc_exec.ClientEvent.start:type_name -> grpc_exec.StartCommandRequest
+	2,  // 1: grpc_exec.ClientEvent.terminate:type_name -> grpc_exec.TerminateCommand
+	13, // 2: grpc_exec.TerminateCommand.grace_period:type_name -> google.protobuf.Duration
+	5,  // 3: grpc_exec.ServerEvent.exited:type_name -> grpc_exec.ExitInfo
+	4,  // 4: grpc_exec.ServerEvent.started:type_name -> grpc_exec.CommandStarted
+	7,  // 5: grpc_exec.TunnelClientEvent.open:type_name -> grpc_exec.OpenTcpRequest
+	8,  // 6: grpc_exec.TunnelClientEvent.close:type_name -> grpc_exec.CloseTunnel
+	10, // 7: grpc_exec.TunnelServerEvent.opened:type_name -> grpc_exec.TunnelOpened
+	11, // 8: grpc_exec.TunnelServerEvent.closed:type_name -> grpc_exec.TunnelClosed
+	12, // 9: grpc_exec.TunnelServerEvent.error:type_name -> grpc_exec.TunnelError
+	0,  // 10: grpc_exec.ExecService.RunCommand:input_type -> grpc_exec.ClientEvent
+	6,  // 11: grpc_exec.TunnelService.OpenTcp:input_type -> grpc_exec.TunnelClientEvent
+	3,  // 12: grpc_exec.ExecService.RunCommand:output_type -> grpc_exec.ServerEvent
+	9,  // 13: grpc_exec.TunnelService.OpenTcp:output_type -> grpc_exec.TunnelServerEvent
+	12, // [12:14] is the sub-list for method output_type
+	10, // [10:12] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_grpc_exec_grpc_exec_proto_init() }
@@ -513,15 +999,26 @@ func file_grpc_exec_grpc_exec_proto_init() {
 		(*ServerEvent_Exited)(nil),
 		(*ServerEvent_Started)(nil),
 	}
+	file_grpc_exec_grpc_exec_proto_msgTypes[6].OneofWrappers = []any{
+		(*TunnelClientEvent_Open)(nil),
+		(*TunnelClientEvent_Data)(nil),
+		(*TunnelClientEvent_Close)(nil),
+	}
+	file_grpc_exec_grpc_exec_proto_msgTypes[9].OneofWrappers = []any{
+		(*TunnelServerEvent_Opened)(nil),
+		(*TunnelServerEvent_Data)(nil),
+		(*TunnelServerEvent_Closed)(nil),
+		(*TunnelServerEvent_Error)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_grpc_exec_grpc_exec_proto_rawDesc), len(file_grpc_exec_grpc_exec_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   13,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_grpc_exec_grpc_exec_proto_goTypes,
 		DependencyIndexes: file_grpc_exec_grpc_exec_proto_depIdxs,

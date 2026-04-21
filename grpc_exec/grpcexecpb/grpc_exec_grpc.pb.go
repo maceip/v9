@@ -137,3 +137,111 @@ var ExecService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "grpc_exec/grpc_exec.proto",
 }
+
+const (
+	TunnelService_OpenTcp_FullMethodName = "/grpc_exec.TunnelService/OpenTcp"
+)
+
+// TunnelServiceClient is the client API for TunnelService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// A single-stream TCP tunnel service used as the sole supported network
+// transport path for browser/remote V9 clients.
+type TunnelServiceClient interface {
+	// Opens a TCP connection to the requested address/port and multiplexes
+	// bytes over the gRPC stream. The first TunnelClientEvent must be an
+	// OpenTcpRequest.
+	OpenTcp(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelClientEvent, TunnelServerEvent], error)
+}
+
+type tunnelServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTunnelServiceClient(cc grpc.ClientConnInterface) TunnelServiceClient {
+	return &tunnelServiceClient{cc}
+}
+
+func (c *tunnelServiceClient) OpenTcp(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelClientEvent, TunnelServerEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TunnelService_ServiceDesc.Streams[0], TunnelService_OpenTcp_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TunnelClientEvent, TunnelServerEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TunnelService_OpenTcpClient = grpc.BidiStreamingClient[TunnelClientEvent, TunnelServerEvent]
+
+// TunnelServiceServer is the server API for TunnelService service.
+// All implementations must embed UnimplementedTunnelServiceServer
+// for forward compatibility.
+//
+// A single-stream TCP tunnel service used as the sole supported network
+// transport path for browser/remote V9 clients.
+type TunnelServiceServer interface {
+	// Opens a TCP connection to the requested address/port and multiplexes
+	// bytes over the gRPC stream. The first TunnelClientEvent must be an
+	// OpenTcpRequest.
+	OpenTcp(grpc.BidiStreamingServer[TunnelClientEvent, TunnelServerEvent]) error
+	mustEmbedUnimplementedTunnelServiceServer()
+}
+
+// UnimplementedTunnelServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTunnelServiceServer struct{}
+
+func (UnimplementedTunnelServiceServer) OpenTcp(grpc.BidiStreamingServer[TunnelClientEvent, TunnelServerEvent]) error {
+	return status.Error(codes.Unimplemented, "method OpenTcp not implemented")
+}
+func (UnimplementedTunnelServiceServer) mustEmbedUnimplementedTunnelServiceServer() {}
+func (UnimplementedTunnelServiceServer) testEmbeddedByValue()                       {}
+
+// UnsafeTunnelServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TunnelServiceServer will
+// result in compilation errors.
+type UnsafeTunnelServiceServer interface {
+	mustEmbedUnimplementedTunnelServiceServer()
+}
+
+func RegisterTunnelServiceServer(s grpc.ServiceRegistrar, srv TunnelServiceServer) {
+	// If the following call panics, it indicates UnimplementedTunnelServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TunnelService_ServiceDesc, srv)
+}
+
+func _TunnelService_OpenTcp_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TunnelServiceServer).OpenTcp(&grpc.GenericServerStream[TunnelClientEvent, TunnelServerEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TunnelService_OpenTcpServer = grpc.BidiStreamingServer[TunnelClientEvent, TunnelServerEvent]
+
+// TunnelService_ServiceDesc is the grpc.ServiceDesc for TunnelService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TunnelService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "grpc_exec.TunnelService",
+	HandlerType: (*TunnelServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "OpenTcp",
+			Handler:       _TunnelService_OpenTcp_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "grpc_exec/grpc_exec.proto",
+}

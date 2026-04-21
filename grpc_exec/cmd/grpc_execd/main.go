@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Binary grpc_execd runs the ExecService gRPC server.
+// Binary grpc_execd runs the command and tunnel gRPC servers.
 package main
 
 import (
@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	grpc_exec "github.com/maceip/v9/grpc_exec"
 	pb "github.com/maceip/v9/grpc_exec/grpcexecpb"
 	"github.com/maceip/v9/grpc_exec/server"
 	"google.golang.org/grpc"
@@ -43,6 +44,7 @@ func main() {
 
 	srv := grpc.NewServer()
 	pb.RegisterExecServiceServer(srv, &server.ExecServer{})
+	pb.RegisterTunnelServiceServer(srv, &grpc_exec.TunnelServer{})
 
 	// GracefulStop waits for active RPCs to finish. If a RunCommand stream
 	// is executing a long-lived child process, the server will block until

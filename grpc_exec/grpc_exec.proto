@@ -28,6 +28,15 @@ service ExecService {
   rpc RunCommand(stream ClientEvent) returns (stream ServerEvent);
 }
 
+// A single-stream TCP tunnel service used as the sole supported network
+// transport path for browser/remote V9 clients.
+service TunnelService {
+  // Opens a TCP connection to the requested address/port and multiplexes
+  // bytes over the gRPC stream. The first TunnelClientEvent must be an
+  // OpenTcpRequest.
+  rpc OpenTcp(stream TunnelClientEvent) returns (stream TunnelServerEvent);
+}
+
 message ClientEvent {
   oneof event {
     // Must be the first message on the stream.
@@ -80,4 +89,53 @@ message ExitInfo {
   int32 exit_code = 1;
   // Populated only if the system failed to execute the command at all.
   string error_message = 2;
+}
+
+message TunnelClientEvent {
+  oneof event {
+    // Must be the first message on the stream.
+    OpenTcpRequest open = 1;
+
+    // Bytes to write to the remote connection.
+    bytes data = 2;
+
+    // Close the active connection.
+    CloseTunnel close = 3;
+  }
+}
+
+message OpenTcpRequest {
+  string address = 1;
+  uint32 port = 2;
+}
+
+message CloseTunnel {}
+
+message TunnelServerEvent {
+  oneof event {
+    // Sent once when the TCP connection is established.
+    TunnelOpened opened = 1;
+
+    // Bytes received from the remote connection.
+    bytes data = 2;
+
+    // Sent once when the connection is closed cleanly.
+    TunnelClosed closed = 3;
+
+    // Sent on dialing/proxying failure before the stream ends.
+    TunnelError error = 4;
+  }
+}
+
+message TunnelOpened {
+  string remote_address = 1;
+  uint32 remote_port = 2;
+}
+
+message TunnelClosed {
+  string reason = 1;
+}
+
+message TunnelError {
+  string message = 1;
 }
