@@ -1,13 +1,10 @@
 {
-  "name": "@aspect/v9-edgejs-browser",
+  "name": "@maceip/v9-agent-shell-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "EdgeJS browser runtime — Node.js in WebAssembly via Emscripten",
+  "description": "Agent shell tools with V9 multi-runtime orchestration",
   "type": "module",
   "main": "napi-bridge/index.js",
-  "bin": {
-    "v9": "./bin/v9.mjs"
-  },
   "exports": {
     ".": "./napi-bridge/index.js",
     "./napi-bridge": "./napi-bridge/index.js",
@@ -15,7 +12,9 @@
     "./dist/edgejs.js": "./dist/edgejs.js"
   },
   "scripts": {
-    "test": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs",
+    "test": "npm run test:go",
+    "test:go": "go test ./grpc_exec/... ./mcpmux/...",
+    "test:legacy": "node tests/test-basic.mjs && node tests/test-napi-bridge.mjs && node tests/test-guardrails.mjs",
     "test:basic": "node tests/test-basic.mjs",
     "test:napi": "node tests/test-napi-bridge.mjs",
     "test:release-gate": "node tests/test-release-gate.mjs",
@@ -75,12 +74,12 @@
     "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"
   },
   "keywords": [
-    "wasm",
-    "emscripten",
-    "nodejs",
-    "browser",
-    "edgejs",
-    "napi"
+    "sandbox",
+    "grpc",
+    "agent",
+    "mcp",
+    "command-filter",
+    "runtime"
   ],
   "engines": {
     "node": ">=18.0.0"

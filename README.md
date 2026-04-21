@@ -1,174 +1,106 @@
-# v9 — Node.js in the browser (EdgeJS + N-API bridge)
+# agent-shell-tools + V9 runtime orchestration
 
-Run **Node-shaped** apps in Chromium: WebAssembly runtime, `napi-bridge` built-ins, xterm UI, and a conformance suite that stays aligned across **browser JS** and **Wasm/MEMFS**.
+This repository is being repurposed from the old browser-first V9 surface into a
+new project focused on the same top-level components and compositions as
+[`google/agent-shell-tools`](https://github.com/google/agent-shell-tools):
 
-**Not** tied to a single vendor CLI — that was early scaffolding. Product direction: general-purpose Node-in-tab (`docs/NODEJS_IN_TAB_ROADMAP.md`).
+- **[`sandbox/`](sandbox/)** — sandboxed command execution boundary
+- **[`command_filter/`](command_filter/)** — narrow host-side command delegation
+- **[`grpc_exec/`](grpc_exec/)** — streaming command execution over gRPC
+- **[`mcpmux/`](mcpmux/)** — MCP proxy for iterative tool/server development
 
-## Quick start
+The V9 contribution now lives in the orchestration layer around those tools:
 
-```bash
-make setup                        # one-time: install Emscripten 4.0.23 + npm deps
-source ~/emsdk/emsdk_env.sh       # activate Emscripten in your shell
-make all                          # fetch → configure → build → test
-```
+- browser and Node.js clients for hosted execution
+- multi-runtime / multi-sandbox session management
+- concurrent runtime isolation for multiple terminals or agents on one page
 
-See **[BUILDING.md](BUILDING.md)** for the full from-scratch walkthrough. For CI parity, Docker, Cory/EC2 runbook: **[`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md)**. Docker: [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml). GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
+File access is intentionally **out of scope** for the product surface. Agents
+use their native file tools for that.
 
-Once built, start the dev server:
+## Product direction
 
-```bash
-node scripts/dev-server.mjs
-npm install
-npm link          # makes the “v9” command available globally
-```
+The repo is intentionally moving away from:
 
-### “I have a bundled JS file and want to run it in the browser”
+- `v9 run`
+- `v9 build`
+- browser-direct TCP / Wisp / fetch-proxy transport tiers
+- MEMFS shell shims as the primary execution model
 
-```bash
-v9 run ./my-app-bundle.js
-```
+and toward:
 
-That's it. v9 starts a local server, pops a Chromium tab with an xterm.js terminal, and runs your bundle inside the EdgeJS WebAssembly runtime with full Node.js APIs (fs, path, http, crypto, streams, child_process, etc.).
+- real sandboxed command execution
+- `grpc_exec` as the canonical execution transport
+- one gRPC-backed network tunnel path
+- multiple independent runtime sessions sharing the same page safely
 
-### “I have a Node.js project and want to see if v9 can host it”
+## Components
 
-```bash
-cd my-project/     # has a package.json
-v9 build
-```
+### `sandbox`
 
-v9 reads your `package.json`, finds the entry point, bundles it with esbuild (tree-shaken, minified, Node built-ins resolved at runtime by the Wasm engine), opens a browser, **and** writes the optimized artifact to `.v9-build/` in your project directory.
+Sandboxed execution boundary. The reference shape is an nsjail-based sandbox,
+where the agent has freedom **inside** the sandbox but cannot access host
+credentials or mutate the host filesystem outside the mounted sandbox scope.
 
-Need to specify the entry explicitly?
+### `command_filter`
 
-```bash
-v9 build --entry src/cli.js
-```
+Rule-language-based allow-listing for host-side commands. This complements
+sandboxing; it does **not** replace it.
 
-### What `build` does under the hood
+### `grpc_exec`
 
-1. Finds your entry (`main` / `module` / `bin` from package.json, or `--entry`)
-2. Bundles with esbuild: `platform: neutral`, `format: esm`, `target: es2022`
-3. Marks all Node built-ins as **external** (provided at runtime by the EdgeJS wasm engine + napi-bridge)
-4. Tree-shakes and minifies; strips problematic native-only packages
-5. Writes `.v9-build/<name>-bundle.js` (your portable artifact)
-6. Starts the dev server and opens the browser
+gRPC streaming command execution. This module is the anchor for the new V9
+execution model and is also where the single supported tunnel/chisel-style
+network path will live.
 
----
+### `mcpmux`
 
-## Two dev stories
+An MCP proxy that can add, reload, and remove child MCP servers dynamically.
 
-### Embedding devs (using v9 to run apps)
+## Supported compositions
 
-The wasm runtime (`dist/edgejs.js` + `dist/edgejs.wasm`) is **vendored** — it ships with the repo. `npm install && npm link` is all you need.
+### Agent inside the sandbox
 
-If the wasm is missing (fresh clone before CI runs, etc.):
+The agent runs inside `sandbox` and executes commands there. `command_filter`
+only applies to any intentionally delegated host-side commands.
 
-```bash
-npm run vendor:wasm    # downloads pre-built from latest CI (requires gh CLI)
-```
+### Agent outside the sandbox
 
-### Core devs (working on v9 itself)
+The agent or UI client runs outside the sandbox and talks to `grpc_exec`
+inside the sandbox over a hosted endpoint.
 
-Build the wasm runtime from source. Requires [Emscripten](https://emscripten.org/) 3.1.64+.
+### Multiple runtimes on one page
 
-```bash
-source “$EMSDK/emsdk_env.sh”
-npm run build          # wraps: make fetch && make configure && make build
-```
+The new V9-specific requirement is explicit support for:
 
-After building, commit the wasm for embedding devs:
+- multiple sandboxes,
+- multiple runtime sessions,
+- and multiple terminal/agent clients
 
-```bash
-git add dist/edgejs.js dist/edgejs.wasm
-```
+running concurrently on the same page without shared-state collisions.
 
-See [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md) for the full Emscripten setup. **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain.
+## Development
 
----
+At this stage the repo is in active transition from the legacy browser-first V9
+shape to the new component model. Expect some legacy browser/runtime code to
+remain temporarily while execution paths are migrated onto `grpc_exec`.
 
-### Advanced: dev server only
+### Go components
 
-```bash
-node scripts/dev-server.mjs
-# Opens http://localhost:8080/ — pass ?bundle=/dist/your-file.js&autorun=1
-```
-
-**Rebuilding the Wasm toolchain / running tests on Cory (EC2)** — same as CI: build (or CI artifacts), set **`CHROME_BIN`**, `npm ci`, then **`npm run test:nodejs-in-tab-contract`** and **`make test-integration`**. Full runbook: [`docs/BUILD_TOOLCHAIN.md`](docs/BUILD_TOOLCHAIN.md). **Docker:** [`docker/Dockerfile`](docker/Dockerfile) + [`docker/compose.yaml`](docker/compose.yaml) reproduce the toolchain on engineer machines; optional **`npm run fetch:wasm-assets`** when artifacts live on **S3**. GitHub Actions: **”Wasm runtime rebuild”** for artifacts only.
-
-A **reference-app** stress case on the same stack.
+The imported `agent-shell-tools`-style components build and test via Go:
 
 ```bash
-# 1. Set API key (DevTools console):
-#    sessionStorage.setItem('anthropic_api_key', 'sk-ant-…')
-# 2. Bundle the vendor CLI:
-npm run bundle:claude-code
-# 3. Run it:
-v9 run dist/claude-code-cli.js
+go test ./grpc_exec/... ./mcpmux/...
 ```
 
-**Contributors:** If you edit `tests/conformance/in-tab-api-contract-suite.mjs`, refresh the Wasm copy: `npm run build:in-tab-api-contract:wasm`, then `npm run test:nodejs-in-tab-contract`.
+### Browser/runtime experiments
 
-## Validation
+Legacy browser/runtime code still exists during migration, but it is no longer
+the primary product surface. It should be treated as a client/demo layer until
+fully reworked around isolated runtime instances and grpc-backed execution.
 
-```bash
-# Core smoke tests
-npm test
+## Status
 
-# Dual gate — same API contract in real Chromium + Wasm MEMFS (CI-quality)
-npm run test:nodejs-in-tab-contract
-```
-
-## Build artifacts (what lives in `dist/`)
-
-| Artifact | How produced | Role |
-|----------|------------|------|
-| `edgejs.wasm`, `edgejs.js` | **Vendored** (or `npm run build` / `npm run vendor:wasm`) | Wasm runtime — the product. Details in `docs/BUILD_TOOLCHAIN.md` |
-| `build/edge` | `npm run build` | CommonJS loader stub (core devs only) |
-| `<name>-bundle.js` | `v9 build` | Your app bundled for the browser |
-| `claude-code-cli.js` | `npm run bundle:claude-code` | Reference app (Anthropic CLI) |
-| `in-tab-api-contract-wasm-*.cjs` | `npm run build:in-tab-api-contract:wasm` | Contract suite bundled for MEMFS |
-
-`dist/edgejs.{js,wasm}` are tracked in git. Other `dist/` contents are gitignored.
-
-## npm scripts (high level)
-
-- **Tests:** `test`, `test:nodejs-in-tab-contract`, `test:in-tab-api-contract`, `test:browser`, `test:wasm`, `test:release-gate`
-- **Contract builds:** `build:in-tab-api-contract`, `build:in-tab-api-contract:wasm`
-- **Release gate:** `release-gate` (policy JSON under `.planning/...`)
-
-Legacy names `test:claude-contract:*` still point at the same commands during migration.
-
-## Repo layout (short)
-
-- `napi-bridge/` — browser mappings for Node built-ins  
-- `web/` — terminal page, import map, polyfills  
-- `tests/conformance/in-tab-api-contract-suite.mjs` — behavioral contract  
-- `docs/CONTRACT_HOSTS.md` — **browser vs Node bridge vs Wasm**: what “in-tab” actually refers to  
-- `docs/NODEJS_IN_TAB_ROADMAP.md` — architecture + next milestones  
-- `.planning/` — minimal release-gate metadata (large historical phase trees removed)
-
-## GitHub Pages (landing + Claude in iframe)
-
-The **`docs/`** tree holds the public landing (glass terminal UI). CI (`.github/workflows/pages.yml`) runs on **`push` to `main`** (and **`workflow_dispatch`** so you can run it from another branch without double-deploy races).
-
-1. **`npm ci`** — includes **`@anthropic-ai/claude-code`** (devDependency), used only as input to the pre-bundle step below.
-2. **`make fetch`**, **`make configure`**, **`make build`** — produces **`dist/edgejs.{js,wasm}`**.
-3. **`scripts/prepare-github-pages.mjs`** — copies **`web/`** → **`docs/web/`**, **`napi-bridge/`** → **`docs/napi-bridge/`**, copies wasm into **`docs/dist/`**, rewrites **every** `*.html` import map from **`/napi-bridge/`** to **`../napi-bridge/`** (required for project Pages under **`/<repo>/`**), and writes **`docs/.nojekyll`** so GitHub serves static files as-is.
-4. **`scripts/bundle-claude-for-pages.mjs`** — esbuilds the vendor CLI with Node built-ins left **external** (resolved via the same import map). Output: **`docs/dist/claude-code-cli.js`** next to **`edgejs.*`**.
-
-The landing script (`docs/js/v9-app.js`) opens **`…/web/index.html?bundle=<repo-prefix>dist/claude-code-cli.js&autorun=1`** so the iframe runtime matches localhost, with **`bundle=`** as an absolute path from the site root (see `siteRootPrefix()` in `docs/js/v9-app.js`).
-
-**Limitation:** `github.io` static hosting does **not** let you set **`Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`** headers. The local dev server (`v9 run` / `v9 build`) sends those for **`SharedArrayBuffer`** / full Wasm threading semantics; on Pages, behavior may differ. For a public demo with the same headers, front the site with a host that injects those headers (e.g. Cloudflare **`_headers`**) or keep the canonical wasm validation on CI + local dev.
-
-Generated trees **`docs/web/`**, **`docs/napi-bridge/`**, **`docs/dist/`**, and **`docs/.nojekyll`** are produced by the steps above (under **`docs/`** only what’s needed for deploy); **`docs/web/`** etc. remain gitignored per **`.gitignore`**. Local dry-run after a wasm build:
-
-`node scripts/prepare-github-pages.mjs && node scripts/bundle-claude-for-pages.mjs`
-
-**Deploy failing in ~3s with environment errors:** GitHub’s **`github-pages`** [environment](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) can restrict which branches may deploy. In the repo: **Settings → Environments → `github-pages` → Deployment branches**, allow **`main`** (or all branches if you use **`workflow_dispatch`** from other refs).
-
-**“Canceling since a higher priority waiting request for pages exists”:** Usually two overlapping **`deploy-pages`** runs (e.g. **`main` + `dev` push** together, or **`cancel-in-progress: true`** killing an in-flight deploy). This repo triggers automatic deploy only on **`main`** and sets **`cancel-in-progress: false`** so runs queue instead of preempting.
-
-## License / private
-
-`private: true` in `package.json` — adjust for your distribution model.
+This branch is intentionally breaking compatibility with the old V9 APIs in
+order to produce a cleaner successor repository with the exact high-level
+surface requested above.
