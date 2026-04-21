@@ -46,6 +46,7 @@ function getConfig() {
     proxyUrl: params.get('proxy') || 'http://localhost:8081',
     appBundle: params.get('bundle') || '/dist/app-bundle.js',
     autorun: params.get('autorun') !== '0',
+    runtimeId: params.get('runtimeId') || `runtime-${Math.random().toString(36).slice(2, 10)}`,
   };
 }
 
@@ -382,6 +383,7 @@ async function boot() {
   };
 
   const config = getConfig();
+  globalThis.__edgeRuntimeId = config.runtimeId;
   let runtime = null;
   let processBridge = null;
 
@@ -418,6 +420,8 @@ async function boot() {
     });
     globalThis.__edgeShell = shell;
     globalThis.__edgeTerm = term;
+    globalThis.__edgeShellRegistry = globalThis.__edgeShellRegistry || {};
+    globalThis.__edgeShellRegistry[config.runtimeId] = shell;
 
     // Session persistence (IndexedDB): restore before the prompt paints
     // so returning users see their last cwd/history and previously
@@ -497,6 +501,10 @@ async function boot() {
     globalThis.__edgeCli = controller;
     globalThis.__edgeRuntime = runtime;
     globalThis.__edgeProcess = processBridge;
+    globalThis.__edgeRuntimeRegistry = globalThis.__edgeRuntimeRegistry || {};
+    globalThis.__edgeProcessRegistry = globalThis.__edgeProcessRegistry || {};
+    globalThis.__edgeRuntimeRegistry[config.runtimeId] = runtime;
+    globalThis.__edgeProcessRegistry[config.runtimeId] = processBridge;
 
     return controller;
   })();

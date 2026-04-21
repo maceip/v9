@@ -88,17 +88,35 @@ function _p(req) {
   });
 }
 
+function _sessionRuntimeId() {
+  if (typeof globalThis !== 'undefined' && globalThis.__V9_RUNTIME_ID__) {
+    return String(globalThis.__V9_RUNTIME_ID__);
+  }
+  try {
+    const search = globalThis?.location?.search || '';
+    const params = new URLSearchParams(search);
+    const fromQuery = params.get('runtimeId');
+    if (fromQuery) return fromQuery;
+  } catch { /* ignore */ }
+  return 'default';
+}
+
+function _sessionKey(key) {
+  const runtimeId = _sessionRuntimeId();
+  return `${runtimeId}:${key}`;
+}
+
 async function _putSession(key, value) {
   const db = await _openDb();
   const tx = db.transaction(STORE_SESSION, 'readwrite');
-  await _p(tx.objectStore(STORE_SESSION).put({ key, value, ts: Date.now() }));
+  await _p(tx.objectStore(STORE_SESSION).put({ key: _sessionKey(key), value, ts: Date.now() }));
 }
 
 async function _getSession(key) {
   try {
     const db = await _openDb();
     const tx = db.transaction(STORE_SESSION, 'readonly');
-    const rec = await _p(tx.objectStore(STORE_SESSION).get(key));
+    const rec = await _p(tx.objectStore(STORE_SESSION).get(_sessionKey(key)));
     return rec ? rec.value : null;
   } catch { return null; }
 }
@@ -335,7 +353,14 @@ export async function clearSession() {
   try {
     const db = await _openDb();
     const tx = db.transaction(STORE_SESSION, 'readwrite');
-    await _p(tx.objectStore(STORE_SESSION).clear());
+    const store = tx.objectStore(STORE_SESSION);
+    const runtimePrefix = _sessionKey('');
+    const keys = await _p(store.getAllKeys());
+    for (const key of keys) {
+      if (String(key).startsWith(runtimePrefix)) {
+        await _p(store.delete(key));
+      }
+    }
     return true;
   } catch {
     return false;

@@ -830,7 +830,11 @@ class Process extends EventEmitter {
   }
 }
 
-export const processBridge = new Process();
+export function createProcessBridge() {
+  return new Process();
+}
+
+export const processBridge = createProcessBridge();
 
 /**
  * Buffer — Uint8Array subclass for browser (Node.js compatible).

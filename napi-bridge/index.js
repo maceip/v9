@@ -3267,7 +3267,7 @@ export async function initEdgeJS(options = {}) {
   }
 
   // ── Shared imports ─────────────────────────────────────────────────
-  const { processBridge: _sharedProcessBridge } = await import('./browser-builtins.js');
+  const { createProcessBridge } = await import('./browser-builtins.js');
   const { createFilesystem } = await import('./memfs.js');
   const { createFsModule, setActiveFsModule } = await import('./fs.js');
   const { setMemfs: _setShellMemfs } = await import('./shell-commands.js');
@@ -3277,6 +3277,10 @@ export async function initEdgeJS(options = {}) {
   // Each initEdgeJS() call gets its own isolated MEMFS for snapshots,
   // sync, and deterministic tests.
   const _sharedMemfs = createFilesystem({ files: options.files || {} });
+  const _sharedProcessBridge = createProcessBridge({
+    env: options.env || {},
+    argv: ['node', 'script.js'],
+  });
 
   // Wire shell/git subsystems to use this runtime's filesystem
   _setShellMemfs(_sharedMemfs);
