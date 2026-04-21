@@ -73,8 +73,8 @@ const _isNode = typeof globalThis.process?.versions?.node === 'string';
 const _hasBrowsingContext = typeof globalThis.document !== 'undefined';
 
 async function _proxyFetch(url, opts) {
-  // Tab / browser: transport policy (native fetch TLS, optional NODEJS_IN_TAB_FETCH_PROXY).
-  // See transport-policy.mjs — not the Node CONNECT path below.
+  // Tab / browser: explicit fetch policy only. No legacy raw-socket transport
+  // fallback remains in the browser client layer.
   if (_hasBrowsingContext) return browserHttpFetch(url, opts);
 
   const proxyUrl = globalThis.process?.env?.https_proxy

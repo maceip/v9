@@ -762,40 +762,13 @@
     globalThis.structuredClone = (obj) => JSON.parse(JSON.stringify(obj));
   }
 
-  // ─── Transport config (no probing) ─────────────────────────────────
+  // ─── Explicit transport config (no probing) ────────────────────────
   //
-  // v9 supports four transport tiers, tried in this priority order at
-  // call time (see napi-bridge/transport-policy.mjs and net-stubs.js):
-  //
-  //   [1] LOCAL v9-net         ws://localhost:8765/__v9net/forward
-  //                            Raw TCP via user's local gvisor-tap-vsock.
-  //   [2] HOSTED WISP v1       wss://edge.stare.network/wisp/ by default
-  //                            on .github.io (via transport-defaults-stare.js).
-  //                            Raw TCP via DO Global LB to geo-distributed
-  //                            droplets. Self-hosters: unset by default.
-  //   [3] HOSTED FETCH PROXY   Opt-in only. JSON-over-HTTPS proxy for
-  //                            CORS-restricted HTTP requests.
-  //   [4] DIRECT BROWSER FETCH Native fetch(), CORS-restricted.
-  //
-  // We do NOT probe these at boot. The old 4-way probe fired 3 WebSocket
-  // opens + 1 fetch, with timeouts and sequencing, just to log status —
-  // it never influenced routing. Actual tier selection is lazy: a Socket
-  // is constructed against tier-1 first, falls through to tier-2 if the
-  // URL isn't set, and so on, all at the point of the first real use.
-  // If a URL is set but unreachable, the caller sees a real connect
-  // error from the transport — which is strictly more informative than
-  // a boot-time probe log.
-  //
-  // Configuration precedence (highest wins):
-  //   1. URL query param:   ?gvisor=... ?wisp=... ?fetchProxy=...
-  //   2. Pre-set globals:   __V9_GVISOR_WS_URL__ / __V9_WISP_WS_URL__ /
-  //                         __V9_FETCH_PROXY_URL__
-  //   3. process.env:       NODEJS_GVISOR_WS_URL / NODEJS_WISP_WS_URL /
-  //                         NODEJS_IN_TAB_FETCH_PROXY
-  //   4. Default:           tier-1 → ws://localhost:8765 (others: none)
-  //
-  // Wisp kill switch (any of these turns off the hosted default):
-  //   ?wisp=0 / ?wisp=off / localStorage.v9NoWisp='1' / __V9_DISABLE_WISP__
+  // The browser client no longer ships the legacy staged transport stack as
+  // part of the product surface. During migration, explicit raw-socket or
+  // fetch-proxy configuration can still be mirrored into globals/env for any
+  // transitional modules that read them, but there are no baked-in hosted
+  // defaults and no boot-time transport probing.
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
     const procEnv = globalThis.process?.env || {};
@@ -803,7 +776,7 @@
     const gvisorWs = params.get('gvisor')
       || globalThis.__V9_GVISOR_WS_URL__
       || procEnv.NODEJS_GVISOR_WS_URL
-      || 'ws://localhost:8765';
+      || null;
 
     const rawWispParam = params.get('wisp');
     const wispDisabled =
@@ -857,17 +830,16 @@
     };
 
     // One info line, deferred so it never blocks first paint. Logs only
-    // what's configured — no probing, no timeouts.
+    // explicit transitional config — no probing, no defaults.
     const logTransports = () => {
-      console.log('[v9-net] tier-1 v9-net  ' + gvisorWs);
-      if (wispDisabled)       console.log('[v9-net] tier-2 wisp     (disabled)');
-      else if (wispWs)        console.log('[v9-net] tier-2 wisp     ' + wispWs);
-      if (fetchProxy)         console.log('[v9-net] tier-3 proxy    ' + fetchProxy);
-      console.log('[v9-net] tier-4 fetch    (browser native, CORS-restricted)');
+      if (gvisorWs)          console.log('[runtime] local raw transport  ' + gvisorWs);
+      if (wispDisabled)      console.log('[runtime] explicit wisp disabled');
+      else if (wispWs)       console.log('[runtime] explicit wisp        ' + wispWs);
+      if (fetchProxy)        console.log('[runtime] explicit fetch proxy ' + fetchProxy);
       const last = readLastNetMode();
       if (last) {
         const age = Math.round((Date.now() - last.ts) / 60000);
-        console.log('[v9-net] last-good    ' + last.mode + ' (' + age + 'm ago)');
+        console.log('[runtime] last-good transport ' + last.mode + ' (' + age + 'm ago)');
       }
     };
     if (typeof globalThis.requestIdleCallback === 'function') {

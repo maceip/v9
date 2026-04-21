@@ -1,16 +1,14 @@
 /**
- * Central transport policy for Node-shaped APIs in browser / Wasm bridge hosts.
+ * Central HTTP transport policy for retained browser / Wasm helper code.
  *
- * Legacy transport tiers are being retired in favor of a single explicit
- * grpc-backed execution and network path. During the migration, the code still
- * honors explicit configuration for raw TCP and fetch proxies, but it no longer
- * ships hosted defaults.
+ * The product surface now centers on sandbox + command_filter + grpc_exec +
+ * mcpmux. Browser-side raw TCP tiers were removed from the supported runtime.
  *
- * Env (process.env on host; globalThis.process.env in tab):
- *   NODEJS_GVISOR_WS_URL        — optional explicit local raw-TCP transport
- *   NODEJS_WISP_WS_URL          — optional explicit remote raw-TCP transport
- *   NODEJS_IN_TAB_FETCH_PROXY   — optional explicit HTTP(S) JSON proxy
- *   NODEJS_HTTP_TRANSPORT       — fetch | fetch-proxy | auto (default auto)
+ * The only HTTP fallback retained here is an explicitly configured fetch proxy:
+ *
+ *   NODEJS_IN_TAB_FETCH_PROXY / __V9_FETCH_PROXY_URL__
+ *
+ * There are no baked-in hosted defaults.
  */
 
 const _env = () =>
@@ -84,28 +82,6 @@ export function getHttpTransportMode() {
 }
 
 /**
- * Raw TCP/TLS transport mode.
- *
- *   embedder  — host provided a __NODE_TAB_WISP_TCP_CONNECT hook
- *   gvisor    — local v9-net (NODEJS_GVISOR_WS_URL is set)
- *   wisp      — hosted Wisp v1 tunnel (NODEJS_WISP_WS_URL is set)
- *   none      — no raw-socket transport available (HTTP-only)
- *
- * @returns {'none'|'embedder'|'gvisor'|'wisp'}
- */
-export function getRawSocketTransportMode() {
-  const e = _env();
-  if (typeof globalThis.__NODE_TAB_WISP_TCP_CONNECT === 'function') return 'embedder';
-  if (e.NODEJS_GVISOR_WS_URL && e.NODEJS_GVISOR_WS_URL !== '' && e.NODEJS_GVISOR_WS_URL !== '0') {
-    return 'gvisor';
-  }
-  if (e.NODEJS_WISP_WS_URL && e.NODEJS_WISP_WS_URL !== '' && e.NODEJS_WISP_WS_URL !== '0') {
-    return 'wisp';
-  }
-  return 'none';
-}
-
-/**
  * Browser path: native fetch or JSON proxy.
  * @param {string} url
  * @param {RequestInit} [init]
@@ -132,9 +108,7 @@ function _b64ToU8(b64) {
 }
 
 /**
- * Normalize init.headers into a plain { [lowercase]: string } map. Used by
- * the tier-3 proxy body + tier-2 wisp request builder so header handling is
- * consistent across fallback tiers.
+ * Normalize init.headers into a plain { [lowercase]: string } map.
  */
 function _headersToObject(headers) {
   const out = {};
@@ -211,93 +185,6 @@ async function _fetchProxyFetch(url, init, proxyUrl) {
 }
 
 /**
- * Explicitly configured raw-TCP fallback over Wisp-compatible transport.
- * Plaintext HTTP only — HTTPS targets still require a proxy or native fetch.
- */
-async function _wispHttpFetch(url, init) {
-  const target = new URL(String(url));
-  if (target.protocol !== 'http:') {
-    throw new TypeError(
-      `wisp fallback: only plaintext http:// is supported (got ${target.protocol}//${target.host}). ` +
-      `For HTTPS targets, configure NODEJS_IN_TAB_FETCH_PROXY to route through the tier-3 hosted proxy.`
-    );
-  }
-
-  const { wispConnect } = await import('./wisp-client.js');
-  const hostname = target.hostname;
-  const port = parseInt(target.port || '80', 10);
-  const path = target.pathname + target.search;
-  const method = (init.method || 'GET').toUpperCase();
-  const headers = _headersToObject(init.headers);
-
-  if (!headers['Host'] && !headers['host']) {
-    headers['Host'] = port === 80 ? hostname : `${hostname}:${port}`;
-  }
-
-  const bodyBytes = init.body != null ? await _initBodyToBytes(init.body) : null;
-  if (bodyBytes && !headers['Content-Length'] && !headers['content-length']) {
-    headers['Content-Length'] = String(bodyBytes.byteLength);
-  }
-
-  let head = `${method} ${path || '/'} HTTP/1.1\r\n`;
-  for (const [k, v] of Object.entries(headers)) head += `${k}: ${v}\r\n`;
-  head += 'Connection: close\r\n\r\n';
-  const headBytes = new TextEncoder().encode(head);
-
-  const sock = await wispConnect(hostname, port);
-
-  // Collect the entire response, then parse. For the use cases that hit
-  // this path today (registry metadata, small tarballs bounded by wisp
-  // server limits) this is fine. If we ever need streaming we can wrap
-  // the incoming chunks in a ReadableStream instead.
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let total = 0;
-    let settled = false;
-
-    if (init.signal) {
-      const onAbort = () => {
-        if (settled) return;
-        settled = true;
-        try { sock.destroy(); } catch { /* ignore */ }
-        reject(new DOMException('The operation was aborted', 'AbortError'));
-      };
-      if (init.signal.aborted) return onAbort();
-      init.signal.addEventListener('abort', onAbort, { once: true });
-    }
-
-    sock.on('data', (chunk) => {
-      const c = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer || chunk);
-      chunks.push(c);
-      total += c.byteLength;
-    });
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      const buf = new Uint8Array(total);
-      let off = 0;
-      for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
-      try { resolve(_parseHttpResponse(buf)); }
-      catch (err) { reject(err); }
-    };
-    sock.on('end', finish);
-    sock.on('close', finish);
-    sock.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    });
-
-    try {
-      sock.write(headBytes);
-      if (bodyBytes && bodyBytes.byteLength) sock.write(bodyBytes);
-    } catch (err) {
-      if (!settled) { settled = true; reject(err); }
-    }
-  });
-}
-
-/**
  * Parse a raw HTTP/1.1 response buffer into a Response. The wisp tier reads
  * the whole response, so this is buffer-in → Response-out; no streaming.
  */
@@ -337,20 +224,6 @@ function _parseHttpResponse(buf) {
 }
 
 /**
- * True iff tier-2 wisp is available as an HTTP fallback. Imports wisp-client
- * lazily because this module must load in pure-Node test runners that lack
- * a global WebSocket.
- */
-async function _wispFallbackAvailable() {
-  try {
-    const { isWispAvailable } = await import('./wisp-client.js');
-    return isWispAvailable();
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Fetch with explicit proxy/raw-socket fallbacks only when the host has
  * configured them. No baked-in hosted endpoints are used anymore.
  */
@@ -373,25 +246,10 @@ export async function browserHttpFetch(url, init = {}) {
     if (err?.name === 'AbortError') throw err;
     if (init.signal?.aborted) throw err;
 
-    // Native fetch failed. Walk the fallback chain.
+    // Native fetch failed. Try the explicitly configured proxy if present.
     if (proxy) {
       try { return await _fetchProxyFetch(url, init, proxy); }
-      catch (proxyErr) {
-        // Fall through to wisp. Keep the original native error for the
-        // final re-throw — callers' existing catch blocks were written
-        // against it.
-      }
-    }
-
-    if (await _wispFallbackAvailable()) {
-      try { return await _wispHttpFetch(url, init); }
-      catch (wispErr) {
-        // If wisp specifically rejected an HTTPS target, surface THAT
-        // error — it's actionable and points at the tier-3 fix.
-        if (wispErr instanceof TypeError && String(wispErr.message).includes('wisp fallback: only plaintext')) {
-          throw wispErr;
-        }
-      }
+      catch { /* fall through to original native error */ }
     }
 
     throw err;

@@ -394,8 +394,7 @@ function _getWispUrl() {
 }
 
 /**
- * True if an environment variable points at a Wisp server.
- * (The actual reachability was determined by the transport probe at boot.)
+ * True if an embedder explicitly configured a compatible Wisp endpoint.
  */
 export function isWispAvailable() {
   return _getWispUrl() !== null;
@@ -410,7 +409,7 @@ export function isWispAvailable() {
  */
 export async function wispConnect(host, port) {
   const url = _getWispUrl();
-  if (!url) throw new Error('NODEJS_WISP_WS_URL not set — no Wisp server configured');
+  if (!url) throw new Error('raw TCP transport not configured');
 
   if (!_sharedConn || _sharedConn._closed) {
     _sharedConn = new WispConnection(url);

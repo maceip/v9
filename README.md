@@ -22,8 +22,7 @@ use their native file tools for that.
 
 The repo is intentionally moving away from:
 
-- `v9 run`
-- `v9 build`
+- legacy browser bundle runner commands
 - browser-direct TCP / Wisp / fetch-proxy transport tiers
 - MEMFS shell shims as the primary execution model
 
