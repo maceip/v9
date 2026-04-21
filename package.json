@@ -23,8 +23,6 @@
     "test:browser": "node tests/test-browser-smoke.mjs",
     "test:e2e": "node tests/e2e/smoke-test.mjs",
     "test:e2e:headed": "node tests/e2e/smoke-test.mjs --headed",
-    "test:e2e:shell": "node tests/e2e/test-shell-npm.mjs",
-    "test:e2e:shell:headed": "node tests/e2e/test-shell-npm.mjs --headed",
     "test:e2e:pages-responsive": "node tests/e2e/test-pages-responsive.mjs",
     "test:e2e:pages-responsive:headed": "node tests/e2e/test-pages-responsive.mjs --headed",
     "test:guardrails": "node tests/test-guardrails.mjs",
