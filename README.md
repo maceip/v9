@@ -81,9 +81,9 @@ running concurrently on the same page without shared-state collisions.
 
 ## Development
 
-At this stage the repo is in active transition from the legacy browser-first V9
-shape to the new component model. Expect some legacy browser/runtime code to
-remain temporarily while execution paths are migrated onto `grpc_exec`.
+The canonical surface is now the imported tool suite plus V9 orchestration
+around it. Any remaining browser/runtime code should be treated as transitional
+client-side support, not the primary product surface.
 
 ### Go components
 
