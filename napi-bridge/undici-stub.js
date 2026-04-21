@@ -1,9 +1,9 @@
 /**
- * undici — Browser stub that delegates through transport-policy (fetch / optional proxy).
+ * undici — Browser stub that delegates through transport-policy.
  *
  * Gemini CLI imports undici for HTTP requests and proxy support.
- * In the browser, HTTP goes to browserHttpFetch() so NODEJS_IN_TAB_FETCH_PROXY
- * applies consistently with node:http bridge — see transport-policy.mjs.
+ * In the browser, HTTP goes to browserHttpFetch() so any explicitly configured
+ * fetch proxy applies consistently with the node:http bridge.
  */
 
 import { EventEmitter } from './eventemitter.js';
