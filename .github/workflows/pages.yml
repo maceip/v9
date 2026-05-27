@@ -92,10 +92,10 @@ jobs:
       - name: Assemble docs/ (web + napi-bridge)
         run: node scripts/prepare-github-pages.mjs
 
-      # Bundle CLI if @anthropic-ai/claude-code is available (devDependency)
-      - name: Bundle Claude Code for browser
+      # Bundle the image-to-ascii demo used by the landing page
+      - name: Bundle image-to-ascii demo
         continue-on-error: true
-        run: node scripts/bundle-claude-for-pages.mjs
+        run: node scripts/bundle-image-to-ascii-demo.mjs
 
       - name: Verify deployment essentials
         run: |

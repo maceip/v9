@@ -72,7 +72,8 @@
     "vendor:wasm": "node scripts/vendor-wasm.mjs",
     "fetch:wasm-assets": "node scripts/fetch-wasm-assets.mjs",
     "pages:prepare": "node scripts/prepare-github-pages.mjs",
-    "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs"
+    "bundle:claude-code": "node scripts/bundle-claude-for-pages.mjs",
+    "bundle:image-to-ascii-demo": "node scripts/bundle-image-to-ascii-demo.mjs"
   },
   "keywords": [
     "wasm",

@@ -4,7 +4,7 @@
  * absolute /napi-bridge/ import maps to ../napi-bridge/, sync Wasm js from dist/.
  *
  * Run after `make build` (or equivalent) so dist/edgejs.{js,wasm} exist, then run
- * `scripts/bundle-claude-for-pages.mjs` so docs/dist also contains claude-code-cli.js.
+ * `scripts/bundle-image-to-ascii-demo.mjs` so docs/dist also contains the demo bundle.
  *
  * Usage: node scripts/prepare-github-pages.mjs
  */

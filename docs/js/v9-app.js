@@ -3,7 +3,7 @@
  *
  * Two terminals side-by-side:
  *   - Left:  Interactive shell (web/index.html?autorun=0)
- *   - Right: Claude Code CLI (web/index.html?bundle=...&autorun=1)
+ *   - Right: image-to-ascii demo app (web/index.html?bundle=...&autorun=1)
  *
  * State machine per terminal: IDLE → ZOOMING → RUNNING ⇄ IDLE
  *
@@ -101,9 +101,9 @@ function buildShellURL() {
   return new URL('web/index.html?autorun=0', base).href;
 }
 
-function buildClaudeURL() {
+function buildImageToAsciiURL() {
   const root = siteRootPrefix();
-  const bundlePath = `${root.replace(/\/$/, '')}/dist/claude-code-cli.js`;
+  const bundlePath = `${root.replace(/\/$/, '')}/dist/image-to-ascii-demo.js`;
   const base = `${window.location.origin}${root}`;
   const u = new URL(`web/index.html?bundle=${encodeURIComponent(bundlePath)}&autorun=1`, base);
   const proxy = anthropicProxyForCLIiframe();
@@ -240,7 +240,7 @@ const shellTerm = createTerminal({
   title: 'shell',
 });
 
-const claudeTerm = createTerminal({
+const imageToAsciiTerm = createTerminal({
   wrapId: 'terminal-wrap-2',
   frameId: 'terminal-frame-2',
   screenId: 'terminal-screen-2',
@@ -248,18 +248,18 @@ const claudeTerm = createTerminal({
   overlayId: 'terminal-overlay-2',
   bootTextId: 'boot-text-2',
   iframeId: 'cli-frame-2',
-  urlBuilder: buildClaudeURL,
-  title: 'Claude Code',
+  urlBuilder: buildImageToAsciiURL,
+  title: 'image-to-ascii',
 });
 
-const terminals = [shellTerm, claudeTerm];
+const terminals = [shellTerm, imageToAsciiTerm];
 
 // ── Apply theme now that terminals exist ──
 isDark.addEventListener('change', applyTheme);
 applyTheme();
 
-// ── Mobile D-Pad (applies to whichever terminal is active — default to Claude) ──
-const dpad = new DPad(claudeTerm.iframe);
+// ── Mobile D-Pad (applies to whichever terminal is active — default to demo) ──
+const dpad = new DPad(imageToAsciiTerm.iframe);
 
 setProgress(75);
 initIcons();
@@ -398,13 +398,13 @@ function addDismissedTile(term) {
   // Uniform terminal icon for all tiles
   tile.innerHTML = TILE_ICON_SVG;
 
-  // Colored dot indicator: green for shell, accent-blue for Claude
+  // Colored dot indicator: green for shell, accent-blue for bundled demo
   const dot = document.createElement('span');
   dot.className = 'tile-dot';
   dot.style.background = isShell ? '#9bff00' : '#7aa2f7';
   tile.appendChild(dot);
 
-  tile.title = isShell ? 'Shell session — click to restore' : 'Claude Code session — click to restore';
+  tile.title = isShell ? 'Shell session — click to restore' : 'image-to-ascii demo — click to restore';
 
   tile.addEventListener('click', () => {
     // Animate tile out before restoring
