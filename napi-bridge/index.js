@@ -4549,18 +4549,30 @@ export async function initEdgeJS(options = {}) {
     const stdoutStart = stdoutBuffer.length;
     const stderrStart = stderrBuffer.length;
 
-    // Try C++ path first; fall back to JS bridge if libuv aborts
+    // Try C++ path first; fall back to JS bridge if libuv aborts, or if main
+    // returned a Promise (async-only builds — synchronous eval can't await).
     if (!_useJsBridge) {
       try {
         const status = invokeMain(args);
-        const stdout = stdoutBuffer.slice(stdoutStart);
-        const stderr = stderrBuffer.slice(stderrStart);
-        // Check if the C++ runtime failed to init (libuv abort)
-        if (status === 1 && stderr.some(s => s.includes('Failed to initialize') || s.includes('Aborted'))) {
+        // Some edgejs builds return a Promise from main (async-only). The
+        // synchronous eval path can't await it, so detach the promise and fall
+        // through to the JS bridge instead of returning `{status: Promise}`,
+        // which downstream surfaced as `edge eval failed with status [object Promise]`.
+        if (status && typeof status.then === 'function') {
+          // suppress unhandled-rejection noise; the bridge will run its own copy
+          try { status.catch(() => {}); } catch { /* ignore */ }
           _useJsBridge = true;
           // Fall through to JS bridge
         } else {
-          return { status, stdout, stderr };
+          const stdout = stdoutBuffer.slice(stdoutStart);
+          const stderr = stderrBuffer.slice(stderrStart);
+          // Check if the C++ runtime failed to init (libuv abort)
+          if (status === 1 && stderr.some(s => s.includes('Failed to initialize') || s.includes('Aborted'))) {
+            _useJsBridge = true;
+            // Fall through to JS bridge
+          } else {
+            return { status, stdout, stderr };
+          }
         }
       } catch (err) {
         if (err.message?.includes('unreachable') || err.message?.includes('Aborted')) {
