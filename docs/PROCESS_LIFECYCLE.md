@@ -18,11 +18,13 @@ This documents how the bridge approximates Node’s process contract for **inter
 
 Prefer **`runtime.runNodeEntry({ entry, cwd, argv, argv0, env })`** so `argv` and `cwd` stay aligned with how `executeCliAsync` runs the file.
 
+From Node embedders, **`runInTab({ entry, root, seedFromHost, runtimeInit, … })`** in `napi-bridge/run-in-tab.mjs` wraps `initEdgeJS` + optional host→MEMFS seed + `runNodeEntry` — see **`docs/RUN_IN_TAB.md`**.
+
 ## ESM (interpretive bridge)
 
-- Entries that look like ESM (`.mjs`, `package.json` `"type":"module"` neighbors, or leading `import`/`export`) are transpiled with esbuild to CommonJS for `runFileAsync` / `runNodeEntry`.
+- Entries that look like ESM (`.mjs`, `package.json` `"type":"module"` neighbors, or leading `import`/`export`) are transpiled with esbuild for `runFileAsync` / `runNodeEntry` (CJS bundle or ESM data URL when top-level await is required).
 - `import.meta.url` is defined to a `file://` URL matching the MEMFS path.
-- Dynamic `import()` is rewritten to `globalThis.__memfsDynamicImport` and loads MEMFS / builtins; JSON returns `{ default: parsed }`. **Top-level `await` in ESM entries is not supported** (esbuild + `new Function` constraint). **Circular dynamic imports** throw with `ERR_UNSUPPORTED_NODE_MODULES_TYPE`.
+- Dynamic `import()` is rewritten to `globalThis.__memfsDynamicImport` and loads MEMFS / builtins; JSON returns `{ default: parsed }`. **Top-level `await`** in ESM entries is supported via the esbuild ESM path (`npm run test:memfs-esm-tla`). **Circular dynamic imports** are covered by `npm run test:memfs-dynamic-import-cycle`.
 
 ## `node:test` in-tab
 

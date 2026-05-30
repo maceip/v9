@@ -15,7 +15,7 @@
 
 ## Completed milestones (verified in-repo)
 
-1. **`node_modules` on MEMFS** — `tests/helpers/seed-memfs-from-host.mjs`; `npm run test:memfs-node-modules`.
+1. **`node_modules` on MEMFS** — `napi-bridge/seed-memfs-from-host.mjs` (tests re-export from `tests/helpers/`); `npm run test:memfs-node-modules`.
 2. **CJS loader** — MEMFS `require` + `createRequire.resolve`; `test:memfs-reference-app` / `test:memfs-exports`.
 3. **Process lifecycle** — `docs/PROCESS_LIFECYCLE.md`, `processBridge`; `npm run test:run-node-entry`.
 4. **Entry API** — `runtime.runNodeEntry` / `napi-bridge/run-in-tab.mjs`.
@@ -30,13 +30,29 @@
 
 ## Next direction (not yet “done” in-repo)
 
-- **Explicit product spec** from the conformance suite (streams, HTTP, child_process, workers, …).
-- **Neutral naming** (`NODEJS_IN_TAB_*`, generated import maps, de-Claude mechanical aliases).
-- **Compatibility matrix** (built-in → full / partial / stub) linked to tests or SKIP reasons.
-- **Stable embedder API** — document `runInTab`-style bootstrap on top of `runNodeEntry`.
-- **Security / capability** model for untrusted code in-tab.
+Each item below lists **what exists today** and **what “done” means** so the scope is not vague.
 
-**North star:** If it passes the in-tab contract and matches the matrix, you can ship it — and embedders know what power they grant.
+- **Conformance-backed product spec (streams, HTTP, `child_process`, workers, …)**  
+  - **Today:** [`NODEJS_SURFACE_SPEC.md`](NODEJS_SURFACE_SPEC.md) indexes what `tests/conformance/in-tab-api-contract-suite.mjs` already asserts; the suite is the behavioral source of truth.  
+  - **Done when:** For every built-in you claim as “supported” for shipping, there is either (1) at least one passing case in that suite that runs on **both** substrates in `npm run test:nodejs-in-tab-contract`, or (2) a `HarnessSkip` (or equivalent) with a **stable reason string** and a matching row in the compatibility matrix. “Supported” without (1) or (2) is documentation-only, not product spec.
+
+- **Neutral naming (`NODEJS_IN_TAB_*`, import maps, retire Claude-prefixed UX)**  
+  - **Today:** Browser import map is generated from [`web/nodejs-in-tab-import-map.json`](../web/nodejs-in-tab-import-map.json) (`npm run apply:import-map`); drift is caught by `npm run test:import-map-consistency`. `NODEJS_IN_TAB_CONFORMANCE_TARGET` mirrors `CONFORMANCE_TARGET` when the latter is unset (`npm run test:conformance-env-alias`). Transport-related env vars are documented in [`TRANSPORT.md`](TRANSPORT.md).  
+  - **Done when:** User-facing npm scripts and doc links prefer **nodejs-in-tab** / **in-tab-api-contract** names; `test:claude-contract:*` exist only as **deprecated aliases** documented in one place, or are removed after a deprecation window. Any new env knobs use the `NODEJS_IN_TAB_` prefix unless they are upstream (e.g. `NODE_ENV`).
+
+- **Compatibility matrix (built-in → full / partial / stub / N/A)**  
+  - **Today:** [`COMPATIBILITY_MATRIX.md`](COMPATIBILITY_MATRIX.md) is a hand-maintained table with representative proof links.  
+  - **Done when:** Each row names a **specific** proof: a test file, a suite case title, or an explicit skip reason (grep `HarnessSkip` in `tests/conformance/`). Rows without proof are marked **TBD** until filled. Optional later step: generate rows from the suite metadata (not required for the first “done”).
+
+- **Embedder bootstrap API (`runInTab` / `runNodeEntry`)**  
+  - **Today:** Node embedders can use `runInTab` in [`napi-bridge/run-in-tab.mjs`](../napi-bridge/run-in-tab.mjs); see [`RUN_IN_TAB.md`](RUN_IN_TAB.md) and `npm run test:run-in-tab`. `runtime.runNodeEntry` remains the low-level entry.  
+  - **Done when:** The doc lists a **minimal supported option surface** (entry, cwd/root, argv, env, MEMFS seed, `initEdgeJS` passthrough) and any **intentional non-goals** (e.g. no separate browser `runInTab` helper, or add one if required). If embedders need cleanup, document and optionally expose **teardown** (what to call on `runtime` / process exit) when the Wasm instance can be torn down safely.
+
+- **Security, capability, and debuggability for untrusted or third-party code**  
+  - **Today:** [`CAPABILITY_MODEL.md`](CAPABILITY_MODEL.md) states what code can reach (MEMFS, network shims, no real child processes in-tab, etc.).  
+  - **Done when:** The capability doc stays aligned with the matrix and transport docs; **implementation** items (source maps for bundled MEMFS entries, structured errors, optional parent-page logging, Wasm-side inspect/trace) are either shipped with tests or listed as **explicit deferred** bullets with owners/commands— not lumped under a single vague “security” line.
+
+**North star:** Shipping quality means `npm run test:nodejs-in-tab-contract` passes **and** the compatibility matrix has no misleading “full/partial” row without proof; embedders can read one capability doc and know what untrusted code can do.
 
 ---
 

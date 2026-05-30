@@ -1,6 +1,10 @@
 /** Read at call time so MEMFS / initEdgeJS injected `process.env` is visible (wasm JS bridge). */
 function conformanceTargetMode() {
-  return (process.env.CONFORMANCE_TARGET || 'bridge').toLowerCase();
+  const v =
+    process.env.CONFORMANCE_TARGET ||
+    process.env.NODEJS_IN_TAB_CONFORMANCE_TARGET ||
+    'bridge';
+  return String(v).toLowerCase();
 }
 
 function modeDescription() {
